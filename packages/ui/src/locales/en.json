@@ -136,6 +136,28 @@
     "searchModel": "Search model...",
     "noModelFound": "No model found."
   },
+  "settings": {
+    "tabs": {
+      "general": "General",
+      "router": "Router",
+      "tools": "Tools"
+    },
+    "language": "Language",
+    "fallback_title": "Fallback Configuration",
+    "fallback_description": "When the primary model fails, try these fallback models in order.",
+    "tools": {
+      "json_editor": "JSON Editor",
+      "json_editor_desc": "Edit raw configuration JSON",
+      "log_viewer": "Log Viewer",
+      "log_viewer_desc": "View server request logs",
+      "usage_stats": "Usage Statistics",
+      "usage_stats_desc": "View request usage and performance metrics",
+      "check_updates": "Check for Updates",
+      "check_updates_desc": "Check and install new versions",
+      "presets": "Presets",
+      "presets_desc": "Manage configuration presets"
+    }
+  },
   "json_editor": {
     "title": "JSON Editor",
     "save": "Save",

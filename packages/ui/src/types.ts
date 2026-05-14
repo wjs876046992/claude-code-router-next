@@ -51,12 +51,24 @@ export interface StatusLineConfig {
   fontFamily?: string;
 }
 
+export interface FallbackConfig {
+  default?: string[];
+  background?: string[];
+  think?: string[];
+  longContext?: string[];
+  webSearch?: string[];
+  modelMapping?: string[];
+  image?: string[];
+  [key: string]: string[] | undefined;
+}
+
 export interface Config {
   Providers: Provider[];
   Router: RouterConfig;
   transformers: Transformer[];
   StatusLine?: StatusLineConfig;
   forceUseImageAgent?: boolean;
+  fallback?: FallbackConfig;
   // Top-level settings
   LOG: boolean;
   LOG_LEVEL: string;

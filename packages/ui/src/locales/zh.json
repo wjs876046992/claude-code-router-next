@@ -136,6 +136,28 @@
     "searchModel": "搜索模型...",
     "noModelFound": "未找到模型."
   },
+  "settings": {
+    "tabs": {
+      "general": "通用",
+      "router": "路由",
+      "tools": "工具"
+    },
+    "language": "语言",
+    "fallback_title": "备用配置",
+    "fallback_description": "当主模型请求失败时，按顺序尝试以下备用模型。",
+    "tools": {
+      "json_editor": "JSON 编辑器",
+      "json_editor_desc": "编辑原始配置 JSON",
+      "log_viewer": "日志查看器",
+      "log_viewer_desc": "查看服务请求日志",
+      "usage_stats": "用量统计",
+      "usage_stats_desc": "查看请求用量和性能指标",
+      "check_updates": "检查更新",
+      "check_updates_desc": "检查并安装新版本",
+      "presets": "预设管理",
+      "presets_desc": "管理配置预设"
+    }
+  },
   "json_editor": {
     "title": "JSON 编辑器",
     "save": "保存",

@@ -401,21 +401,17 @@ async function getServer(options: RunOptions = {}) {
 
         const [originalStream, clonedStream] = payload.tee();
         const read = async (stream: ReadableStream) => {
-          const reader = stream.getReader();
+          const eventStream = stream
+            .pipeThrough(new TextDecoderStream())
+            .pipeThrough(new SSEParserTransform() as any);
+          const reader = eventStream.getReader();
           try {
             while (true) {
               const { done, value } = await reader.read();
               if (done) break;
-              // Process the value if needed
-              const dataStr = new TextDecoder().decode(value);
-              if (!dataStr.startsWith("event: message_delta")) {
-                continue;
+              if ((value as any).event === 'message_delta' && (value as any).data?.usage) {
+                sessionUsageCache.put(usageSessionId, (value as any).data.usage);
               }
-              const str = dataStr.slice(27);
-              try {
-                const message = JSON.parse(str);
-                sessionUsageCache.put(usageSessionId, message.usage);
-              } catch {}
             }
           } catch (readError: any) {
             if (readError.name === 'AbortError' || readError.code === 'ERR_STREAM_PREMATURE_CLOSE') {
