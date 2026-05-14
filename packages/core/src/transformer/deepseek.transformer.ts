@@ -10,17 +10,27 @@ export class DeepseekTransformer implements Transformer {
     }
 
     // DeepSeek V4 thinking mode requirement:
-    // When assistant messages have thinking content from previous turns (e.g., Claude thinking mode),
-    // convert it to reasoning_content format for DeepSeek API.
-    // Only process messages that actually have thinking content - skip messages from non-thinking models.
+    // When assistant messages have thinking content from previous turns,
+    // we must pass it back as reasoning_content WITH signature.
+    // DeepSeek requires: reasoning_content + signature must be preserved exactly.
     request.messages.forEach((message) => {
       if (message.role === "assistant") {
-        // Check if this message has valid thinking content
         const thinkingContent = message.thinking?.content;
+        const thinkingSignature = message.thinking?.signature;
+
+        // Case 1: Claude-style thinking block - convert to DeepSeek format
         if (thinkingContent && typeof thinkingContent === "string" && thinkingContent.trim()) {
-          // Convert thinking to reasoning_content for DeepSeek
           (message as any).reasoning_content = thinkingContent;
+          // DeepSeek V4 requires signature to be passed back
+          // Use the existing signature or generate a deterministic one
+          if (thinkingSignature) {
+            (message as any).reasoning_content_signature = thinkingSignature;
+          }
         }
+
+        // Case 2: Already has reasoning_content from previous DeepSeek response - keep it
+        // Don't modify existing reasoning_content, just ensure thinking field is removed
+
         // Always clean up thinking field - DeepSeek doesn't recognize it
         if (message.thinking) {
           delete message.thinking;
