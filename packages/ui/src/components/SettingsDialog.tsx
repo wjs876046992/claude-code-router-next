@@ -67,7 +67,7 @@ export function SettingsDialog({ isOpen, onOpenChange }: SettingsDialogProps) {
           <div className="flex items-center space-x-2">
             <Switch
               id="log"
-              checked={config.LOG}
+              checked={config.LOG ?? false}
               onCheckedChange={handleLogChange}
             />
             <Label
@@ -115,7 +115,7 @@ export function SettingsDialog({ isOpen, onOpenChange }: SettingsDialogProps) {
                 { label: "debug", value: "debug" },
                 { label: "trace", value: "trace" },
               ]}
-              value={config.LOG_LEVEL}
+              value={config.LOG_LEVEL || "debug"}
               onChange={(value) => setConfig({ ...config, LOG_LEVEL: value })}
             />
           </div>
@@ -128,7 +128,7 @@ export function SettingsDialog({ isOpen, onOpenChange }: SettingsDialogProps) {
             </Label>
             <Input
               id="claude-path"
-              value={config.CLAUDE_PATH}
+              value={config.CLAUDE_PATH || ""}
               onChange={handlePathChange}
               className="transition-all-ease focus:scale-[1.01]"
             />
@@ -142,7 +142,7 @@ export function SettingsDialog({ isOpen, onOpenChange }: SettingsDialogProps) {
             </Label>
             <Input
               id="host"
-              value={config.HOST}
+              value={config.HOST || ""}
               onChange={(e) => setConfig({ ...config, HOST: e.target.value })}
               className="transition-all-ease focus:scale-[1.01]"
             />
@@ -157,7 +157,7 @@ export function SettingsDialog({ isOpen, onOpenChange }: SettingsDialogProps) {
             <Input
               id="port"
               type="number"
-              value={config.PORT}
+              value={config.PORT ?? 3456}
               onChange={(e) =>
                 setConfig({ ...config, PORT: parseInt(e.target.value, 10) })
               }
@@ -173,7 +173,7 @@ export function SettingsDialog({ isOpen, onOpenChange }: SettingsDialogProps) {
             </Label>
             <Input
               id="timeout"
-              value={config.API_TIMEOUT_MS}
+              value={config.API_TIMEOUT_MS || "600000"}
               onChange={(e) =>
                 setConfig({ ...config, API_TIMEOUT_MS: e.target.value })
               }
@@ -189,7 +189,7 @@ export function SettingsDialog({ isOpen, onOpenChange }: SettingsDialogProps) {
             </Label>
             <Input
               id="proxy-url"
-              value={config.PROXY_URL}
+              value={config.PROXY_URL || ""}
               onChange={(e) =>
                 setConfig({ ...config, PROXY_URL: e.target.value })
               }
@@ -207,7 +207,7 @@ export function SettingsDialog({ isOpen, onOpenChange }: SettingsDialogProps) {
             <Input
               id="apikey"
               type="password"
-              value={config.APIKEY}
+              value={config.APIKEY || ""}
               onChange={(e) => setConfig({ ...config, APIKEY: e.target.value })}
               className="transition-all-ease focus:scale-[1.01]"
             />

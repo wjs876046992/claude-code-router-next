@@ -29,8 +29,22 @@
     "json_editor": "JSON Editor",
     "log_viewer": "Log Viewer",
     "presets": "Presets",
+    "advanced_router": "Advanced Router",
     "language": "Language",
-    "check_updates": "Check for Updates"
+    "check_updates": "Check for Updates",
+    "usage": "Usage Statistics"
+  },
+  "advanced_router": {
+    "title": "Advanced Router",
+    "subtitle": "Configure advanced routing rules without cluttering the dashboard.",
+    "back": "Back",
+    "model_mappings": "Model Mappings",
+    "model_mappings_help": "Map Claude Code model selections such as opus, sonnet, or haiku to actual provider,model targets.",
+    "empty": "No model mappings configured yet. Add one to override how selected model families are routed.",
+    "source_model": "Source Model Key",
+    "target_model": "Target Model",
+    "source_placeholder": "e.g. opus, sonnet, haiku, claude-opus",
+    "add_mapping": "Add Mapping"
   },
   "login": {
     "title": "Sign in to your account",
@@ -298,5 +312,32 @@
       "apply": "Apply",
       "cancel": "Cancel"
     }
+  },
+  "usage": {
+    "title": "Usage Statistics",
+    "total_requests": "Total Requests",
+    "total_input_tokens": "Input Tokens",
+    "total_output_tokens": "Output Tokens",
+    "avg_ttft": "Avg TTFT",
+    "avg_speed": "Avg Speed",
+    "success_rate": "Success Rate",
+    "daily_chart": "Daily Usage",
+    "start_date": "Start Date",
+    "end_date": "End Date",
+    "provider": "Provider",
+    "model": "Model",
+    "scenario": "Scenario",
+    "all": "All",
+    "time": "Time",
+    "input_tokens": "Input",
+    "output_tokens": "Output",
+    "ttft": "TTFT",
+    "speed": "Speed",
+    "duration": "Duration",
+    "status": "Status",
+    "page": "Page",
+    "records": "records",
+    "no_data": "No usage data available",
+    "clear_confirm": "Are you sure you want to clear all usage data?"
   }
 }

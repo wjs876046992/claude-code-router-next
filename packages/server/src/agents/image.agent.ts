@@ -46,6 +46,55 @@ class ImageCache {
 
 const imageCache = new ImageCache();
 
+function normalizeModelName(modelName: string): string {
+  let normalized = modelName || "";
+  if (normalized.includes(",")) {
+    normalized = normalized.split(",").pop() || normalized;
+  }
+  if (normalized.includes("/")) {
+    normalized = normalized.split("/").pop() || normalized;
+  }
+  if (normalized.includes(":")) {
+    normalized = normalized.split(":")[0];
+  }
+  return normalized.trim().toLowerCase();
+}
+
+function modelSupportsImages(modelName: string): boolean {
+  const normalized = normalizeModelName(modelName);
+  const imageModelPatterns = [
+    /claude/i,
+    /gemini/i,
+    /gpt-4o/i,
+    /gpt-4\.1/i,
+    /gpt-4-vision/i,
+    /qwen.*vl/i,
+    /glm-4v/i,
+    /grok.*vision/i,
+    /pixtral/i,
+    /llava/i,
+  ];
+
+  return imageModelPatterns.some((pattern) => pattern.test(normalized));
+}
+
+function requestHasImages(messages: any[]): boolean {
+  return messages.some(
+    (msg: any) =>
+      msg.role === "user" &&
+      Array.isArray(msg.content) &&
+      msg.content.some(
+        (item: any) =>
+          item.type === "image" ||
+          item.type === "image_url" ||
+          (Array.isArray(item?.content) &&
+            item.content.some(
+              (sub: any) => sub.type === "image" || sub.type === "image_url"
+            ))
+      )
+  );
+}
+
 export class ImageAgent implements IAgent {
   name = "image";
   tools: Map<string, ITool>;
@@ -56,48 +105,42 @@ export class ImageAgent implements IAgent {
   }
 
   shouldHandle(req: any, config: any): boolean {
-    if (!config.Router.image || req.body.model === config.Router.image)
-      return false;
-    const lastMessage = req.body.messages[req.body.messages.length - 1];
-    if (
-      !config.forceUseImageAgent &&
-      lastMessage.role === "user" &&
-      Array.isArray(lastMessage.content) &&
-      lastMessage.content.find(
-        (item: any) =>
-          item.type === "image" ||
-          (Array.isArray(item?.content) &&
-            item.content.some((sub: any) => sub.type === "image"))
-      )
-    ) {
-      req.body.model = config.Router.image;
-      const images: any[] = [];
-      lastMessage.content
-        .filter((item: any) => item.type === "tool_result")
-        .forEach((item: any) => {
-          if (Array.isArray(item.content)) {
-            item.content.forEach((element: any) => {
-              if (element.type === "image") {
-                images.push(element);
-              }
-            });
-            item.content = "read image successfully";
-          }
-        });
-      lastMessage.content.push(...images);
+    if (!config.Router.image || req.body.model === config.Router.image) {
       return false;
     }
-    return req.body.messages.some(
-      (msg: any) =>
-        msg.role === "user" &&
-        Array.isArray(msg.content) &&
-        msg.content.some(
-          (item: any) =>
-            item.type === "image" ||
-            (Array.isArray(item?.content) &&
-              item.content.some((sub: any) => sub.type === "image"))
-        )
-    );
+
+    const hasImages = requestHasImages(req.body.messages);
+    if (!hasImages) {
+      return false;
+    }
+
+    const lastMessage = req.body.messages[req.body.messages.length - 1];
+    if (!config.forceUseImageAgent) {
+      if (modelSupportsImages(req.body.model)) {
+        return false;
+      }
+
+      req.body.model = config.Router.image;
+      if (lastMessage.role === "user" && Array.isArray(lastMessage.content)) {
+        const images: any[] = [];
+        lastMessage.content
+          .filter((item: any) => item.type === "tool_result")
+          .forEach((item: any) => {
+            if (Array.isArray(item.content)) {
+              item.content.forEach((element: any) => {
+                if (element.type === "image") {
+                  images.push(element);
+                }
+              });
+              item.content = "read image successfully";
+            }
+          });
+        lastMessage.content.push(...images);
+      }
+      return false;
+    }
+
+    return true;
   }
 
   appendTools() {

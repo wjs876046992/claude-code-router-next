@@ -65,49 +65,19 @@ export function ConfigProvider({ children }: ConfigProviderProps) {
       try {
         // Try to fetch config regardless of API key presence
         const data = await api.getConfig();
-        
-        // Validate the received data to ensure it has the expected structure
-        const validConfig = {
-          LOG: typeof data.LOG === 'boolean' ? data.LOG : false,
-          LOG_LEVEL: typeof data.LOG_LEVEL === 'string' ? data.LOG_LEVEL : 'debug',
-          CLAUDE_PATH: typeof data.CLAUDE_PATH === 'string' ? data.CLAUDE_PATH : '',
-          HOST: typeof data.HOST === 'string' ? data.HOST : '127.0.0.1',
-          PORT: typeof data.PORT === 'number' ? data.PORT : 3456,
-          APIKEY: typeof data.APIKEY === 'string' ? data.APIKEY : '',
-          API_TIMEOUT_MS: typeof data.API_TIMEOUT_MS === 'string' ? data.API_TIMEOUT_MS : '600000',
-          PROXY_URL: typeof data.PROXY_URL === 'string' ? data.PROXY_URL : '',
-          transformers: Array.isArray(data.transformers) ? data.transformers : [],
-          Providers: Array.isArray(data.Providers) ? data.Providers : [],
-          StatusLine: data.StatusLine && typeof data.StatusLine === 'object' ? {
-            enabled: typeof data.StatusLine.enabled === 'boolean' ? data.StatusLine.enabled : false,
-            currentStyle: typeof data.StatusLine.currentStyle === 'string' ? data.StatusLine.currentStyle : 'default',
-            default: data.StatusLine.default && typeof data.StatusLine.default === 'object' && Array.isArray(data.StatusLine.default.modules) ? data.StatusLine.default : { modules: [] },
-            powerline: data.StatusLine.powerline && typeof data.StatusLine.powerline === 'object' && Array.isArray(data.StatusLine.powerline.modules) ? data.StatusLine.powerline : { modules: [] }
-          } : { 
-            enabled: false,
-            currentStyle: 'default',
-            default: { modules: [] },
-            powerline: { modules: [] }
-          },
-          Router: data.Router && typeof data.Router === 'object' ? {
-            default: typeof data.Router.default === 'string' ? data.Router.default : '',
-            background: typeof data.Router.background === 'string' ? data.Router.background : '',
-            think: typeof data.Router.think === 'string' ? data.Router.think : '',
-            longContext: typeof data.Router.longContext === 'string' ? data.Router.longContext : '',
-            longContextThreshold: typeof data.Router.longContextThreshold === 'number' ? data.Router.longContextThreshold : 60000,
-            webSearch: typeof data.Router.webSearch === 'string' ? data.Router.webSearch : '',
-            image: typeof data.Router.image === 'string' ? data.Router.image : ''
-          } : {
-            default: '',
-            background: '',
-            think: '',
-            longContext: '',
-            longContextThreshold: 60000,
-            webSearch: '',
-            image: ''
-          },
-          CUSTOM_ROUTER_PATH: typeof data.CUSTOM_ROUTER_PATH === 'string' ? data.CUSTOM_ROUTER_PATH : ''
-        };
+
+        // Pass through the raw server data as-is so we never write back
+        // fields that the user didn't configure. Components handle missing
+        // fields with defensive defaults at render time.
+        const validConfig = { ...data } as Config;
+
+        // Only normalise nested structures that the UI mutates directly
+        if (data.Providers && !Array.isArray(data.Providers)) {
+          validConfig.Providers = [];
+        }
+        if (data.transformers && !Array.isArray(data.transformers)) {
+          validConfig.transformers = [];
+        }
         
         setConfig(validConfig);
       } catch (err) {
@@ -135,7 +105,8 @@ export function ConfigProvider({ children }: ConfigProviderProps) {
               longContext: '',
               longContextThreshold: 60000,
               webSearch: '',
-              image: ''
+              image: '',
+              models: {}
             },
             CUSTOM_ROUTER_PATH: ''
           });

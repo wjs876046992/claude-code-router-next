@@ -1,4 +1,4 @@
-import Server, { calculateTokenCount, TokenizerService } from "@musistudio/llms";
+import Server, { calculateTokenCount, TokenizerService } from "@wengine-ai/llms";
 import { readConfigFile, writeConfigFile, backupConfigFile } from "./utils";
 import { join } from "path";
 import fastifyStatic from "@fastify/static";
@@ -21,9 +21,10 @@ import {
   type PresetFile,
   type ManifestFile,
   type PresetMetadata,
-} from "@CCR/shared";
+} from "@wengine-ai/claude-code-router-shared";
 import fastifyMultipart from "@fastify/multipart";
 import AdmZip from "adm-zip";
+import { query as queryUsage, querySummary as queryUsageSummary, clear as clearUsage } from "./services/usage-store";
 
 export const createServer = async (config: any): Promise<any> => {
   const server = new Server(config);
@@ -209,6 +210,52 @@ export const createServer = async (config: any): Promise<any> => {
     } catch (error) {
       console.error("Failed to clear logs:", error);
       reply.status(500).send({ error: "Failed to clear logs" });
+    }
+  });
+
+  // ========== Usage Statistics API ==========
+
+  // Get usage records with summary
+  app.get("/api/usage", async (req: any, reply: any) => {
+    try {
+      const q = req.query as any;
+      const result = queryUsage({
+        startTime: q.startDate,
+        endTime: q.endDate,
+        model: q.model,
+        provider: q.provider,
+        scenario: q.scenario,
+        sessionId: q.sessionId,
+        page: q.page ? parseInt(q.page, 10) : undefined,
+        pageSize: q.pageSize ? parseInt(q.pageSize, 10) : undefined,
+      });
+      return result;
+    } catch (error) {
+      console.error("Failed to query usage:", error);
+      reply.status(500).send({ error: "Failed to query usage" });
+    }
+  });
+
+  // Get usage summary only
+  app.get("/api/usage/summary", async (req: any, reply: any) => {
+    try {
+      const q = req.query as any;
+      return queryUsageSummary(q.startDate, q.endDate);
+    } catch (error) {
+      console.error("Failed to query usage summary:", error);
+      reply.status(500).send({ error: "Failed to query usage summary" });
+    }
+  });
+
+  // Clear usage data
+  app.delete("/api/usage", async (req: any, reply: any) => {
+    try {
+      const q = req.query as any;
+      clearUsage(q.beforeDate);
+      return { success: true, message: q.beforeDate ? "Usage data cleared before " + q.beforeDate : "All usage data cleared" };
+    } catch (error) {
+      console.error("Failed to clear usage:", error);
+      reply.status(500).send({ error: "Failed to clear usage data" });
     }
   });
 

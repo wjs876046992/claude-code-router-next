@@ -205,7 +205,9 @@ async function processRequestTransformers(
   headers: any,
   context: any
 ) {
-  let requestBody = body;
+  // Deep clone the request body to preserve original messages for caching
+  // and to ensure thinking blocks are not lost when switching between models
+  let requestBody = JSON.parse(JSON.stringify(body));
   let config: any = {};
   let bypass = false;
 

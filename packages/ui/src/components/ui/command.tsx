@@ -39,6 +39,7 @@ function CommandDialog({
   title?: string
   description?: string
   className?: string
+  children?: React.ComponentProps<typeof CommandPrimitive>["children"]
 }) {
   return (
     <Dialog {...props}>

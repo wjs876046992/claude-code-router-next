@@ -11,8 +11,8 @@ import {
   PRESETS_DIR,
   REFERENCE_COUNT_FILE,
   readPresetFile,
-} from "@CCR/shared";
-import { getServer } from "@CCR/server";
+} from "@wengine-ai/claude-code-router-shared";
+import { getServer } from "@wengine-ai/claude-code-router-server";
 import { writeFileSync, existsSync, readFileSync, mkdirSync } from "fs";
 import { checkForUpdates, performUpdate } from "./update";
 import { version } from "../../package.json";

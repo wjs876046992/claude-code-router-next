@@ -1,6 +1,6 @@
 {
-  "name": "@CCR/cli",
-  "version": "2.0.0",
+  "name": "@wengine-ai/claude-code-router-cli",
+  "version": "2.0.6",
   "description": "CLI for Claude Code Router",
   "bin": {
     "ccr": "dist/cli.js"
@@ -18,8 +18,8 @@
   "author": "musistudio",
   "license": "MIT",
   "devDependencies": {
-    "@CCR/server": "workspace:*",
-    "@CCR/shared": "workspace:*",
+    "@wengine-ai/claude-code-router-server": "workspace:*",
+    "@wengine-ai/claude-code-router-shared": "workspace:*",
     "@inquirer/prompts": "^5.0.0",
     "@types/archiver": "^7.0.0",
     "@types/node": "^24.0.15",

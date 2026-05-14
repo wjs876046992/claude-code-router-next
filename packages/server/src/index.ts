@@ -5,9 +5,9 @@ import { join } from "path";
 import { initConfig, initDir } from "./utils";
 import { createServer } from "./server";
 import { apiKeyAuth } from "./middleware/auth";
-import { CONFIG_FILE, HOME_DIR, listPresets } from "@CCR/shared";
+import { CONFIG_FILE, HOME_DIR, listPresets } from "@wengine-ai/claude-code-router-shared";
 import { createStream } from 'rotating-file-stream';
-import { sessionUsageCache } from "@musistudio/llms";
+import { sessionUsageCache } from "@wengine-ai/llms";
 import { SSEParserTransform } from "./utils/SSEParser.transform";
 import { SSESerializerTransform } from "./utils/SSESerializer.transform";
 import { rewriteStream } from "./utils/rewriteStream";
@@ -15,9 +15,25 @@ import JSON5 from "json5";
 import { IAgent, ITool } from "./agents/type";
 import agentsManager from "./agents";
 import { EventEmitter } from "node:events";
-import { pluginManager, tokenSpeedPlugin } from "@musistudio/llms";
+import { performance } from "node:perf_hooks";
+import { pluginManager, tokenSpeedPlugin } from "@wengine-ai/llms";
+import { append as appendUsage, readTokenSpeedStats } from "./services/usage-store";
 
 const event = new EventEmitter()
+
+function getUsageSessionId(req: any): string {
+  if (req.usageSessionId) return req.usageSessionId;
+
+  const requestIdHeader = req.headers?.["x-request-id"];
+  const requestId = Array.isArray(requestIdHeader) ? requestIdHeader[0] : requestIdHeader;
+  req.usageSessionId = req.sessionId || (typeof requestId === "string" ? requestId : undefined) || req.id || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  return req.usageSessionId;
+}
+
+function getRequestModel(req: any): string {
+  if (Array.isArray(req.model)) return req.model.join(",");
+  return req.model || req.body?.model || "";
+}
 
 async function initializeClaudeConfig() {
   const homeDir = homedir();
@@ -189,6 +205,13 @@ async function getServer(options: RunOptions = {}) {
   // Register and configure plugins from config
   await registerPluginsFromConfig(serverInstance, config);
 
+  serverInstance.addHook("onRequest", async (req: any) => {
+    const url = new URL(`http://127.0.0.1${req.url}`);
+    if (url.pathname.endsWith("/v1/messages") && !req.requestStartTime) {
+      req.requestStartTime = performance.now();
+    }
+  });
+
   // Add async preHandler hook for authentication
   serverInstance.addHook("preHandler", async (req: any, reply: any) => {
     return new Promise<void>((resolve, reject) => {
@@ -242,10 +265,12 @@ async function getServer(options: RunOptions = {}) {
     }
   });
   serverInstance.addHook("onError", async (request: any, reply: any, error: any) => {
+    request.errorMessage = error?.message || error?.toString?.() || "Unknown error";
     event.emit('onError', request, reply, error);
   })
   serverInstance.addHook("onSend", (req: any, reply: any, payload: any, done: any) => {
-    if (req.sessionId && req.pathname.endsWith("/v1/messages")) {
+    if (req.pathname?.endsWith("/v1/messages")) {
+      const usageSessionId = getUsageSessionId(req);
       if (payload instanceof ReadableStream) {
         if (req.agents) {
           const abortController = new AbortController();
@@ -389,7 +414,7 @@ async function getServer(options: RunOptions = {}) {
               const str = dataStr.slice(27);
               try {
                 const message = JSON.parse(str);
-                sessionUsageCache.put(req.sessionId, message.usage);
+                sessionUsageCache.put(usageSessionId, message.usage);
               } catch {}
             }
           } catch (readError: any) {
@@ -405,7 +430,7 @@ async function getServer(options: RunOptions = {}) {
         read(clonedStream);
         return done(null, originalStream)
       }
-      sessionUsageCache.put(req.sessionId, payload.usage);
+      sessionUsageCache.put(usageSessionId, payload.usage);
       if (typeof payload ==='object') {
         if (payload.error) {
           return done(payload.error, null)
@@ -422,6 +447,47 @@ async function getServer(options: RunOptions = {}) {
   serverInstance.addHook("onSend", async (req: any, reply: any, payload: any) => {
     event.emit('onSend', req, reply, payload);
     return payload;
+  });
+
+  // Track per-request usage statistics
+  serverInstance.addHook("onResponse", async (req: any, reply: any) => {
+    if (!req.pathname?.endsWith("/v1/messages")) return;
+
+    try {
+      const sessionId = getUsageSessionId(req);
+      const usage = sessionUsageCache.get(sessionId);
+      const speedStats = readTokenSpeedStats(sessionId);
+
+      // Extract error message if request failed
+      let errorMessage: string | undefined;
+      if (reply.statusCode >= 400) {
+        errorMessage = req.errorMessage || reply.errorMessage || (req.error?.message || req.error?.toString?.() || undefined);
+      }
+
+      appendUsage({
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        timestamp: new Date().toISOString(),
+        sessionId,
+        provider: req.provider || "",
+        model: getRequestModel(req),
+        scenarioType: req.scenarioType || "default",
+        stream: req.body?.stream ?? false,
+        inputTokens: req.tokenCount || 0,
+        outputTokens: usage?.output_tokens || 0,
+        cacheReadInputTokens: usage?.cache_read_input_tokens || 0,
+        cacheCreationInputTokens: usage?.cache_creation_input_tokens || 0,
+        ttft: speedStats.ttft,
+        tokensPerSecond: speedStats.tokensPerSecond,
+        durationMs: req.requestStartTime
+          ? Math.round(performance.now() - req.requestStartTime)
+          : 0,
+        status: reply.statusCode < 400 ? "success" : "error",
+        errorMessage,
+      });
+    } catch (e) {
+      // Usage tracking must not affect the response
+      console.error("Usage tracking error:", e);
+    }
   });
 
   // Add global error handlers to prevent the service from crashing
@@ -452,7 +518,7 @@ export { getServer };
 export type { RunOptions };
 export type { IAgent, ITool } from "./agents/type";
 export { initDir, initConfig, readConfigFile, writeConfigFile, backupConfigFile } from "./utils";
-export { pluginManager, tokenSpeedPlugin } from "@musistudio/llms";
+export { pluginManager, tokenSpeedPlugin } from "@wengine-ai/llms";
 
 // Start service if this file is run directly
 if (require.main === module) {

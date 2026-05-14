@@ -29,8 +29,22 @@
     "json_editor": "JSON 编辑器",
     "log_viewer": "日志查看器",
     "presets": "预设",
+    "advanced_router": "高级路由",
     "language": "语言",
-    "check_updates": "检查更新"
+    "check_updates": "检查更新",
+    "usage": "用量统计"
+  },
+  "advanced_router": {
+    "title": "高级路由",
+    "subtitle": "把进阶路由能力放在独立页面中，不打扰主面板的基础配置。",
+    "back": "返回",
+    "model_mappings": "模型映射",
+    "model_mappings_help": "把 Claude Code 选择的模型族，例如 opus、sonnet、haiku，映射到实际的 provider,model。",
+    "empty": "当前还没有配置模型映射。添加后即可覆盖模型选择到实际后端模型的路由方式。",
+    "source_model": "源模型键",
+    "target_model": "目标模型",
+    "source_placeholder": "例如：opus、sonnet、haiku、claude-opus",
+    "add_mapping": "添加映射"
   },
   "login": {
     "title": "登录到您的账户",
@@ -297,5 +311,32 @@
       "apply": "应用",
       "cancel": "取消"
     }
+  },
+  "usage": {
+    "title": "用量统计",
+    "total_requests": "总请求数",
+    "total_input_tokens": "输入 Token",
+    "total_output_tokens": "输出 Token",
+    "avg_ttft": "平均 TTFT",
+    "avg_speed": "平均速度",
+    "success_rate": "成功率",
+    "daily_chart": "每日用量",
+    "start_date": "开始日期",
+    "end_date": "结束日期",
+    "provider": "供应商",
+    "model": "模型",
+    "scenario": "场景",
+    "all": "全部",
+    "time": "时间",
+    "input_tokens": "输入",
+    "output_tokens": "输出",
+    "ttft": "TTFT",
+    "speed": "速度",
+    "duration": "耗时",
+    "status": "状态",
+    "page": "第",
+    "records": "条记录",
+    "no_data": "暂无用量数据",
+    "clear_confirm": "确定要清除所有用量数据吗？"
   }
 }

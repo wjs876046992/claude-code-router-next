@@ -1,0 +1,343 @@
+import { useState, useEffect, useCallback } from "react";
+import { useTranslation } from "react-i18next";
+import { api } from "@/lib/api";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { BarChart3, Trash2, ChevronDown, ChevronUp, RefreshCw } from "lucide-react";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+
+interface UsageRecord {
+  id: string;
+  timestamp: string;
+  sessionId: string;
+  provider: string;
+  model: string;
+  scenarioType: string;
+  stream: boolean;
+  inputTokens: number;
+  outputTokens: number;
+  ttft: number | null;
+  tokensPerSecond: number | null;
+  durationMs: number;
+  status: "success" | "error";
+  errorMessage?: string;
+}
+
+interface UsageSummary {
+  totalRequests: number;
+  successCount: number;
+  errorCount: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  avgTtft: number | null;
+  avgTokensPerSecond: number | null;
+  byModel: Record<string, { count: number; inputTokens: number; outputTokens: number }>;
+  byProvider: Record<string, { count: number; inputTokens: number; outputTokens: number }>;
+  byScenario: Record<string, { count: number; inputTokens: number; outputTokens: number }>;
+  byDay: Record<string, { count: number; inputTokens: number; outputTokens: number }>;
+}
+
+function formatTokens(n: number): string {
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + "k";
+  return String(n);
+}
+
+function formatMs(ms: number | null): string {
+  if (ms == null) return "-";
+  if (ms >= 1000) return (ms / 1000).toFixed(1) + "s";
+  return ms + "ms";
+}
+
+function formatSpeed(speed: number | null): string {
+  if (speed == null) return "-";
+  return speed + " t/s";
+}
+
+function formatDuration(ms: number): string {
+  if (ms >= 60000) return (ms / 60000).toFixed(1) + "m";
+  if (ms >= 1000) return (ms / 1000).toFixed(1) + "s";
+  return ms + "ms";
+}
+
+function formatTime(ts: string): string {
+  const d = new Date(ts);
+  return d.toLocaleString(undefined, {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
+export function UsageStats() {
+  const { t } = useTranslation();
+  const [summary, setSummary] = useState<UsageSummary | null>(null);
+  const [records, setRecords] = useState<UsageRecord[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [loading, setLoading] = useState(false);
+  const [expanded, setExpanded] = useState(true);
+
+  // Filters
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
+  const [filterModel, setFilterModel] = useState("");
+  const [filterProvider, setFilterProvider] = useState("");
+  const [filterScenario, setFilterScenario] = useState("");
+
+  const pageSize = 20;
+
+  const loadData = useCallback(async () => {
+    setLoading(true);
+    try {
+      const params: Record<string, any> = { page, pageSize };
+      if (startDate) params.startDate = new Date(startDate).toISOString();
+      if (endDate) params.endDate = new Date(endDate + "T23:59:59").toISOString();
+      if (filterModel) params.model = filterModel;
+      if (filterProvider) params.provider = filterProvider;
+      if (filterScenario) params.scenario = filterScenario;
+
+      const result = await api.getUsage(params);
+      setRecords(result.records || []);
+      setSummary(result.summary);
+      setTotal(result.total);
+    } catch (e) {
+      console.error("Failed to load usage:", e);
+    } finally {
+      setLoading(false);
+    }
+  }, [page, startDate, endDate, filterModel, filterProvider, filterScenario]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  const handleClear = async () => {
+    if (!confirm(t("usage.clear_confirm"))) return;
+    try {
+      await api.clearUsage();
+      loadData();
+    } catch (e) {
+      console.error("Failed to clear usage:", e);
+    }
+  };
+
+  const totalPages = Math.ceil(total / pageSize);
+
+  // Extract unique values from summary for filter dropdowns
+  const models = summary ? Object.keys(summary.byModel) : [];
+  const providers = summary ? Object.keys(summary.byProvider) : [];
+  const scenarios = summary ? Object.keys(summary.byScenario) : [];
+
+  // Daily chart data (last 14 days)
+  const dailyData = summary?.byDay ? Object.entries(summary.byDay)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .slice(-14) : [];
+  const maxDailyTokens = Math.max(1, ...dailyData.map(([, d]) => d.inputTokens + d.outputTokens));
+
+  return (
+    <Card className="h-full flex flex-col">
+      <CardHeader className="pb-2 flex-shrink-0">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2 cursor-pointer" onClick={() => setExpanded(!expanded)}>
+            <BarChart3 className="h-5 w-5 text-blue-500" />
+            <CardTitle className="text-base">{t("usage.title")}</CardTitle>
+            {expanded ? <ChevronUp className="h-4 w-4 text-gray-400" /> : <ChevronDown className="h-4 w-4 text-gray-400" />}
+          </div>
+          <div className="flex items-center gap-1">
+            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={loadData} disabled={loading}>
+              <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+            </Button>
+            <Button variant="ghost" size="icon" className="h-7 w-7 text-red-400 hover:text-red-600" onClick={handleClear}>
+              <Trash2 className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+        </div>
+      </CardHeader>
+
+      {expanded && (
+        <CardContent className="flex-1 overflow-auto pt-0">
+          {/* Summary Cards */}
+          {summary && (
+            <div className="grid grid-cols-3 gap-2 mb-3">
+              <div className="rounded-lg border bg-blue-50 p-2 text-center">
+                <div className="text-lg font-bold text-blue-600">{summary.totalRequests}</div>
+                <div className="text-xs text-gray-500">{t("usage.total_requests")}</div>
+                <div className="text-xs text-green-500">{summary.successCount} ok / <span className="text-red-500">{summary.errorCount} err</span></div>
+              </div>
+              <div className="rounded-lg border bg-green-50 p-2 text-center">
+                <div className="text-lg font-bold text-green-600">{formatTokens(summary.totalInputTokens)}</div>
+                <div className="text-xs text-gray-500">{t("usage.total_input_tokens")}</div>
+              </div>
+              <div className="rounded-lg border bg-yellow-50 p-2 text-center">
+                <div className="text-lg font-bold text-yellow-600">{formatTokens(summary.totalOutputTokens)}</div>
+                <div className="text-xs text-gray-500">{t("usage.total_output_tokens")}</div>
+              </div>
+              <div className="rounded-lg border bg-purple-50 p-2 text-center">
+                <div className="text-lg font-bold text-purple-600">{formatMs(summary.avgTtft)}</div>
+                <div className="text-xs text-gray-500">{t("usage.avg_ttft")}</div>
+              </div>
+              <div className="rounded-lg border bg-cyan-50 p-2 text-center">
+                <div className="text-lg font-bold text-cyan-600">{formatSpeed(summary.avgTokensPerSecond)}</div>
+                <div className="text-xs text-gray-500">{t("usage.avg_speed")}</div>
+              </div>
+              <div className="rounded-lg border bg-gray-50 p-2 text-center">
+                <div className="text-lg font-bold text-gray-700">
+                  {summary.totalRequests > 0 ? ((summary.successCount / summary.totalRequests) * 100).toFixed(1) + "%" : "-"}
+                </div>
+                <div className="text-xs text-gray-500">{t("usage.success_rate")}</div>
+              </div>
+            </div>
+          )}
+
+          {/* Daily Chart */}
+          {dailyData.length > 0 && (
+            <div className="mb-3">
+              <div className="text-xs text-gray-500 mb-1">{t("usage.daily_chart")}</div>
+              <div className="flex items-end gap-1 h-16">
+                {dailyData.map(([day, data]) => {
+                  const totalTokens = data.inputTokens + data.outputTokens;
+                  const height = Math.max(4, (totalTokens / maxDailyTokens) * 100);
+                  return (
+                    <div key={day} className="flex-1 flex flex-col items-center" title={`${day}: ${formatTokens(totalTokens)}`}>
+                      <div className="w-full bg-blue-400 rounded-t" style={{ height: `${height}%` }} />
+                      <div className="text-[8px] text-gray-400 mt-0.5">{day.slice(5)}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Filters */}
+          <div className="flex gap-2 mb-3 flex-wrap">
+            <Input
+              type="date"
+              className="h-7 text-xs w-[120px]"
+              value={startDate}
+              onChange={(e) => { setStartDate(e.target.value); setPage(1); }}
+              placeholder={t("usage.start_date")}
+            />
+            <Input
+              type="date"
+              className="h-7 text-xs w-[120px]"
+              value={endDate}
+              onChange={(e) => { setEndDate(e.target.value); setPage(1); }}
+              placeholder={t("usage.end_date")}
+            />
+            <Select value={filterProvider} onValueChange={(v) => { setFilterProvider(v === "__all__" ? "" : v); setPage(1); }}>
+              <SelectTrigger className="h-7 text-xs w-[100px]">
+                <SelectValue placeholder={t("usage.provider")} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">{t("usage.all")}</SelectItem>
+                {providers.map((p) => <SelectItem key={p} value={p}>{p}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            <Select value={filterModel} onValueChange={(v) => { setFilterModel(v === "__all__" ? "" : v); setPage(1); }}>
+              <SelectTrigger className="h-7 text-xs w-[130px]">
+                <SelectValue placeholder={t("usage.model")} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">{t("usage.all")}</SelectItem>
+                {models.map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            <Select value={filterScenario} onValueChange={(v) => { setFilterScenario(v === "__all__" ? "" : v); setPage(1); }}>
+              <SelectTrigger className="h-7 text-xs w-[100px]">
+                <SelectValue placeholder={t("usage.scenario")} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">{t("usage.all")}</SelectItem>
+                {scenarios.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Table */}
+          <div className="overflow-auto border rounded text-xs">
+            <table className="w-full">
+              <thead>
+                <tr className="bg-gray-50 border-b">
+                  <th className="text-left p-1.5">{t("usage.time")}</th>
+                  <th className="text-left p-1.5">{t("usage.provider")}</th>
+                  <th className="text-left p-1.5">{t("usage.model")}</th>
+                  <th className="text-left p-1.5">{t("usage.scenario")}</th>
+                  <th className="text-right p-1.5">{t("usage.input_tokens")}</th>
+                  <th className="text-right p-1.5">{t("usage.output_tokens")}</th>
+                  <th className="text-right p-1.5">{t("usage.ttft")}</th>
+                  <th className="text-right p-1.5">{t("usage.speed")}</th>
+                  <th className="text-right p-1.5">{t("usage.duration")}</th>
+                  <th className="text-center p-1.5">{t("usage.status")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {records.length === 0 ? (
+                  <tr><td colSpan={10} className="text-center p-4 text-gray-400">{t("usage.no_data")}</td></tr>
+                ) : records.map((r) => (
+                  <tr key={r.id} className="border-b hover:bg-gray-50">
+                    <td className="p-1.5 whitespace-nowrap">{formatTime(r.timestamp)}</td>
+                    <td className="p-1.5">{r.provider}</td>
+                    <td className="p-1.5 max-w-[120px] truncate" title={r.model}>{r.model}</td>
+                    <td className="p-1.5">{r.scenarioType}</td>
+                    <td className="text-right p-1.5">{formatTokens(r.inputTokens)}</td>
+                    <td className="text-right p-1.5">{formatTokens(r.outputTokens)}</td>
+                    <td className="text-right p-1.5">{formatMs(r.ttft)}</td>
+                    <td className="text-right p-1.5">{formatSpeed(r.tokensPerSecond)}</td>
+                    <td className="text-right p-1.5">{formatDuration(r.durationMs)}</td>
+                    <td className="text-center p-1.5">
+                      {r.status === "error" && r.errorMessage ? (
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span className="inline-block w-2 h-2 rounded-full bg-red-500 cursor-pointer" />
+                            </TooltipTrigger>
+                            <TooltipContent className="max-w-xs text-xs whitespace-pre-wrap">
+                              {r.errorMessage}
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      ) : (
+                        <span className={`inline-block w-2 h-2 rounded-full ${r.status === "success" ? "bg-green-500" : "bg-red-500"}`} />
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Pagination */}
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between mt-2 text-xs text-gray-500">
+              <span>{t("usage.page")} {page} / {totalPages} ({total} {t("usage.records")})</span>
+              <div className="flex gap-1">
+                <Button variant="outline" size="sm" className="h-6 text-xs px-2" disabled={page <= 1} onClick={() => setPage(page - 1)}>
+                  &lt;
+                </Button>
+                <Button variant="outline" size="sm" className="h-6 text-xs px-2" disabled={page >= totalPages} onClick={() => setPage(page + 1)}>
+                  &gt;
+                </Button>
+              </div>
+            </div>
+          )}
+        </CardContent>
+      )}
+    </Card>
+  );
+}

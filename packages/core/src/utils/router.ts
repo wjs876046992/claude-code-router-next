@@ -3,7 +3,7 @@ import { sessionUsageCache, Usage } from "./cache";
 import { readFile } from "fs/promises";
 import { opendir, stat } from "fs/promises";
 import { join } from "path";
-import { CLAUDE_PROJECTS_DIR, HOME_DIR } from "@CCR/shared";
+import { CLAUDE_PROJECTS_DIR, HOME_DIR } from "@wengine-ai/claude-code-router-shared";
 import { LRUCache } from "lru-cache";
 import { ConfigService } from "../services/config";
 import { TokenizerService } from "../services/tokenizer";
@@ -121,6 +121,117 @@ const getProjectSpecificRouter = async (
   return undefined; // Return undefined to use original configuration
 };
 
+function normalizeModelName(modelName: string): string {
+  let normalized = modelName || "";
+  if (normalized.includes(",")) {
+    normalized = normalized.split(",").pop() || normalized;
+  }
+  if (normalized.includes("/")) {
+    normalized = normalized.split("/").pop() || normalized;
+  }
+  if (normalized.includes(":")) {
+    normalized = normalized.split(":")[0];
+  }
+  return normalized.trim().toLowerCase();
+}
+
+function extractModelFamily(modelName: string): string | null {
+  const normalized = normalizeModelName(modelName);
+  const claudeMatch = normalized.match(
+    /claude-(?:\d+-\d+-|\d+-)?(sonnet|opus|haiku)(?:-|$)/i
+  ) || normalized.match(/claude-(sonnet|opus|haiku)(?:-|$)/i);
+  if (claudeMatch) {
+    return claudeMatch[1].toLowerCase();
+  }
+  return null;
+}
+
+function lookupModelMapping(
+  modelName: string,
+  mapping?: Record<string, string>
+): string | null {
+  if (!mapping || !modelName) return null;
+
+  const normalized = normalizeModelName(modelName);
+  if (mapping[modelName]) {
+    return mapping[modelName];
+  }
+  if (mapping[normalized]) {
+    return mapping[normalized];
+  }
+
+  const family = extractModelFamily(modelName);
+  if (family && mapping[family]) {
+    return mapping[family];
+  }
+
+  for (const [key, value] of Object.entries(mapping)) {
+    const normalizedKey = normalizeModelName(key);
+    if (normalizedKey && normalized.includes(normalizedKey)) {
+      return value;
+    }
+  }
+
+  return null;
+}
+
+function resolveConfiguredModel(modelName: string, providers: any[]): string {
+  if (!modelName?.includes(",")) {
+    return modelName;
+  }
+
+  const [provider, ...modelParts] = modelName.split(",");
+  const providerName = provider.trim();
+  const routeModel = modelParts.join(",").trim();
+  const finalProvider = providers.find(
+    (p: any) => p.name.toLowerCase() === providerName.toLowerCase()
+  );
+  const finalModel = finalProvider?.models?.find(
+    (m: any) => String(m).toLowerCase() === routeModel.toLowerCase()
+  );
+
+  if (finalProvider && finalModel) {
+    return `${finalProvider.name},${finalModel}`;
+  }
+
+  return modelName;
+}
+
+function requestHasImages(req: any): boolean {
+  return req.body.messages?.some(
+    (msg: any) =>
+      msg.role === "user" &&
+      Array.isArray(msg.content) &&
+      msg.content.some(
+        (item: any) =>
+          item.type === "image" ||
+          item.type === "image_url" ||
+          (Array.isArray(item?.content) &&
+            item.content.some(
+              (sub: any) => sub.type === "image" || sub.type === "image_url"
+            ))
+      )
+  );
+}
+
+function modelSupportsImages(modelName: string): boolean {
+  const normalized = normalizeModelName(modelName);
+  const imageModelPatterns = [
+    /claude/i,
+    /gemini/i,
+    /gpt-4o/i,
+    /gpt-4\.1/i,
+    /gpt-4-vision/i,
+    /qwen.*vl/i,
+    /glm-4v/i,
+    /grok.*vision/i,
+    /pixtral/i,
+    /llava/i,
+  ];
+
+  return imageModelPatterns.some((pattern) => pattern.test(normalized));
+}
+
 const getUseModel = async (
   req: any,
   tokenCount: number,
@@ -132,17 +243,19 @@ const getUseModel = async (
   const Router = projectSpecificRouter || configService.get("Router");
 
   if (req.body.model.includes(",")) {
-    const [provider, model] = req.body.model.split(",");
-    const finalProvider = providers.find(
-      (p: any) => p.name.toLowerCase() === provider
-    );
-    const finalModel = finalProvider?.models?.find(
-      (m: any) => m.toLowerCase() === model
-    );
-    if (finalProvider && finalModel) {
-      return { model: `${finalProvider.name},${finalModel}`, scenarioType: 'default' };
-    }
-    return { model: req.body.model, scenarioType: 'default' };
+    return {
+      model: resolveConfiguredModel(req.body.model, providers),
+      scenarioType: 'default'
+    };
+  }
+
+  const mappedModel = lookupModelMapping(req.body.model, Router?.models as Record<string, string> | undefined);
+  if (mappedModel) {
+    req.log.info(`Using mapped model for ${req.body.model}: ${mappedModel}`);
+    return {
+      model: resolveConfiguredModel(mappedModel, providers),
+      scenarioType: 'modelMapping'
+    };
   }
 
   // if tokenCount is greater than the configured threshold, use the long context model
@@ -205,7 +318,7 @@ export interface RouterContext {
   event?: any;
 }
 
-export type RouterScenarioType = 'default' | 'background' | 'think' | 'longContext' | 'webSearch';
+export type RouterScenarioType = 'default' | 'background' | 'think' | 'longContext' | 'webSearch' | 'modelMapping' | 'image';
 
 export interface RouterFallbackConfig {
   default?: string[];
@@ -213,6 +326,8 @@ export interface RouterFallbackConfig {
   think?: string[];
   longContext?: string[];
   webSearch?: string[];
+  modelMapping?: string[];
+  image?: string[];
 }
 
 export const router = async (req: any, _res: any, context: RouterContext) => {
@@ -224,6 +339,9 @@ export const router = async (req: any, _res: any, context: RouterContext) => {
       req.sessionId = parts[1];
     }
   }
+  const projectSpecificRouter = await getProjectSpecificRouter(req, configService);
+  const routerConfig = projectSpecificRouter || configService.get("Router");
+  const providers = configService.get<any[]>("providers") || [];
   const lastMessageUsage = sessionUsageCache.get(req.sessionId);
   const { messages, system = [], tools }: MessageCreateParamsBase = req.body;
   const rewritePrompt = configService.get("REWRITE_SYSTEM_PROMPT");
@@ -266,12 +384,13 @@ export const router = async (req: any, _res: any, context: RouterContext) => {
       );
     }
 
+    req.tokenCount = tokenCount;
+
     let model;
     const customRouterPath = configService.get("CUSTOM_ROUTER_PATH");
     if (customRouterPath) {
       try {
         const customRouter = require(customRouterPath);
-        req.tokenCount = tokenCount; // Pass token count to custom router
         model = await customRouter(req, configService.getAll(), {
           event,
         });
@@ -287,11 +406,22 @@ export const router = async (req: any, _res: any, context: RouterContext) => {
       // Custom router doesn't provide scenario type, default to 'default'
       req.scenarioType = 'default';
     }
+
+    if (
+      routerConfig?.image &&
+      model !== routerConfig.image &&
+      requestHasImages(req) &&
+      !modelSupportsImages(model)
+    ) {
+      req.log.info(`Using image model fallback for ${model}`);
+      model = resolveConfiguredModel(routerConfig.image, providers);
+      req.scenarioType = 'image';
+    }
+
     req.body.model = model;
   } catch (error: any) {
     req.log.error(`Error in router middleware: ${error.message}`);
-    const Router = configService.get("Router");
-    req.body.model = Router?.default;
+    req.body.model = routerConfig?.default;
     req.scenarioType = 'default';
   }
   return;

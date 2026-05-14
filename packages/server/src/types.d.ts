@@ -1,4 +1,4 @@
-declare module "@musistudio/llms" {
+declare module "@wengine-ai/llms" {
   import { FastifyInstance } from "fastify";
   import { FastifyBaseLogger } from "fastify";
 

@@ -7,10 +7,11 @@ import { Providers } from "@/components/Providers";
 import { Router } from "@/components/Router";
 import { JsonEditor } from "@/components/JsonEditor";
 import { LogViewer } from "@/components/LogViewer";
+import { UsageStats } from "@/components/UsageStats";
 import { Button } from "@/components/ui/button";
 import { useConfig } from "@/components/ConfigProvider";
 import { api } from "@/lib/api";
-import { Settings, Languages, Save, RefreshCw, FileJson, CircleArrowUp, FileText, FileCog } from "lucide-react";
+import { Settings, Languages, Save, RefreshCw, FileJson, CircleArrowUp, FileText, FileCog, BarChart3, Settings2 } from "lucide-react";
 import {
   Popover,
   PopoverContent,
@@ -35,6 +36,7 @@ function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isJsonEditorOpen, setIsJsonEditorOpen] = useState(false);
   const [isLogViewerOpen, setIsLogViewerOpen] = useState(false);
+  const [isUsageStatsOpen, setIsUsageStatsOpen] = useState(false);
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'warning' } | null>(null);
   // 版本检查状态
@@ -60,63 +62,40 @@ function App() {
       console.log('Config saved successfully');
       
       // 根据响应信息进行提示
-      if (response && typeof response === 'object' && 'success' in response) {
-        const apiResponse = response as { success: boolean; message?: string };
-        if (apiResponse.success) {
-          setToast({ message: apiResponse.message || t('app.config_saved_success'), type: 'success' });
-        } else {
-          setToast({ message: apiResponse.message || t('app.config_saved_failed'), type: 'error' });
-        }
+      if (response.success) {
+        setToast({ message: response.message || t('app.config_saved_success'), type: 'success' });
       } else {
-        // 默认成功提示
-        setToast({ message: t('app.config_saved_success'), type: 'success' });
+        setToast({ message: response.message || t('app.config_saved_failed'), type: 'error' });
       }
     } catch (error) {
       console.error('Failed to save config:', error);
-      // Handle error appropriately
       setToast({ message: t('app.config_saved_failed') + ': ' + (error as Error).message, type: 'error' });
     }
   };
 
   const saveConfigAndRestart = async () => {
-    // Handle case where config might be null or undefined
     if (!config) {
       setToast({ message: t('app.config_missing'), type: 'error' });
       return;
     }
-    
+
     try {
-      // Save to API
       const response = await api.updateConfig(config);
-      
-      // Check if save was successful before restarting
-      let saveSuccessful = true;
-      if (response && typeof response === 'object' && 'success' in response) {
-        const apiResponse = response as { success: boolean; message?: string };
-        if (!apiResponse.success) {
-          saveSuccessful = false;
-          setToast({ message: apiResponse.message || t('app.config_saved_failed'), type: 'error' });
-        }
+
+      if (!response.success) {
+        setToast({ message: response.message || t('app.config_saved_failed'), type: 'error' });
+        return;
       }
-      
-      // Only restart if save was successful
-      if (saveSuccessful) {
-        // Restart service
-        const response = await api.restartService();
-        
-        // Show success message or handle as needed
-        console.log('Config saved and service restarted successfully');
-        
-        // 根据响应信息进行提示
-        if (response && typeof response === 'object' && 'success' in response) {
-          const apiResponse = response as { success: boolean; message?: string };
-          if (apiResponse.success) {
-            setToast({ message: apiResponse.message || t('app.config_saved_restart_success'), type: 'success' });
-          }
-        } else {
-          // 默认成功提示
-          setToast({ message: t('app.config_saved_restart_success'), type: 'success' });
+
+      // Restart service
+      const restartResponse = await api.restartService();
+      if (restartResponse && typeof restartResponse === 'object' && 'success' in restartResponse) {
+        const apiResponse = restartResponse as { success: boolean; message?: string };
+        if (apiResponse.success) {
+          setToast({ message: apiResponse.message || t('app.config_saved_restart_success'), type: 'success' });
         }
+      } else {
+        setToast({ message: t('app.config_saved_restart_success'), type: 'success' });
       }
     } catch (error) {
       console.error('Failed to save config and restart:', error);
@@ -316,6 +295,26 @@ function App() {
               <p>{t('app.presets')}</p>
             </TooltipContent>
           </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size="icon" onClick={() => navigate('/advanced/router')} className="transition-all-ease hover:scale-110">
+                <Settings2 className="h-5 w-5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>{t('app.advanced_router')}</p>
+            </TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size="icon" onClick={() => setIsUsageStatsOpen(true)} className="transition-all-ease hover:scale-110">
+                <BarChart3 className="h-5 w-5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>{t('app.usage')}</p>
+            </TooltipContent>
+          </Tooltip>
           <Popover>
             <PopoverTrigger asChild>
               <Button variant="ghost" size="icon" className="transition-all-ease hover:scale-110">
@@ -380,16 +379,18 @@ function App() {
           </Button>
         </div>
       </header>
-      <main className="flex h-[calc(100vh-4rem)] gap-4 p-4 overflow-hidden">
-        <div className="w-3/5">
-          <Providers />
-        </div>
-        <div className="flex w-2/5 flex-col gap-4">
-          <div className="h-3/5">
-            <Router />
+      <main className="flex flex-col h-[calc(100vh-4rem)] gap-4 p-4 overflow-hidden">
+        <div className="flex gap-4 flex-1 min-h-0">
+          <div className="w-3/5">
+            <Providers />
           </div>
-          <div className="flex-1 overflow-hidden">
-            <Transformers />
+          <div className="flex w-2/5 flex-col gap-4">
+            <div className="h-3/5">
+              <Router />
+            </div>
+            <div className="flex-1 overflow-hidden">
+              <Transformers />
+            </div>
           </div>
         </div>
       </main>
@@ -399,11 +400,21 @@ function App() {
         onOpenChange={setIsJsonEditorOpen} 
         showToast={(message, type) => setToast({ message, type })} 
       />
-      <LogViewer 
-        open={isLogViewerOpen} 
-        onOpenChange={setIsLogViewerOpen} 
-        showToast={(message, type) => setToast({ message, type })} 
+      <LogViewer
+        open={isLogViewerOpen}
+        onOpenChange={setIsLogViewerOpen}
+        showToast={(message, type) => setToast({ message, type })}
       />
+      <Dialog open={isUsageStatsOpen} onOpenChange={setIsUsageStatsOpen}>
+        <DialogContent className="max-w-5xl h-[85vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle>{t('usage.title')}</DialogTitle>
+          </DialogHeader>
+          <div className="min-h-0 flex-1">
+            <UsageStats />
+          </div>
+        </DialogContent>
+      </Dialog>
       {/* 版本更新对话框 */}
       <Dialog open={isUpdateDialogOpen} onOpenChange={setIsUpdateDialogOpen}>
         <DialogContent className="max-w-2xl">

@@ -113,7 +113,8 @@ export interface RouterConfig {
   longContextThreshold?: number;
   webSearch?: string;
   image?: string;
-  [key: string]: string | number | undefined;
+  models?: Record<string, string>;
+  [key: string]: string | number | Record<string, string> | undefined;
 }
 
 // Transformer configuration

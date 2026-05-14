@@ -42,7 +42,7 @@ npm install -g @anthropic-ai/claude-code
 Then, install Claude Code Router:
 
 ```shell
-npm install -g @musistudio/claude-code-router
+npm install -g @wengine-ai/claude-code-router
 ```
 
 ### 2. Configuration
@@ -230,6 +230,43 @@ ccr ui
 This will open a web-based interface where you can easily view and edit your `config.json` file.
 
 ![UI](/blog/images/ui.png)
+
+#### Usage Statistics
+
+The dashboard includes a built-in **Usage Statistics** panel at the bottom of the main page. Once your requests are routed through Claude Code Router, usage records are collected automatically and displayed in the UI.
+
+You can use it to view:
+
+- Total requests
+- Input and output tokens
+- Average TTFT
+- Average generation speed
+- Success rate
+- Daily usage chart
+- Detailed request records with filters and pagination
+
+How to use it:
+
+1. Start the router service with `ccr start`
+2. Open the UI with `ccr ui`
+3. Send requests through Claude Code Router, for example with `ccr code`
+4. Return to the main dashboard and check the **Usage Statistics** panel
+
+Usage data is stored in:
+
+```shell
+~/.claude-code-router/data/usage.jsonl
+```
+
+You can also filter records by date range, provider, model, and scenario directly in the UI.
+
+If the `token-speed` plugin is enabled, the panel will also show TTFT and tokens-per-second metrics. Without that plugin, token counts and request statistics still work, but TTFT and speed may appear as `-`.
+
+For API-based access, Claude Code Router also provides:
+
+- `GET /api/usage` — paginated records with summary
+- `GET /api/usage/summary` — summary only
+- `DELETE /api/usage` — clear usage data
 
 ### 5. CLI Model Management
 
@@ -504,10 +541,30 @@ Please help me analyze this code snippet for potential optimizations...
 ```
 
 ## Status Line (Beta)
-To better monitor the status of claude-code-router at runtime, version v1.0.40 includes a built-in statusline tool, which you can enable in the UI.
+
+To better monitor the status of Claude Code Router at runtime, the project includes a built-in status line tool that can be enabled from the UI.
+
 ![statusline-config.png](/blog/images/statusline-config.png)
 
+How to use it:
+
+1. Open the UI with `ccr ui`
+2. Enable **StatusLine** in the configuration panel
+3. Save the configuration and restart the service with `ccr restart`
+4. Start Claude Code with `ccr code`
+
+> The built-in status line is injected automatically when Claude Code is launched with `ccr code`.
+
+The status line supports token-related variables such as:
+
+- `{{inputTokens}}`
+- `{{outputTokens}}`
+- `{{tokenSpeed}}`
+
+This makes it possible to display input tokens, output tokens, and streaming speed directly in the terminal while requests are running.
+
 The effect is as follows:
+
 ![statusline](/blog/images/statusline.png)
 
 ## 🤖 GitHub Actions
@@ -556,7 +613,7 @@ jobs:
 
       - name: Start Claude Code Router
         run: |
-          nohup ~/.bun/bin/bunx @musistudio/claude-code-router@1.0.8 start &
+          nohup ~/.bun/bin/bunx @wengine-ai/claude-code-router@latest start &
         shell: bash
 
       - name: Run Claude Code

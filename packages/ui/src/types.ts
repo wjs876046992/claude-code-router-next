@@ -19,7 +19,9 @@ export interface RouterConfig {
     longContextThreshold: number;
     webSearch: string;
     image: string;
+    models?: Record<string, string>;
     custom?: any;
+    [key: string]: any;
 }
 
 export interface Transformer {
@@ -65,6 +67,8 @@ export interface Config {
   API_TIMEOUT_MS: string;
   PROXY_URL: string;
   CUSTOM_ROUTER_PATH?: string;
+  // Allow extra fields from config file
+  [key: string]: any;
 }
 
 export type AccessLevel = 'restricted' | 'full';

@@ -13,7 +13,7 @@ import {
   extractPreset,
   manifestToPresetFile,
   type PresetFile,
-} from '@CCR/shared';
+} from '@wengine-ai/claude-code-router-shared';
 import AdmZip from 'adm-zip';
 
 // ANSI color codes

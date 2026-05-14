@@ -163,8 +163,8 @@ class ApiClient {
   }
 
   // Update entire configuration
-  async updateConfig(config: Config): Promise<Config> {
-    return this.post<Config>('/config', config);
+  async updateConfig(config: Config): Promise<{ success: boolean; message?: string }> {
+    return this.post<{ success: boolean; message?: string }>('/config', config);
   }
 
   // Get providers
@@ -245,6 +245,38 @@ class ApiClient {
   // Clear logs from specific file
   async clearLogs(filePath: string): Promise<void> {
     return this.delete<void>(`/logs?file=${encodeURIComponent(filePath)}`);
+  }
+
+  // ========== Usage Statistics API methods ==========
+
+  // Get usage records with summary
+  async getUsage(params?: {
+    startDate?: string; endDate?: string; model?: string;
+    provider?: string; scenario?: string; sessionId?: string;
+    page?: number; pageSize?: number;
+  }): Promise<{ records: any[]; summary: any; total: number; page: number; pageSize: number }> {
+    const query = new URLSearchParams();
+    if (params) {
+      Object.entries(params).forEach(([k, v]) => { if (v != null) query.set(k, String(v)); });
+    }
+    const qs = query.toString();
+    return this.get(`/usage${qs ? '?' + qs : ''}`);
+  }
+
+  // Get usage summary only
+  async getUsageSummary(params?: { startDate?: string; endDate?: string }): Promise<any> {
+    const query = new URLSearchParams();
+    if (params) {
+      Object.entries(params).forEach(([k, v]) => { if (v != null) query.set(k, String(v)); });
+    }
+    const qs = query.toString();
+    return this.get(`/usage/summary${qs ? '?' + qs : ''}`);
+  }
+
+  // Clear usage data
+  async clearUsage(beforeDate?: string): Promise<{ success: boolean; message: string }> {
+    const qs = beforeDate ? `?beforeDate=${encodeURIComponent(beforeDate)}` : '';
+    return this.delete(`/usage${qs}`);
   }
 
   // ========== Preset API methods ==========

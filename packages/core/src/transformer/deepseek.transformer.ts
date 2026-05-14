@@ -8,6 +8,26 @@ export class DeepseekTransformer implements Transformer {
     if (request.max_tokens && request.max_tokens > 8192) {
       request.max_tokens = 8192; // DeepSeek has a max token limit of 8192
     }
+
+    // DeepSeek V4 thinking mode requirement:
+    // When assistant messages have thinking content from previous turns (e.g., Claude thinking mode),
+    // convert it to reasoning_content format for DeepSeek API.
+    // Only process messages that actually have thinking content - skip messages from non-thinking models.
+    request.messages.forEach((message) => {
+      if (message.role === "assistant") {
+        // Check if this message has valid thinking content
+        const thinkingContent = message.thinking?.content;
+        if (thinkingContent && typeof thinkingContent === "string" && thinkingContent.trim()) {
+          // Convert thinking to reasoning_content for DeepSeek
+          (message as any).reasoning_content = thinkingContent;
+        }
+        // Always clean up thinking field - DeepSeek doesn't recognize it
+        if (message.thinking) {
+          delete message.thinking;
+        }
+      }
+    });
+
     return request;
   }
 
