@@ -409,8 +409,21 @@ async function getServer(options: RunOptions = {}) {
             while (true) {
               const { done, value } = await reader.read();
               if (done) break;
-              if ((value as any).event === 'message_delta' && (value as any).data?.usage) {
-                sessionUsageCache.put(usageSessionId, (value as any).data.usage);
+              const event = (value as any).event;
+              const data = (value as any).data;
+              // Capture usage from message_delta, message_start, or any event with usage
+              if (data?.usage) {
+                const existingUsage = sessionUsageCache.get(usageSessionId) || {};
+                // Merge usage data, preserving all fields
+                const mergedUsage = { ...existingUsage, ...data.usage };
+                // Debug log for cache tokens
+                if (data.usage.cache_read_input_tokens || data.usage.cache_creation_input_tokens) {
+                  console.log('[Usage] Cache tokens:', {
+                    cache_read: data.usage.cache_read_input_tokens,
+                    cache_creation: data.usage.cache_creation_input_tokens
+                  });
+                }
+                sessionUsageCache.put(usageSessionId, mergedUsage);
               }
             }
           } catch (readError: any) {
@@ -442,6 +455,18 @@ async function getServer(options: RunOptions = {}) {
   });
   serverInstance.addHook("onSend", async (req: any, reply: any, payload: any) => {
     event.emit('onSend', req, reply, payload);
+    // Capture error response body for usage stats
+    if (reply.statusCode >= 400 && req.pathname?.endsWith("/v1/messages")) {
+      try {
+        if (typeof payload === 'string') {
+          req.errorResponseBody = payload;
+        } else if (payload && typeof payload === 'object') {
+          req.errorResponseBody = JSON.stringify(payload);
+        }
+      } catch (e) {
+        // Ignore serialization errors
+      }
+    }
     return payload;
   });
 
@@ -456,8 +481,10 @@ async function getServer(options: RunOptions = {}) {
 
       // Extract error message if request failed
       let errorMessage: string | undefined;
+      let errorResponseBody: string | undefined;
       if (reply.statusCode >= 400) {
         errorMessage = req.errorMessage || reply.errorMessage || (req.error?.message || req.error?.toString?.() || undefined);
+        errorResponseBody = req.errorResponseBody;
       }
 
       appendUsage({
@@ -479,6 +506,7 @@ async function getServer(options: RunOptions = {}) {
           : 0,
         status: reply.statusCode < 400 ? "success" : "error",
         errorMessage,
+        responseBody: errorResponseBody,
       });
     } catch (e) {
       // Usage tracking must not affect the response

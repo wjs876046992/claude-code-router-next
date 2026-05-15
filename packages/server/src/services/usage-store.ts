@@ -22,6 +22,7 @@ export interface UsageRecord {
   durationMs: number;
   status: "success" | "error";
   errorMessage?: string;
+  responseBody?: string; // Full response body for error cases
 }
 
 export interface UsageSummary {

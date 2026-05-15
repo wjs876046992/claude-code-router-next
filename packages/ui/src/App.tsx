@@ -1,13 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
-import { SettingsDialog } from "@/components/SettingsDialog";
 import { Transformers } from "@/components/Transformers";
 import { Providers } from "@/components/Providers";
 import { Router } from "@/components/Router";
 import { JsonEditor } from "@/components/JsonEditor";
 import { LogViewer } from "@/components/LogViewer";
-import { UsageStats } from "@/components/UsageStats";
 import { Button } from "@/components/ui/button";
 import { useConfig } from "@/components/ConfigProvider";
 import { api } from "@/lib/api";
@@ -28,10 +26,8 @@ function App() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const { config, error } = useConfig();
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isJsonEditorOpen, setIsJsonEditorOpen] = useState(false);
   const [isLogViewerOpen, setIsLogViewerOpen] = useState(false);
-  const [isUsageStatsOpen, setIsUsageStatsOpen] = useState(false);
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'warning' } | null>(null);
   const [isNewVersionAvailable, setIsNewVersionAvailable] = useState(false);
@@ -200,7 +196,7 @@ function App() {
         <div className="flex items-center gap-2">
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button variant="ghost" size="icon" onClick={() => setIsSettingsOpen(true)}>
+              <Button variant="ghost" size="icon" onClick={() => navigate('/settings')}>
                 <Settings className="h-5 w-5" />
               </Button>
             </TooltipTrigger>
@@ -233,16 +229,6 @@ function App() {
           </div>
         </div>
       </main>
-      <SettingsDialog
-        isOpen={isSettingsOpen}
-        onOpenChange={setIsSettingsOpen}
-        onOpenJsonEditor={() => setIsJsonEditorOpen(true)}
-        onOpenLogViewer={() => setIsLogViewerOpen(true)}
-        onOpenUsageStats={() => setIsUsageStatsOpen(true)}
-        onCheckUpdates={() => checkForUpdates(true)}
-        isCheckingUpdate={isCheckingUpdate}
-        onUpdateAvailable={isNewVersionAvailable}
-      />
       <JsonEditor
         open={isJsonEditorOpen}
         onOpenChange={setIsJsonEditorOpen}
@@ -253,16 +239,6 @@ function App() {
         onOpenChange={setIsLogViewerOpen}
         showToast={(message, type) => setToast({ message, type })}
       />
-      <Dialog open={isUsageStatsOpen} onOpenChange={setIsUsageStatsOpen}>
-        <DialogContent className="max-w-5xl h-[85vh] overflow-hidden flex flex-col">
-          <DialogHeader>
-            <DialogTitle>{t('usage.title')}</DialogTitle>
-          </DialogHeader>
-          <div className="min-h-0 flex-1">
-            <UsageStats />
-          </div>
-        </DialogContent>
-      </Dialog>
       {/* Update dialog */}
       <Dialog open={isUpdateDialogOpen} onOpenChange={setIsUpdateDialogOpen}>
         <DialogContent className="max-w-2xl">

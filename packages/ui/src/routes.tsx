@@ -4,6 +4,8 @@ import { Login } from '@/components/Login';
 import { DebugPage } from '@/components/DebugPage';
 import { Presets } from '@/components/Presets';
 import { AdvancedRouter } from '@/components/AdvancedRouter';
+import { SettingsPage } from '@/components/SettingsPage';
+import { UsageStatsPage } from '@/components/UsageStatsPage';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import PublicRoute from '@/components/PublicRoute';
 
@@ -31,6 +33,14 @@ export const router = createMemoryRouter([
   {
     path: '/advanced/router',
     element: <ProtectedRoute><AdvancedRouter /></ProtectedRoute>,
+  },
+  {
+    path: '/settings',
+    element: <ProtectedRoute><SettingsPage /></ProtectedRoute>,
+  },
+  {
+    path: '/usage',
+    element: <ProtectedRoute><UsageStatsPage /></ProtectedRoute>,
   },
 ], {
   initialEntries: ['/dashboard']

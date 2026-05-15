@@ -11,15 +11,44 @@ export interface Provider {
   transformer?: ProviderTransformer;
 }
 
+export const MODEL_FAMILIES = ["opus", "sonnet", "haiku"] as const;
+export type ModelFamily = typeof MODEL_FAMILIES[number];
+
+export interface ModelFamilyFallback {
+    default?: string[];
+    background?: string[];
+    think?: string[];
+    longContext?: string[];
+    extendedContext?: string[];
+    webSearch?: string[];
+    image?: string[];
+    [key: string]: string[] | undefined;
+}
+
+export interface ModelFamilyConfig {
+    default: string;
+    background?: string;
+    think?: string;
+    longContext?: string;
+    longContextThreshold?: number;
+    extendedContext?: string;
+    webSearch?: string;
+    image?: string;
+    fallback?: ModelFamilyFallback;
+}
+
 export interface RouterConfig {
     default: string;
     background: string;
     think: string;
     longContext: string;
     longContextThreshold: number;
+    extendedContext?: string;
+    extendedContextThreshold?: number;
     webSearch: string;
     image: string;
     models?: Record<string, string>;
+    families?: Record<string, ModelFamilyConfig>;
     custom?: any;
     [key: string]: any;
 }

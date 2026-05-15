@@ -129,12 +129,21 @@
     "think": "思考",
     "longContext": "长上下文",
     "longContextThreshold": "上下文阈值",
+    "extendedContext": "扩展上下文 (1M)",
+    "extendedContextThreshold": "扩展阈值",
     "webSearch": "网络搜索",
     "image": "图像",
     "forceUseImageAgent": "强制使用图像代理",
     "selectModel": "选择一个模型...",
     "searchModel": "搜索模型...",
-    "noModelFound": "未找到模型."
+    "noModelFound": "未找到模型.",
+    "family_routing": "模型族路由",
+    "family_routing_desc": "将 opus/sonnet/haiku 模型族路由到不同的供应商和模型",
+    "add_family": "添加模型族",
+    "family_name": "模型族名称",
+    "family_name_placeholder": "例如: opus, sonnet, haiku",
+    "remove_family": "移除模型族",
+    "family_fallback_title": "模型族备用配置"
   },
   "settings": {
     "tabs": {
@@ -143,6 +152,7 @@
       "tools": "工具"
     },
     "language": "语言",
+    "token_speed": "Token 速度与 TTFT 追踪",
     "fallback_title": "备用配置",
     "fallback_description": "当主模型请求失败时，按顺序尝试以下备用模型。",
     "tools": {
@@ -339,6 +349,9 @@
     "total_requests": "总请求数",
     "total_input_tokens": "输入 Token",
     "total_output_tokens": "输出 Token",
+    "total_tokens": "总 Token",
+    "cache_read": "缓存命中",
+    "cache_creation": "缓存创建",
     "avg_ttft": "平均 TTFT",
     "avg_speed": "平均速度",
     "success_rate": "成功率",

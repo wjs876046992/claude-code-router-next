@@ -129,12 +129,21 @@
     "think": "Think",
     "longContext": "Long Context",
     "longContextThreshold": "Context Threshold",
+    "extendedContext": "Extended Context (1M)",
+    "extendedContextThreshold": "Extended Threshold",
     "webSearch": "Web Search",
     "image": "Image",
     "forceUseImageAgent": "Force Use Image Agent",
     "selectModel": "Select a model...",
     "searchModel": "Search model...",
-    "noModelFound": "No model found."
+    "noModelFound": "No model found.",
+    "family_routing": "Model Family Routing",
+    "family_routing_desc": "Route opus/sonnet/haiku model families to different providers and models",
+    "add_family": "Add Family",
+    "family_name": "Family Name",
+    "family_name_placeholder": "e.g. opus, sonnet, haiku",
+    "remove_family": "Remove Family",
+    "family_fallback_title": "Family Fallback"
   },
   "settings": {
     "tabs": {
@@ -143,6 +152,7 @@
       "tools": "Tools"
     },
     "language": "Language",
+    "token_speed": "Token Speed & TTFT Tracking",
     "fallback_title": "Fallback Configuration",
     "fallback_description": "When the primary model fails, try these fallback models in order.",
     "tools": {
@@ -340,6 +350,9 @@
     "total_requests": "Total Requests",
     "total_input_tokens": "Input Tokens",
     "total_output_tokens": "Output Tokens",
+    "total_tokens": "Total Tokens",
+    "cache_read": "Cache Hit",
+    "cache_creation": "Cache Create",
     "avg_ttft": "Avg TTFT",
     "avg_speed": "Avg Speed",
     "success_rate": "Success Rate",

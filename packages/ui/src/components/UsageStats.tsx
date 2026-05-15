@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -11,7 +11,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { BarChart3, Trash2, ChevronDown, ChevronUp, RefreshCw } from "lucide-react";
+import { BarChart3, Trash2, RefreshCw } from "lucide-react";
 import {
   Tooltip,
   TooltipContent,
@@ -34,6 +34,7 @@ interface UsageRecord {
   durationMs: number;
   status: "success" | "error";
   errorMessage?: string;
+  responseBody?: string;
 }
 
 interface UsageSummary {
@@ -42,6 +43,8 @@ interface UsageSummary {
   errorCount: number;
   totalInputTokens: number;
   totalOutputTokens: number;
+  totalCacheReadInputTokens: number;
+  totalCacheCreationInputTokens: number;
   avgTtft: number | null;
   avgTokensPerSecond: number | null;
   byModel: Record<string, { count: number; inputTokens: number; outputTokens: number }>;
@@ -91,7 +94,7 @@ export function UsageStats() {
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(false);
-  const [expanded, setExpanded] = useState(true);
+  const autoRefreshRef = useRef<NodeJS.Timeout | null>(null);
 
   // Filters
   const [startDate, setStartDate] = useState("");
@@ -125,6 +128,13 @@ export function UsageStats() {
 
   useEffect(() => {
     loadData();
+    // Auto refresh every 30 seconds
+    autoRefreshRef.current = setInterval(loadData, 30000);
+    return () => {
+      if (autoRefreshRef.current) {
+        clearInterval(autoRefreshRef.current);
+      }
+    };
   }, [loadData]);
 
   const handleClear = async () => {
@@ -154,10 +164,9 @@ export function UsageStats() {
     <Card className="h-full flex flex-col">
       <CardHeader className="pb-2 flex-shrink-0">
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2 cursor-pointer" onClick={() => setExpanded(!expanded)}>
+          <div className="flex items-center gap-2">
             <BarChart3 className="h-5 w-5 text-blue-500" />
             <CardTitle className="text-base">{t("usage.title")}</CardTitle>
-            {expanded ? <ChevronUp className="h-4 w-4 text-gray-400" /> : <ChevronDown className="h-4 w-4 text-gray-400" />}
           </div>
           <div className="flex items-center gap-1">
             <Button variant="ghost" size="icon" className="h-7 w-7" onClick={loadData} disabled={loading}>
@@ -170,11 +179,48 @@ export function UsageStats() {
         </div>
       </CardHeader>
 
-      {expanded && (
-        <CardContent className="flex-1 overflow-auto pt-0">
+      <CardContent className="flex-1 overflow-auto pt-0">
+          {/* Time range presets */}
+          <div className="flex gap-2 mb-3">
+            {[24, 168, 720].map((hours) => {
+              const label = hours === 24 ? "24h" : hours === 168 ? "7d" : "30d";
+              const isActive = startDate && !endDate && (() => {
+                const d = new Date(startDate);
+                const now = new Date();
+                const diff = (now.getTime() - d.getTime()) / (1000 * 60 * 60);
+                return Math.abs(diff - hours) < 1;
+              })();
+              return (
+                <Button
+                  key={hours}
+                  variant={isActive ? "default" : "outline"}
+                  size="sm"
+                  className="h-8 text-sm px-4"
+                  onClick={() => {
+                    const now = new Date();
+                    const start = new Date(now.getTime() - hours * 60 * 60 * 1000);
+                    setStartDate(start.toISOString().slice(0, 10));
+                    setEndDate("");
+                    setPage(1);
+                  }}
+                >
+                  {label}
+                </Button>
+              );
+            })}
+            <Button
+              variant={!startDate && !endDate ? "default" : "outline"}
+              size="sm"
+              className="h-8 text-sm px-4"
+              onClick={() => { setStartDate(""); setEndDate(""); setPage(1); }}
+            >
+              {t("usage.all")}
+            </Button>
+          </div>
+
           {/* Summary Cards */}
           {summary && (
-            <div className="grid grid-cols-3 gap-2 mb-3">
+            <div className="grid grid-cols-4 gap-2 mb-3">
               <div className="rounded-lg border bg-blue-50 p-2 text-center">
                 <div className="text-lg font-bold text-blue-600">{summary.totalRequests}</div>
                 <div className="text-xs text-gray-500">{t("usage.total_requests")}</div>
@@ -188,19 +234,27 @@ export function UsageStats() {
                 <div className="text-lg font-bold text-yellow-600">{formatTokens(summary.totalOutputTokens)}</div>
                 <div className="text-xs text-gray-500">{t("usage.total_output_tokens")}</div>
               </div>
-              <div className="rounded-lg border bg-purple-50 p-2 text-center">
-                <div className="text-lg font-bold text-purple-600">{formatMs(summary.avgTtft)}</div>
-                <div className="text-xs text-gray-500">{t("usage.avg_ttft")}</div>
-              </div>
-              <div className="rounded-lg border bg-cyan-50 p-2 text-center">
-                <div className="text-lg font-bold text-cyan-600">{formatSpeed(summary.avgTokensPerSecond)}</div>
-                <div className="text-xs text-gray-500">{t("usage.avg_speed")}</div>
+              <div className="rounded-lg border bg-indigo-50 p-2 text-center">
+                <div className="text-lg font-bold text-indigo-600">{formatTokens(summary.totalInputTokens + summary.totalOutputTokens)}</div>
+                <div className="text-xs text-gray-500">{t("usage.total_tokens")}</div>
               </div>
               <div className="rounded-lg border bg-gray-50 p-2 text-center">
                 <div className="text-lg font-bold text-gray-700">
                   {summary.totalRequests > 0 ? ((summary.successCount / summary.totalRequests) * 100).toFixed(1) + "%" : "-"}
                 </div>
                 <div className="text-xs text-gray-500">{t("usage.success_rate")}</div>
+              </div>
+              <div className="rounded-lg border bg-emerald-50 p-2 text-center">
+                <div className="text-lg font-bold text-emerald-600">{formatTokens(summary.totalCacheReadInputTokens || 0)}</div>
+                <div className="text-xs text-gray-500">{t("usage.cache_read")}</div>
+              </div>
+              <div className="rounded-lg border bg-teal-50 p-2 text-center">
+                <div className="text-lg font-bold text-teal-600">{formatTokens(summary.totalCacheCreationInputTokens || 0)}</div>
+                <div className="text-xs text-gray-500">{t("usage.cache_creation")}</div>
+              </div>
+              <div className="rounded-lg border bg-purple-50 p-2 text-center">
+                <div className="text-lg font-bold text-purple-600">{formatMs(summary.avgTtft)}</div>
+                <div className="text-xs text-gray-500">{t("usage.avg_ttft")}</div>
               </div>
             </div>
           )}
@@ -301,14 +355,21 @@ export function UsageStats() {
                     <td className="text-right p-1.5">{formatSpeed(r.tokensPerSecond)}</td>
                     <td className="text-right p-1.5">{formatDuration(r.durationMs)}</td>
                     <td className="text-center p-1.5">
-                      {r.status === "error" && r.errorMessage ? (
+                      {r.status === "error" && (r.errorMessage || r.responseBody) ? (
                         <TooltipProvider>
                           <Tooltip>
                             <TooltipTrigger asChild>
                               <span className="inline-block w-2 h-2 rounded-full bg-red-500 cursor-pointer" />
                             </TooltipTrigger>
-                            <TooltipContent className="max-w-xs text-xs whitespace-pre-wrap">
-                              {r.errorMessage}
+                            <TooltipContent className="max-w-md text-xs whitespace-pre-wrap overflow-auto max-h-64">
+                              {r.responseBody ? (
+                                <div>
+                                  <div className="font-semibold mb-1">Response Body:</div>
+                                  <pre className="text-xs bg-gray-100 p-2 rounded overflow-auto">
+                                    {r.responseBody}
+                                  </pre>
+                                </div>
+                              ) : r.errorMessage}
                             </TooltipContent>
                           </Tooltip>
                         </TooltipProvider>
@@ -337,7 +398,6 @@ export function UsageStats() {
             </div>
           )}
         </CardContent>
-      )}
     </Card>
   );
 }

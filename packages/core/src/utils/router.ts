@@ -232,6 +232,64 @@ function modelSupportsImages(modelName: string): boolean {
   return imageModelPatterns.some((pattern) => pattern.test(normalized));
 }
 
+interface RouterFamilyConfig {
+  default: string;
+  background?: string;
+  think?: string;
+  longContext?: string;
+  longContextThreshold?: number;
+  extendedContext?: string;
+  webSearch?: string;
+  image?: string;
+  fallback?: Record<string, string[]>;
+}
+
+function resolveFamilyModel(
+  req: any,
+  tokenCount: number,
+  familyConfig: RouterFamilyConfig,
+  providers: any[],
+  lastUsage?: Usage
+): { model: string; scenarioType: RouterScenarioType } | null {
+  const longContextThreshold = familyConfig.longContextThreshold || 60000;
+
+  // Check extended context (1M+) first - higher priority than long context
+  const extendedThreshold = 200000;
+  if (tokenCount > extendedThreshold && familyConfig.extendedContext) {
+    req.log.info(`Family: using extended context model (1M+), tokens: ${tokenCount}`);
+    return { model: resolveConfiguredModel(familyConfig.extendedContext, providers), scenarioType: 'extendedContext' };
+  }
+
+  const lastUsageThreshold =
+    lastUsage &&
+    lastUsage.input_tokens > longContextThreshold &&
+    tokenCount > 20000;
+  const tokenCountThreshold = tokenCount > longContextThreshold;
+
+  if ((lastUsageThreshold || tokenCountThreshold) && familyConfig.longContext) {
+    req.log.info(`Family: using long context model, tokens: ${tokenCount}`);
+    return { model: resolveConfiguredModel(familyConfig.longContext, providers), scenarioType: 'longContext' };
+  }
+
+  if (
+    Array.isArray(req.body.tools) &&
+    req.body.tools.some((tool: any) => tool.type?.startsWith("web_search")) &&
+    familyConfig.webSearch
+  ) {
+    return { model: resolveConfiguredModel(familyConfig.webSearch, providers), scenarioType: 'webSearch' };
+  }
+
+  if (req.body.thinking && familyConfig.think) {
+    return { model: resolveConfiguredModel(familyConfig.think, providers), scenarioType: 'think' };
+  }
+
+  if (familyConfig.default) {
+    return { model: resolveConfiguredModel(familyConfig.default, providers), scenarioType: 'default' };
+  }
+
+  return null;
+}
+
 const getUseModel = async (
   req: any,
   tokenCount: number,
@@ -249,6 +307,19 @@ const getUseModel = async (
     };
   }
 
+  // Model family routing: extract opus/sonnet/haiku and use family-specific config
+  const family = extractModelFamily(req.body.model);
+  const familyConfig = Router?.families?.[family || ''] as RouterFamilyConfig | undefined;
+  if (familyConfig) {
+    req.log.info(`Using model family routing for: ${family}`);
+    req.modelFamily = family;
+    req.familyFallback = familyConfig.fallback;
+    const familyResult = resolveFamilyModel(req, tokenCount, familyConfig, providers, lastUsage);
+    if (familyResult) {
+      return familyResult;
+    }
+  }
+
   const mappedModel = lookupModelMapping(req.body.model, Router?.models as Record<string, string> | undefined);
   if (mappedModel) {
     req.log.info(`Using mapped model for ${req.body.model}: ${mappedModel}`);
@@ -256,6 +327,15 @@ const getUseModel = async (
       model: resolveConfiguredModel(mappedModel, providers),
       scenarioType: 'modelMapping'
     };
+  }
+
+  // Check extended context (1M+) first
+  const extendedContextThreshold = Router?.extendedContextThreshold || 200000;
+  if (tokenCount > extendedContextThreshold && Router?.extendedContext) {
+    req.log.info(
+      `Using extended context (1M) model due to token count: ${tokenCount}, threshold: ${extendedContextThreshold}`
+    );
+    return { model: Router.extendedContext, scenarioType: 'extendedContext' };
   }
 
   // if tokenCount is greater than the configured threshold, use the long context model
@@ -318,7 +398,7 @@ export interface RouterContext {
   event?: any;
 }
 
-export type RouterScenarioType = 'default' | 'background' | 'think' | 'longContext' | 'webSearch' | 'modelMapping' | 'image';
+export type RouterScenarioType = 'default' | 'background' | 'think' | 'longContext' | 'extendedContext' | 'webSearch' | 'modelMapping' | 'image';
 
 export interface RouterFallbackConfig {
   default?: string[];

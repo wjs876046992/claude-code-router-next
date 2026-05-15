@@ -113,13 +113,17 @@ async function handleFallback(
   error: any
 ): Promise<any> {
   const scenarioType = (req as any).scenarioType || 'default';
-  const fallbackConfig = fastify.configService.get<any>('fallback');
+  const familyFallback = (req as any).familyFallback;
+  const globalFallback = fastify.configService.get<any>('fallback');
 
-  if (!fallbackConfig || !fallbackConfig[scenarioType]) {
-    return null;
+  // Try family fallback first, then global fallback
+  let fallbackList: string[] = [];
+  if (familyFallback?.[scenarioType]) {
+    fallbackList = familyFallback[scenarioType];
+  } else if (globalFallback?.[scenarioType]) {
+    fallbackList = globalFallback[scenarioType];
   }
 
-  const fallbackList = fallbackConfig[scenarioType] as string[];
   if (!Array.isArray(fallbackList) || fallbackList.length === 0) {
     return null;
   }
