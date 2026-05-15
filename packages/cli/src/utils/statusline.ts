@@ -241,6 +241,12 @@ const DEFAULT_THEME: StatusLineThemeConfig = {
             icon: "↓", // Down arrow
             text: "{{outputTokens}}",
             color: "bright_yellow"
+        },
+        {
+            type: "totalTokens",
+            icon: "󱧙", // nf-md-counter
+            text: "{{totalTokens}}",
+            color: "bright_white"
         }
     ]
 };
@@ -282,6 +288,13 @@ const POWERLINE_THEME: StatusLineThemeConfig = {
             text: "{{outputTokens}}",
             color: "white",
             background: "bg_bright_yellow"
+        },
+        {
+            type: "totalTokens",
+            icon: "󱧙", // nf-md-counter
+            text: "{{totalTokens}}",
+            color: "white",
+            background: "bg_bright_white"
         }
     ]
 };

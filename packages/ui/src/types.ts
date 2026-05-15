@@ -114,3 +114,19 @@ export interface Config {
 }
 
 export type AccessLevel = 'restricted' | 'full';
+
+// Provider health status
+export interface ProviderHealthState {
+  provider: string;
+  model: string;
+  status: 'closed' | 'open' | 'half-open';
+  failureCount: number;
+  successCount: number;
+  lastFailureTime: number;
+  lastError?: string;
+}
+
+export interface ProviderHealthResponse {
+  states: ProviderHealthState[];
+  timestamp: string;
+}

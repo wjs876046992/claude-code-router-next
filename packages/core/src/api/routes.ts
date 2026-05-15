@@ -91,12 +91,10 @@ async function handleTransformerEndpoint(
     // Format and return response
     return formatResponse(finalResponse, reply, body);
   } catch (error: any) {
-    // Handle fallback if error occurs
-    if (error.code === 'provider_response_error') {
-      const fallbackResult = await handleFallback(req, reply, fastify, transformer, error);
-      if (fallbackResult) {
-        return fallbackResult;
-      }
+    // Handle fallback for any request error (timeout, network, API errors)
+    const fallbackResult = await handleFallback(req, reply, fastify, transformer, error);
+    if (fallbackResult) {
+      return fallbackResult;
     }
     throw error;
   }
@@ -343,6 +341,14 @@ async function sendRequestToProvider(
 ) {
   const url = config.url || new URL(provider.baseUrl);
 
+  // Apply timeout from config
+  if (!config.TIMEOUT) {
+    const timeoutMs = fastify.configService.get<string | number>('API_TIMEOUT_MS');
+    if (timeoutMs) {
+      config.TIMEOUT = typeof timeoutMs === 'string' ? parseInt(timeoutMs, 10) : timeoutMs;
+    }
+  }
+
   // Handle authentication in passthrough mode
   if (bypass && typeof transformer.auth === "function") {
     const auth = await transformer.auth(requestBody, provider);
@@ -507,6 +513,24 @@ export const registerApiRoutes = async (
 
   fastify.get("/health", async () => {
     return { status: "ok", timestamp: new Date().toISOString() };
+  });
+
+  // Provider health status endpoint
+  fastify.get("/providers/health", async () => {
+    const healthStore = getHealthStore();
+    const states = healthStore.getAllStates();
+    return {
+      states: states.map(s => ({
+        provider: s.provider,
+        model: s.model,
+        status: s.status,
+        failureCount: s.failureCount,
+        successCount: s.successCount,
+        lastFailureTime: s.lastFailureTime,
+        lastError: s.lastError,
+      })),
+      timestamp: new Date().toISOString(),
+    };
   });
 
   const transformersWithEndpoint =

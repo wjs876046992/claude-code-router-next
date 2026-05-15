@@ -355,6 +355,24 @@ class ApiClient {
   async installPresetFromGitHub(repo: string, name?: string): Promise<any> {
     return this.post<any>('/presets/install/github', { repo, name });
   }
+
+  // ========== Provider Health API methods ==========
+
+  // Get provider health status
+  async getProviderHealth(): Promise<{
+    states: Array<{
+      provider: string;
+      model: string;
+      status: 'closed' | 'open' | 'half-open';
+      failureCount: number;
+      successCount: number;
+      lastFailureTime: number;
+      lastError?: string;
+    }>;
+    timestamp: string;
+  }> {
+    return this.get('/providers/health');
+  }
 }
 
 // Create a default instance of the API client
