@@ -101,6 +101,7 @@ delete pkg.scripts;
 pkg.files = ['dist/*', 'README.md', 'LICENSE'];
 pkg.dependencies = {
   '@wengine-ai/llms': `^${corePkg.version}`,
+  'lru-cache': `^11.2.2`,
 };
 pkg.peerDependencies = {
   node: '>=18.0.0',

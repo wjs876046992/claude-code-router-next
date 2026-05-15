@@ -246,3 +246,10 @@ ui (standalone frontend application)
 
 - Main configuration example: Complete example in README.md
 - Custom router example: `custom-router.example.js`
+
+## Agent Workflow
+- **Parallel execution**: For development tasks, default to dispatching multiple developer subAgents in parallel (e.g., `voltagent-core-dev:backend-developer`, `voltagent-lang:java-architect`) to maximize efficiency
+- After code completion: call `code-reviewer` for review
+- For security-sensitive code: call `security-auditor`
+- For core architecture changes: call `architect-reviewer`
+

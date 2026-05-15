@@ -1,38 +1,65 @@
 import { IAgent, ITool } from "./type";
 import { createHash } from "crypto";
-import * as LRU from "lru-cache";
 
 interface ImageCacheEntry {
   source: any;
   timestamp: number;
 }
 
+// Map-based cache with TTL to avoid esbuild bundling issues with lru-cache
 class ImageCache {
-  private cache: any;
+  private cache = new Map<string, ImageCacheEntry>();
+  private maxSize: number;
+  private ttl: number;
 
-  constructor(maxSize = 100) {
-    const CacheClass: any = (LRU as any).LRUCache || (LRU as any);
-    this.cache = new CacheClass({
-      max: maxSize,
-      ttl: 5 * 60 * 1000, // 5 minutes
-    });
+  constructor(maxSize = 100, ttl = 5 * 60 * 1000) {
+    this.maxSize = maxSize;
+    this.ttl = ttl;
+  }
+
+  private evictExpired(): void {
+    const now = Date.now();
+    for (const [key, entry] of this.cache) {
+      if (now - entry.timestamp > this.ttl) {
+        this.cache.delete(key);
+      }
+    }
+  }
+
+  private trim(): void {
+    if (this.cache.size <= this.maxSize) return;
+    const toDelete = [...this.cache.keys()].slice(0, this.cache.size - this.maxSize);
+    for (const key of toDelete) this.cache.delete(key);
   }
 
   storeImage(id: string, source: any): void {
     if (this.hasImage(id)) return;
+    this.evictExpired();
     this.cache.set(id, {
       source,
       timestamp: Date.now(),
     });
+    this.trim();
   }
 
   getImage(id: string): any {
     const entry = this.cache.get(id);
-    return entry ? entry.source : null;
+    if (!entry) return null;
+    if (Date.now() - entry.timestamp > this.ttl) {
+      this.cache.delete(id);
+      return null;
+    }
+    return entry.source;
   }
 
   hasImage(hash: string): boolean {
-    return this.cache.has(hash);
+    const entry = this.cache.get(hash);
+    if (!entry) return false;
+    if (Date.now() - entry.timestamp > this.ttl) {
+      this.cache.delete(hash);
+      return false;
+    }
+    return true;
   }
 
   clear(): void {
@@ -40,6 +67,7 @@ class ImageCache {
   }
 
   size(): number {
+    this.evictExpired();
     return this.cache.size;
   }
 }

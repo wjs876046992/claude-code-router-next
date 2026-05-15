@@ -24,8 +24,8 @@ try {
 
   // Build the server application
   console.log('Building server application...');
-  // 使用 minify 和 tree-shaking 优化体积
-  execSync('esbuild src/index.ts --bundle --platform=node --minify --tree-shaking=true --outfile=dist/index.js', {
+  // 使用 minify 和 tree-shaking 优化体积；external lru-cache to avoid esbuild bundling issues
+  execSync('esbuild src/index.ts --bundle --platform=node --minify --tree-shaking=true --external:lru-cache --outfile=dist/index.js', {
     stdio: 'inherit',
     cwd: serverDir
   });

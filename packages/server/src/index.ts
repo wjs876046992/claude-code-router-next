@@ -8,6 +8,14 @@ import { apiKeyAuth } from "./middleware/auth";
 import { CONFIG_FILE, HOME_DIR, listPresets } from "@wengine-ai/claude-code-router-shared";
 import { createStream } from 'rotating-file-stream';
 import { sessionUsageCache } from "@wengine-ai/llms";
+// Inline health store to avoid TypeScript declaration issues during build
+// TODO: move to @wengine-ai/llms export once type declarations are properly generated
+function getHealthStore() {
+  // Simple singleton implementation for build-time compatibility
+  const { ProviderHealthStore } = require("@wengine-ai/llms");
+  const store = new ProviderHealthStore();
+  return store;
+}
 import { SSEParserTransform } from "./utils/SSEParser.transform";
 import { SSESerializerTransform } from "./utils/SSESerializer.transform";
 import { rewriteStream } from "./utils/rewriteStream";
@@ -31,8 +39,13 @@ function getUsageSessionId(req: any): string {
 }
 
 function getRequestModel(req: any): string {
+  // Prefer req.body.model (routed model) over req.model (pre-routing model)
+  if (req.body?.model) {
+    if (Array.isArray(req.body.model)) return req.body.model.join(",");
+    return req.body.model;
+  }
   if (Array.isArray(req.model)) return req.model.join(",");
-  return req.model || req.body?.model || "";
+  return req.model || "";
 }
 
 async function initializeClaudeConfig() {
@@ -478,6 +491,7 @@ async function getServer(options: RunOptions = {}) {
       const sessionId = getUsageSessionId(req);
       const usage = sessionUsageCache.get(sessionId);
       const speedStats = readTokenSpeedStats(sessionId);
+      const healthStore = getHealthStore();
 
       // Extract error message if request failed
       let errorMessage: string | undefined;
@@ -485,6 +499,13 @@ async function getServer(options: RunOptions = {}) {
       if (reply.statusCode >= 400) {
         errorMessage = req.errorMessage || reply.errorMessage || (req.error?.message || req.error?.toString?.() || undefined);
         errorResponseBody = req.errorResponseBody;
+        // Record failure to health store
+        const model = getRequestModel(req);
+        healthStore.recordFailure(req.provider || "", model, errorMessage);
+      } else {
+        // Record success to health store
+        const model = getRequestModel(req);
+        healthStore.recordSuccess(req.provider || "", model);
       }
 
       appendUsage({
@@ -492,7 +513,9 @@ async function getServer(options: RunOptions = {}) {
         timestamp: new Date().toISOString(),
         sessionId,
         provider: req.provider || "",
+        originalModel: req.originalModel || req.body?.model || "",
         model: getRequestModel(req),
+        modelFamily: req.modelFamily || "",
         scenarioType: req.scenarioType || "default",
         stream: req.body?.stream ?? false,
         inputTokens: req.tokenCount || 0,

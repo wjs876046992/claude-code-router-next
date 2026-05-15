@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "@/lib/api";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -11,7 +11,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { BarChart3, Trash2, RefreshCw } from "lucide-react";
+import { Trash2, RefreshCw } from "lucide-react";
 import {
   Tooltip,
   TooltipContent,
@@ -24,7 +24,9 @@ interface UsageRecord {
   timestamp: string;
   sessionId: string;
   provider: string;
-  model: string;
+  originalModel: string; // Original request model before routing
+  model: string; // Actual routed model
+  modelFamily: string;
   scenarioType: string;
   stream: boolean;
   inputTokens: number;
@@ -50,6 +52,7 @@ interface UsageSummary {
   byModel: Record<string, { count: number; inputTokens: number; outputTokens: number }>;
   byProvider: Record<string, { count: number; inputTokens: number; outputTokens: number }>;
   byScenario: Record<string, { count: number; inputTokens: number; outputTokens: number }>;
+  byFamily: Record<string, { count: number; inputTokens: number; outputTokens: number }>;
   byDay: Record<string, { count: number; inputTokens: number; outputTokens: number }>;
 }
 
@@ -99,6 +102,7 @@ export function UsageStats() {
   // Filters
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
+  const [activeRange, setActiveRange] = useState<number | null>(null);
   const [filterModel, setFilterModel] = useState("");
   const [filterProvider, setFilterProvider] = useState("");
   const [filterScenario, setFilterScenario] = useState("");
@@ -129,7 +133,7 @@ export function UsageStats() {
   useEffect(() => {
     loadData();
     // Auto refresh every 30 seconds
-    autoRefreshRef.current = setInterval(loadData, 30000);
+    autoRefreshRef.current = setInterval(loadData, 10000);
     return () => {
       if (autoRefreshRef.current) {
         clearInterval(autoRefreshRef.current);
@@ -162,22 +166,14 @@ export function UsageStats() {
 
   return (
     <Card className="h-full flex flex-col">
-      <CardHeader className="pb-2 flex-shrink-0">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <BarChart3 className="h-5 w-5 text-blue-500" />
-            <CardTitle className="text-base">{t("usage.title")}</CardTitle>
-          </div>
-          <div className="flex items-center gap-1">
-            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={loadData} disabled={loading}>
-              <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
-            </Button>
-            <Button variant="ghost" size="icon" className="h-7 w-7 text-red-400 hover:text-red-600" onClick={handleClear}>
-              <Trash2 className="h-3.5 w-3.5" />
-            </Button>
-          </div>
-        </div>
-      </CardHeader>
+      <div className="flex items-center justify-end gap-1 pb-2 flex-shrink-0 px-6 pt-6">
+        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={loadData} disabled={loading}>
+          <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+        </Button>
+        <Button variant="ghost" size="icon" className="h-7 w-7 text-red-400 hover:text-red-600" onClick={handleClear}>
+          <Trash2 className="h-3.5 w-3.5" />
+        </Button>
+      </div>
 
       <CardContent className="flex-1 overflow-auto pt-0">
           {/* Time range presets */}
@@ -331,7 +327,7 @@ export function UsageStats() {
                   <th className="text-left p-1.5">{t("usage.time")}</th>
                   <th className="text-left p-1.5">{t("usage.provider")}</th>
                   <th className="text-left p-1.5">{t("usage.model")}</th>
-                  <th className="text-left p-1.5">{t("usage.scenario")}</th>
+                  <th className="text-left p-1.5">{t("usage.route")}</th>
                   <th className="text-right p-1.5">{t("usage.input_tokens")}</th>
                   <th className="text-right p-1.5">{t("usage.output_tokens")}</th>
                   <th className="text-right p-1.5">{t("usage.ttft")}</th>
@@ -343,12 +339,17 @@ export function UsageStats() {
               <tbody>
                 {records.length === 0 ? (
                   <tr><td colSpan={10} className="text-center p-4 text-gray-400">{t("usage.no_data")}</td></tr>
-                ) : records.map((r) => (
+                ) : records.map((r) => {
+                  // Show model mapping: original → routed
+                  const modelDisplay = r.originalModel && r.originalModel !== r.model
+                    ? `${r.originalModel} → ${r.model}`
+                    : r.model;
+                  return (
                   <tr key={r.id} className="border-b hover:bg-gray-50">
                     <td className="p-1.5 whitespace-nowrap">{formatTime(r.timestamp)}</td>
                     <td className="p-1.5">{r.provider}</td>
-                    <td className="p-1.5 max-w-[120px] truncate" title={r.model}>{r.model}</td>
-                    <td className="p-1.5">{r.scenarioType}</td>
+                    <td className="p-1.5 max-w-[180px] truncate" title={modelDisplay}>{modelDisplay}</td>
+                    <td className="p-1.5">{r.modelFamily ? `${r.modelFamily}/${r.scenarioType}` : r.scenarioType}</td>
                     <td className="text-right p-1.5">{formatTokens(r.inputTokens)}</td>
                     <td className="text-right p-1.5">{formatTokens(r.outputTokens)}</td>
                     <td className="text-right p-1.5">{formatMs(r.ttft)}</td>
@@ -378,7 +379,8 @@ export function UsageStats() {
                       )}
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>

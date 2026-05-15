@@ -16,6 +16,7 @@ import {getPresetDir, loadConfigFromManifest, PID_FILE, readPresetFile, REFERENC
 import fs, { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import { parseStatusLineData, StatusLineInput } from "./utils/statusline";
+import { injectStatusLine, removeStatusLine, injectModelFamilies, removeModelFamilies } from "./utils/claudeSettings";
 import {handlePresetCommand} from "./utils/preset";
 import { handleInstallCommand } from "./utils/installCommand";
 
@@ -211,8 +212,15 @@ async function main() {
   switch (command) {
     case "start":
       await run();
+      try {
+        const cfg = await readConfigFile();
+        injectStatusLine(cfg);
+        injectModelFamilies(cfg);
+      } catch {}
       break;
     case "stop":
+      try { removeStatusLine(); } catch {}
+      try { removeModelFamilies(); } catch {}
       try {
         const pid = parseInt(readFileSync(PID_FILE, "utf-8"));
         process.kill(pid);
@@ -430,7 +438,14 @@ async function main() {
       console.log(`claude-code-router version: ${version}`);
       break;
     case "restart":
+      try { removeStatusLine(); } catch {}
+      try { removeModelFamilies(); } catch {}
       await restartService();
+      try {
+        const cfg = await readConfigFile();
+        injectStatusLine(cfg);
+        injectModelFamilies(cfg);
+      } catch {}
       break;
     case "-h":
     case "help":

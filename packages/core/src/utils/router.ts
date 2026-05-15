@@ -4,9 +4,9 @@ import { readFile } from "fs/promises";
 import { opendir, stat } from "fs/promises";
 import { join } from "path";
 import { CLAUDE_PROJECTS_DIR, HOME_DIR } from "@wengine-ai/claude-code-router-shared";
-import { LRUCache } from "lru-cache";
 import { ConfigService } from "../services/config";
 import { TokenizerService } from "../services/tokenizer";
+import { getHealthStore } from "../services/provider-health";
 
 // Types from @anthropic-ai/sdk
 interface Tool {
@@ -135,15 +135,27 @@ function normalizeModelName(modelName: string): string {
   return normalized.trim().toLowerCase();
 }
 
-function extractModelFamily(modelName: string): string | null {
+function extractModelFamily(modelName: string): { family: string | null; extended: boolean } {
   const normalized = normalizeModelName(modelName);
-  const claudeMatch = normalized.match(
-    /claude-(?:\d+-\d+-|\d+-)?(sonnet|opus|haiku)(?:-|$)/i
-  ) || normalized.match(/claude-(sonnet|opus|haiku)(?:-|$)/i);
-  if (claudeMatch) {
-    return claudeMatch[1].toLowerCase();
+
+  // Check for [1m] suffix for extended context
+  const extended = normalized.includes("[1m]") || normalized.endsWith("[1m");
+  const cleanModel = normalized.replace(/\[1m\]|\[1m$/g, "");
+
+  // Match ccr-opus, ccr-sonnet, ccr-haiku format (injected by CCR into Claude Code settings)
+  const ccrMatch = cleanModel.match(/^ccr-(opus|sonnet|haiku)$/i);
+  if (ccrMatch) {
+    return { family: ccrMatch[1].toLowerCase(), extended };
   }
-  return null;
+
+  // Match standard Claude model names: claude-opus-4-20250514, claude-sonnet-4-20250514, etc.
+  const claudeMatch = cleanModel.match(
+    /claude-(?:\d+-\d+-|\d+-)?(sonnet|opus|haiku)(?:-|$)/i
+  ) || cleanModel.match(/claude-(sonnet|opus|haiku)(?:-|$)/i);
+  if (claudeMatch) {
+    return { family: claudeMatch[1].toLowerCase(), extended };
+  }
+  return { family: null, extended };
 }
 
 function lookupModelMapping(
@@ -160,7 +172,7 @@ function lookupModelMapping(
     return mapping[normalized];
   }
 
-  const family = extractModelFamily(modelName);
+  const { family } = extractModelFamily(modelName);
   if (family && mapping[family]) {
     return mapping[family];
   }
@@ -175,7 +187,7 @@ function lookupModelMapping(
   return null;
 }
 
-function resolveConfiguredModel(modelName: string, providers: any[]): string {
+function resolveConfiguredModel(modelName: string, providers: any[], skipHealthCheck?: boolean): string {
   if (!modelName?.includes(",")) {
     return modelName;
   }
@@ -183,6 +195,15 @@ function resolveConfiguredModel(modelName: string, providers: any[]): string {
   const [provider, ...modelParts] = modelName.split(",");
   const providerName = provider.trim();
   const routeModel = modelParts.join(",").trim();
+
+  // Check health status - skip if model is in fail pool
+  if (!skipHealthCheck) {
+    const healthStore = getHealthStore();
+    if (!healthStore.isAvailable(providerName, routeModel)) {
+      return null; // Model is unavailable, return null to signal skip
+    }
+  }
+
   const finalProvider = providers.find(
     (p: any) => p.name.toLowerCase() === providerName.toLowerCase()
   );
@@ -239,6 +260,7 @@ interface RouterFamilyConfig {
   longContext?: string;
   longContextThreshold?: number;
   extendedContext?: string;
+  enableExtendedContext?: boolean; // Whether to append [1m] in Claude Code settings
   webSearch?: string;
   image?: string;
   fallback?: Record<string, string[]>;
@@ -249,15 +271,22 @@ function resolveFamilyModel(
   tokenCount: number,
   familyConfig: RouterFamilyConfig,
   providers: any[],
-  lastUsage?: Usage
+  lastUsage?: Usage,
+  modelExtended?: boolean
 ): { model: string; scenarioType: RouterScenarioType } | null {
   const longContextThreshold = familyConfig.longContextThreshold || 60000;
 
   // Check extended context (1M+) first - higher priority than long context
+  // Triggered by: 1) explicit [1m] suffix in model name, 2) token count > 200k
   const extendedThreshold = 200000;
-  if (tokenCount > extendedThreshold && familyConfig.extendedContext) {
-    req.log.info(`Family: using extended context model (1M+), tokens: ${tokenCount}`);
-    return { model: resolveConfiguredModel(familyConfig.extendedContext, providers), scenarioType: 'extendedContext' };
+  const shouldUseExtended = modelExtended || tokenCount > extendedThreshold;
+  if (shouldUseExtended && familyConfig.extendedContext) {
+    const model = resolveConfiguredModel(familyConfig.extendedContext, providers);
+    if (model) {
+      req.log.info(`Family: using extended context model (1M+), tokens: ${tokenCount}, explicit: ${modelExtended}`);
+      return { model, scenarioType: 'extendedContext' };
+    }
+    req.log.warn(`Family: extendedContext model unavailable (fail pool), skipping`);
   }
 
   const lastUsageThreshold =
@@ -267,8 +296,12 @@ function resolveFamilyModel(
   const tokenCountThreshold = tokenCount > longContextThreshold;
 
   if ((lastUsageThreshold || tokenCountThreshold) && familyConfig.longContext) {
-    req.log.info(`Family: using long context model, tokens: ${tokenCount}`);
-    return { model: resolveConfiguredModel(familyConfig.longContext, providers), scenarioType: 'longContext' };
+    const model = resolveConfiguredModel(familyConfig.longContext, providers);
+    if (model) {
+      req.log.info(`Family: using long context model, tokens: ${tokenCount}`);
+      return { model, scenarioType: 'longContext' };
+    }
+    req.log.warn(`Family: longContext model unavailable (fail pool), skipping`);
   }
 
   if (
@@ -276,15 +309,27 @@ function resolveFamilyModel(
     req.body.tools.some((tool: any) => tool.type?.startsWith("web_search")) &&
     familyConfig.webSearch
   ) {
-    return { model: resolveConfiguredModel(familyConfig.webSearch, providers), scenarioType: 'webSearch' };
+    const model = resolveConfiguredModel(familyConfig.webSearch, providers);
+    if (model) {
+      return { model, scenarioType: 'webSearch' };
+    }
+    req.log.warn(`Family: webSearch model unavailable (fail pool), skipping`);
   }
 
   if (req.body.thinking && familyConfig.think) {
-    return { model: resolveConfiguredModel(familyConfig.think, providers), scenarioType: 'think' };
+    const model = resolveConfiguredModel(familyConfig.think, providers);
+    if (model) {
+      return { model, scenarioType: 'think' };
+    }
+    req.log.warn(`Family: think model unavailable (fail pool), skipping`);
   }
 
   if (familyConfig.default) {
-    return { model: resolveConfiguredModel(familyConfig.default, providers), scenarioType: 'default' };
+    const model = resolveConfiguredModel(familyConfig.default, providers);
+    if (model) {
+      return { model, scenarioType: 'default' };
+    }
+    req.log.warn(`Family: default model unavailable (fail pool), skipping`);
   }
 
   return null;
@@ -301,20 +346,21 @@ const getUseModel = async (
   const Router = projectSpecificRouter || configService.get("Router");
 
   if (req.body.model.includes(",")) {
-    return {
-      model: resolveConfiguredModel(req.body.model, providers),
-      scenarioType: 'default'
-    };
+    const model = resolveConfiguredModel(req.body.model, providers);
+    if (model) {
+      return { model, scenarioType: 'default' };
+    }
+    req.log.warn(`Explicit model ${req.body.model} unavailable (fail pool), trying alternatives`);
   }
 
   // Model family routing: extract opus/sonnet/haiku and use family-specific config
-  const family = extractModelFamily(req.body.model);
+  const { family, extended: modelExtended } = extractModelFamily(req.body.model);
   const familyConfig = Router?.families?.[family || ''] as RouterFamilyConfig | undefined;
   if (familyConfig) {
-    req.log.info(`Using model family routing for: ${family}`);
+    req.log.info(`Using model family routing for: ${family}${modelExtended ? ' (1M)' : ''}`);
     req.modelFamily = family;
     req.familyFallback = familyConfig.fallback;
-    const familyResult = resolveFamilyModel(req, tokenCount, familyConfig, providers, lastUsage);
+    const familyResult = resolveFamilyModel(req, tokenCount, familyConfig, providers, lastUsage, modelExtended);
     if (familyResult) {
       return familyResult;
     }
@@ -322,11 +368,12 @@ const getUseModel = async (
 
   const mappedModel = lookupModelMapping(req.body.model, Router?.models as Record<string, string> | undefined);
   if (mappedModel) {
-    req.log.info(`Using mapped model for ${req.body.model}: ${mappedModel}`);
-    return {
-      model: resolveConfiguredModel(mappedModel, providers),
-      scenarioType: 'modelMapping'
-    };
+    const model = resolveConfiguredModel(mappedModel, providers);
+    if (model) {
+      req.log.info(`Using mapped model for ${req.body.model}: ${mappedModel}`);
+      return { model, scenarioType: 'modelMapping' };
+    }
+    req.log.warn(`Mapped model ${mappedModel} unavailable (fail pool), skipping`);
   }
 
   // Check extended context (1M+) first
@@ -412,6 +459,9 @@ export interface RouterFallbackConfig {
 
 export const router = async (req: any, _res: any, context: RouterContext) => {
   const { configService, event } = context;
+  // Save original request model before routing (for usage stats mapping)
+  req.originalModel = req.body.model;
+
   // Parse sessionId from metadata.user_id
   if (req.body.metadata?.user_id) {
     const parts = req.body.metadata.user_id.split("_session_");
@@ -493,9 +543,14 @@ export const router = async (req: any, _res: any, context: RouterContext) => {
       requestHasImages(req) &&
       !modelSupportsImages(model)
     ) {
-      req.log.info(`Using image model fallback for ${model}`);
-      model = resolveConfiguredModel(routerConfig.image, providers);
-      req.scenarioType = 'image';
+      const imageModel = resolveConfiguredModel(routerConfig.image, providers);
+      if (imageModel) {
+        req.log.info(`Using image model fallback for ${model}`);
+        model = imageModel;
+        req.scenarioType = 'image';
+      } else {
+        req.log.warn(`Image model ${routerConfig.image} unavailable (fail pool), keeping ${model}`);
+      }
     }
 
     req.body.model = model;
@@ -509,10 +564,17 @@ export const router = async (req: any, _res: any, context: RouterContext) => {
 
 // Memory cache for sessionId to project name mapping
 // null value indicates previously searched but not found
-// Uses LRU cache with max 1000 entries
-const sessionProjectCache = new LRUCache<string, string>({
-  max: 1000,
-});
+// Uses Map instead of lru-cache to avoid esbuild bundling issues
+const sessionProjectCache = new Map<string, string | null>();
+const SESSION_CACHE_MAX = 1000;
+
+function trimCache(): void {
+  if (sessionProjectCache.size <= SESSION_CACHE_MAX) return;
+  const keysToDelete = [...sessionProjectCache.keys()].slice(0, sessionProjectCache.size - SESSION_CACHE_MAX);
+  for (const key of keysToDelete) {
+    sessionProjectCache.delete(key);
+  }
+}
 
 export const searchProjectBySession = async (
   sessionId: string
@@ -560,17 +622,20 @@ export const searchProjectBySession = async (
       if (result) {
         // Cache the found result
         sessionProjectCache.set(sessionId, result);
+        trimCache();
         return result;
       }
     }
 
     // Cache not found result (null value means previously searched but not found)
     sessionProjectCache.set(sessionId, '');
+    trimCache();
     return null; // No matching project found
   } catch (error) {
     console.error("Error searching for project by session:", error);
     // Cache null result on error to avoid repeated errors
     sessionProjectCache.set(sessionId, '');
+    trimCache();
     return null;
   }
 };

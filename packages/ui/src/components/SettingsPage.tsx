@@ -101,7 +101,7 @@ export function SettingsPage() {
     setConfig({ ...config, Router: { ...currentRouter, families } });
   };
 
-  const handleFamilyChange = (familyName: string, field: string, value: string) => {
+  const handleFamilyChange = (familyName: string, field: string, value: string | boolean) => {
     const currentRouter = config.Router || {};
     const families = { ...(currentRouter.families || {}) };
     families[familyName] = { ...(families[familyName] || {}), [field]: value };
@@ -554,6 +554,21 @@ export function SettingsPage() {
                           searchPlaceholder={t("router.searchModel")}
                           emptyPlaceholder={t("router.noModelFound")}
                         />
+                      </div>
+                      <div className="space-y-1.5 flex items-center gap-2">
+                        <Switch
+                          id={`${familyName}-enableExtendedContext`}
+                          checked={(familyCfg as any).enableExtendedContext ?? false}
+                          onCheckedChange={(checked) => handleFamilyChange(familyName, "enableExtendedContext", checked)}
+                        />
+                        <div className="flex flex-col">
+                          <Label htmlFor={`${familyName}-enableExtendedContext`} className="text-sm">
+                            {t("router.enableExtendedContext")}
+                          </Label>
+                          <span className="text-xs text-gray-500">
+                            {t("router.enableExtendedContextDesc")}
+                          </span>
+                        </div>
                       </div>
                       <div className="space-y-1.5">
                         <Label>{t("router.extendedContext")}</Label>

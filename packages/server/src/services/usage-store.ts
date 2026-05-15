@@ -10,7 +10,9 @@ export interface UsageRecord {
   timestamp: string;
   sessionId: string;
   provider: string;
-  model: string;
+  originalModel: string; // Original request model before routing
+  model: string; // Actual routed model
+  modelFamily: string;
   scenarioType: string;
   stream: boolean;
   inputTokens: number;
@@ -38,6 +40,7 @@ export interface UsageSummary {
   byModel: Record<string, { count: number; inputTokens: number; outputTokens: number; cacheReadInputTokens: number; cacheCreationInputTokens: number }>;
   byProvider: Record<string, { count: number; inputTokens: number; outputTokens: number; cacheReadInputTokens: number; cacheCreationInputTokens: number }>;
   byScenario: Record<string, { count: number; inputTokens: number; outputTokens: number; cacheReadInputTokens: number; cacheCreationInputTokens: number }>;
+  byFamily: Record<string, { count: number; inputTokens: number; outputTokens: number; cacheReadInputTokens: number; cacheCreationInputTokens: number }>;
   byDay: Record<string, { count: number; inputTokens: number; outputTokens: number; cacheReadInputTokens: number; cacheCreationInputTokens: number }>;
 }
 
@@ -109,6 +112,7 @@ function computeSummary(records: UsageRecord[]): UsageSummary {
     byModel: {},
     byProvider: {},
     byScenario: {},
+    byFamily: {},
     byDay: {},
   };
 
@@ -140,6 +144,10 @@ function computeSummary(records: UsageRecord[]): UsageSummary {
     aggregateInto(summary.byModel, r.model, r.inputTokens, r.outputTokens, r.cacheReadInputTokens || 0, r.cacheCreationInputTokens || 0);
     aggregateInto(summary.byProvider, r.provider, r.inputTokens, r.outputTokens, r.cacheReadInputTokens || 0, r.cacheCreationInputTokens || 0);
     aggregateInto(summary.byScenario, r.scenarioType, r.inputTokens, r.outputTokens, r.cacheReadInputTokens || 0, r.cacheCreationInputTokens || 0);
+    if (r.modelFamily) {
+      const familyScenario = `${r.modelFamily}/${r.scenarioType}`;
+      aggregateInto(summary.byFamily, familyScenario, r.inputTokens, r.outputTokens, r.cacheReadInputTokens || 0, r.cacheCreationInputTokens || 0);
+    }
     aggregateInto(summary.byDay, day, r.inputTokens, r.outputTokens, r.cacheReadInputTokens || 0, r.cacheCreationInputTokens || 0);
   }
 

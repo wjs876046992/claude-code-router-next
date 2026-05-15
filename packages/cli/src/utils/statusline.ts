@@ -761,6 +761,7 @@ export async function parseStatusLineData(input: StatusLineInput, presetName?: s
             contextWindowSize: contextWindowSize > 1000 ? `${(contextWindowSize / 1000).toFixed(0)}k` : contextWindowSize.toString(),
             totalInputTokens: totalInputTokens > 1000 ? `${(totalInputTokens / 1000).toFixed(1)}k` : totalInputTokens.toString(),
             totalOutputTokens: totalOutputTokens > 1000 ? `${(totalOutputTokens / 1000).toFixed(1)}k` : totalOutputTokens.toString(),
+            totalTokens: (totalInputTokens + totalOutputTokens) > 1000 ? `${((totalInputTokens + totalOutputTokens) / 1000).toFixed(1)}k` : (totalInputTokens + totalOutputTokens).toString(),
             cost: formattedCost || '',
             duration: formattedDuration || '',
             linesAdded: linesAdded.toString(),

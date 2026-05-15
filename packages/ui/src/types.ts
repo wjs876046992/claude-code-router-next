@@ -32,6 +32,7 @@ export interface ModelFamilyConfig {
     longContext?: string;
     longContextThreshold?: number;
     extendedContext?: string;
+    enableExtendedContext?: boolean;
     webSearch?: string;
     image?: string;
     fallback?: ModelFamilyFallback;

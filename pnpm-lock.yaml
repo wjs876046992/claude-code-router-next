@@ -65,6 +65,10 @@ importers:
         version: 3.4.19(tsx@4.21.0)
 
   packages/cli:
+    dependencies:
+      lru-cache:
+        specifier: ^11.2.2
+        version: 11.2.2
     devDependencies:
       '@inquirer/prompts':
         specifier: ^5.0.0
@@ -9613,7 +9617,7 @@ snapshots:
 
   '@docusaurus/react-loadable@6.0.0(react@18.3.1)':
     dependencies:
-      '@types/react': 18.3.27
+      '@types/react': 19.2.14
       react: 18.3.1
 
   '@docusaurus/theme-classic@3.9.2(@types/react@18.3.27)(esbuild@0.25.10)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(typescript@5.9.3)':
