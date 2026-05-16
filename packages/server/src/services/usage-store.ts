@@ -247,6 +247,13 @@ export function clear(beforeDate?: string): void {
   cachedRecords = null;
 }
 
+function parseNumericTokenSpeedValue(value: any): number | null {
+  if (value == null) return null;
+  if (typeof value === 'number') return value;
+  const num = parseInt(String(value), 10);
+  return isNaN(num) ? null : num;
+}
+
 // Read token-speed temp file for a session to get TTFT and speed
 export function readTokenSpeedStats(sessionId: string): {
   ttft: number | null;
@@ -261,8 +268,8 @@ export function readTokenSpeedStats(sessionId: string): {
       const content = readFileSync(exactFile, "utf-8");
       const data = JSON.parse(content);
       return {
-        ttft: data.timeToFirstToken ?? null,
-        tokensPerSecond: data.tokensPerSecond ?? null,
+        ttft: parseNumericTokenSpeedValue(data.timeToFirstToken),
+        tokensPerSecond: parseNumericTokenSpeedValue(data.tokensPerSecond),
       };
     } catch {
       // Continue to search for timestamped files

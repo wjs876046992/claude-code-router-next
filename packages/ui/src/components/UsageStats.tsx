@@ -65,7 +65,7 @@ function formatTokens(n: number): string {
 function formatMs(ms: number | null): string {
   if (ms == null) return "-";
   if (ms >= 1000) return (ms / 1000).toFixed(1) + "s";
-  return ms + "ms";
+  return String(Math.round(ms));
 }
 
 function formatSpeed(speed: number | null): string {
