@@ -130,9 +130,11 @@ export function ProviderList({ providers, healthStates, onEdit, onRemove }: Prov
             <div className="flex-1 space-y-1.5">
               <div className="flex items-center gap-2">
                 <p className="text-md font-semibold text-gray-800">{providerName}</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <p className="text-sm text-gray-500">{apiBaseUrl}</p>
                 <HealthIndicator status={health.status} />
               </div>
-              <p className="text-sm text-gray-500">{apiBaseUrl}</p>
               {health.lastError && (
                 <p className="text-xs text-red-500 truncate max-w-md" title={health.lastError}>
                   Error: {health.lastError}
