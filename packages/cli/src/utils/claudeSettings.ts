@@ -142,11 +142,12 @@ export function injectModelFamilies(config: any): void {
     }
   }
 
-  // Set main model to first configured family
-  if (primaryFamily) {
-    const primaryConfig = families[primaryFamily];
-    const extendedSuffix = hasExtendedContext(primaryConfig) ? "[1m]" : "";
-    settings.env.ANTHROPIC_MODEL = `ccr-${primaryFamily}${extendedSuffix}`;
+  // Set main model to sonnet (official default), fallback to first configured family
+  const defaultFamily = families["sonnet"] ? "sonnet" : primaryFamily;
+  if (defaultFamily) {
+    const defaultConfig = families[defaultFamily];
+    const extendedSuffix = hasExtendedContext(defaultConfig) ? "[1m]" : "";
+    settings.env.ANTHROPIC_MODEL = `ccr-${defaultFamily}${extendedSuffix}`;
   }
 
   // Set reasoning model to first family with think config, or first family

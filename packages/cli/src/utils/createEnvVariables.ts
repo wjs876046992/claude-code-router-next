@@ -41,9 +41,11 @@ function getModelEnvVars(config: any): Record<string, string | undefined> {
   }
 
   if (primaryFamily) {
-    const primaryConfig = families[primaryFamily];
-    const extendedSuffix = hasExtendedContext(primaryConfig) ? "[1m]" : "";
-    env.ANTHROPIC_MODEL = `ccr-${primaryFamily}${extendedSuffix}`;
+    // Default to sonnet (Claude Code official default), fallback to first configured family
+    const defaultFamily = families["sonnet"] ? "sonnet" : primaryFamily;
+    const defaultConfig = families[defaultFamily];
+    const extendedSuffix = hasExtendedContext(defaultConfig) ? "[1m]" : "";
+    env.ANTHROPIC_MODEL = `ccr-${defaultFamily}${extendedSuffix}`;
 
     const thinkFamily = familyNames.find((f: string) => families[f]?.think);
     if (thinkFamily) {
@@ -51,7 +53,7 @@ function getModelEnvVars(config: any): Record<string, string | undefined> {
       const thinkExtendedSuffix = hasExtendedContext(thinkConfig) ? "[1m]" : "";
       env.ANTHROPIC_REASONING_MODEL = `ccr-${thinkFamily}${thinkExtendedSuffix}`;
     } else {
-      env.ANTHROPIC_REASONING_MODEL = `ccr-${primaryFamily}${extendedSuffix}`;
+      env.ANTHROPIC_REASONING_MODEL = `ccr-${defaultFamily}${extendedSuffix}`;
     }
   }
 
