@@ -133,7 +133,6 @@ export function ProviderList({ providers, healthStates, onEdit, onRemove }: Prov
               </div>
               <div className="flex items-center gap-2">
                 <p className="text-sm text-gray-500">{apiBaseUrl}</p>
-                <HealthIndicator status={health.status} />
               </div>
               {health.lastError && (
                 <p className="text-xs text-red-500 truncate max-w-md" title={health.lastError}>
@@ -150,6 +149,7 @@ export function ProviderList({ providers, healthStates, onEdit, onRemove }: Prov
               </div>
             </div>
             <div className="ml-4 flex flex-shrink-0 items-center gap-2">
+              <HealthIndicator status={health.status} />
               <Button variant="ghost" size="icon" onClick={() => onEdit(index)} className="transition-all-ease hover:scale-110">
                 <Pencil className="h-4 w-4" />
               </Button>
