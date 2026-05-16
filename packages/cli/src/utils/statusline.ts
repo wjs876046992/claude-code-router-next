@@ -389,14 +389,26 @@ const FULL_THEME: StatusLineThemeConfig = {
     ]
 };
 
-// Format usage information, use k unit if greater than 1000
-function formatUsage(input_tokens: number, output_tokens: number): string {
-    if (input_tokens > 1000 || output_tokens > 1000) {
-        const inputFormatted = input_tokens > 1000 ? `${(input_tokens / 1000).toFixed(1)}k` : `${input_tokens}`;
-        const outputFormatted = output_tokens > 1000 ? `${(output_tokens / 1000).toFixed(1)}k` : `${output_tokens}`;
-        return `${inputFormatted} ${outputFormatted}`;
+// Format token count with auto unit: k -> m -> b
+function formatTokenCount(count: number): string {
+    if (count < 1000) {
+        return `${count}`;
     }
-    return `${input_tokens} ${output_tokens}`;
+    if (count < 1_000_000) {
+        const val = count / 1000;
+        return `${val % 1 === 0 ? val.toFixed(0) : val.toFixed(1)}k`;
+    }
+    if (count < 1_000_000_000) {
+        const val = count / 1_000_000;
+        return `${val % 1 === 0 ? val.toFixed(0) : val.toFixed(1)}m`;
+    }
+    const val = count / 1_000_000_000;
+    return `${val % 1 === 0 ? val.toFixed(0) : val.toFixed(1)}b`;
+}
+
+// Format usage information with auto unit
+function formatUsage(input_tokens: number, output_tokens: number): string {
+    return `${formatTokenCount(input_tokens)} ${formatTokenCount(output_tokens)}`;
 }
 
 // Calculate context window usage percentage
@@ -783,10 +795,10 @@ export async function parseStatusLineData(input: StatusLineInput, presetName?: s
             timeToFirstToken: formattedTimeToFirstToken,
             contextPercent: contextPercent.toString(),
             streamingIndicator,
-            contextWindowSize: contextWindowSize > 1000 ? `${(contextWindowSize / 1000).toFixed(0)}k` : contextWindowSize.toString(),
-            totalInputTokens: totalInputTokens > 1000 ? `${(totalInputTokens / 1000).toFixed(1)}k` : totalInputTokens.toString(),
-            totalOutputTokens: totalOutputTokens > 1000 ? `${(totalOutputTokens / 1000).toFixed(1)}k` : totalOutputTokens.toString(),
-            totalTokens: (totalInputTokens + totalOutputTokens) > 1000 ? `${((totalInputTokens + totalOutputTokens) / 1000).toFixed(1)}k` : (totalInputTokens + totalOutputTokens).toString(),
+            contextWindowSize: formatTokenCount(contextWindowSize),
+            totalInputTokens: formatTokenCount(totalInputTokens),
+            totalOutputTokens: formatTokenCount(totalOutputTokens),
+            totalTokens: formatTokenCount(totalInputTokens + totalOutputTokens),
             cost: formattedCost || '',
             duration: formattedDuration || '',
             linesAdded: linesAdded.toString(),
