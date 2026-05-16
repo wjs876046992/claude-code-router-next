@@ -229,10 +229,11 @@ export const tokenSpeedPlugin: CCRPlugin = {
               stats.tokenTimestamps = stats.tokenTimestamps.filter(ts => ts > oneSecondAgo);
               stats.tokensPerSecond = stats.tokenTimestamps.length;
             } else {
-              // For final output, use average speed over entire request
-              const duration = (stats.lastTokenTime - stats.startTime) / 1000; // seconds
-              if (duration > 0) {
-                stats.tokensPerSecond = Math.round(stats.tokenCount / duration);
+              // For final output, use decode speed (total time minus TTFT)
+              const ttft = stats.firstTokenTime ? (stats.firstTokenTime - stats.startTime) : 0;
+              const decodeDuration = (stats.lastTokenTime - stats.startTime - ttft) / 1000; // seconds
+              if (decodeDuration > 0) {
+                stats.tokensPerSecond = Math.round(stats.tokenCount / decodeDuration);
               }
             }
 
@@ -384,7 +385,10 @@ export const tokenSpeedPlugin: CCRPlugin = {
 
       // Only output stats if we found tokens
       if (tokenCount > 0) {
-        const duration = (endTime - startTime) / 1000; // seconds
+        const ttft = Math.round(endTime - startTime);
+        const decodeDuration = (endTime - startTime - ttft) > 0
+          ? (endTime - startTime - ttft) / 1000
+          : (endTime - startTime) / 1000;
 
         const stats: TokenStats = {
           requestId,
@@ -392,8 +396,8 @@ export const tokenSpeedPlugin: CCRPlugin = {
           startTime,
           lastTokenTime: endTime,
           tokenCount,
-          tokensPerSecond: duration > 0 ? Math.round(tokenCount / duration) : 0,
-          timeToFirstToken: Math.round(endTime - startTime),
+          tokensPerSecond: decodeDuration > 0 ? Math.round(tokenCount / decodeDuration) : 0,
+          timeToFirstToken: ttft,
           stream: false,
           tokenTimestamps: []
         };
