@@ -63,6 +63,8 @@ export interface AssistantMessage {
         usage: {
             input_tokens: number;
             output_tokens: number;
+            cache_creation_input_tokens?: number;
+            cache_read_input_tokens?: number;
         };
     };
 }
@@ -719,6 +721,8 @@ export async function parseStatusLineData(input: StatusLineInput, presetName?: s
         // Also accumulate total tokens from all assistant messages
         let sessionTotalInputTokens = 0;
         let sessionTotalOutputTokens = 0;
+        let sessionTotalCacheCreationTokens = 0;
+        let sessionTotalCacheReadTokens = 0;
 
         for (let i = lines.length - 1; i >= 0; i--) {
             try {
@@ -728,6 +732,8 @@ export async function parseStatusLineData(input: StatusLineInput, presetName?: s
                     if (message.message.usage) {
                         sessionTotalInputTokens += message.message.usage.input_tokens;
                         sessionTotalOutputTokens += message.message.usage.output_tokens;
+                        sessionTotalCacheCreationTokens += message.message.usage.cache_creation_input_tokens || 0;
+                        sessionTotalCacheReadTokens += message.message.usage.cache_read_input_tokens || 0;
                     }
 
                     // Get last message's model and tokens
@@ -809,6 +815,8 @@ export async function parseStatusLineData(input: StatusLineInput, presetName?: s
         // Use context_window totals if available, otherwise use accumulated session totals from transcript
         const totalInputTokens = input.context_window?.total_input_tokens || sessionTotalInputTokens || 0;
         const totalOutputTokens = input.context_window?.total_output_tokens || sessionTotalOutputTokens || 0;
+        // Use transcript-accumulated cache tokens for stable totals (context_window.current_usage is per-request)
+        const totalCacheTokens = sessionTotalCacheCreationTokens + sessionTotalCacheReadTokens;
         const contextWindowSize = input.context_window?.context_window_size || 0;
 
         // Process cost data
@@ -834,7 +842,7 @@ export async function parseStatusLineData(input: StatusLineInput, presetName?: s
             contextWindowSize: formatTokenCount(contextWindowSize),
             totalInputTokens: formatTokenCount(totalInputTokens),
             totalOutputTokens: formatTokenCount(totalOutputTokens),
-            totalTokens: formatTokenCount(totalInputTokens + totalOutputTokens),
+            totalTokens: formatTokenCount(totalInputTokens + totalOutputTokens + totalCacheTokens),
             cost: formattedCost || '',
             duration: formattedDuration || '',
             linesAdded: linesAdded.toString(),
