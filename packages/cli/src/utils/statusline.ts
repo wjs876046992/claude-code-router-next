@@ -244,7 +244,7 @@ const DEFAULT_THEME: StatusLineThemeConfig = {
         },
         {
             type: "totalTokens",
-            icon: "󱧙", // nf-md-counter
+            icon: "📋",
             text: "{{totalTokens}}",
             color: "bright_white"
         }
@@ -291,7 +291,7 @@ const POWERLINE_THEME: StatusLineThemeConfig = {
         },
         {
             type: "totalTokens",
-            icon: "󱧙", // nf-md-counter
+            icon: "📋",
             text: "{{totalTokens}}",
             color: "white",
             background: "bg_bright_white"

@@ -52,6 +52,7 @@ const MODULE_TYPES = [
   { label: "model", value: "model" },
   { label: "usage", value: "usage" },
   { label: "speed", value: "speed" },
+  { label: "totalTokens", value: "totalTokens" },
   { label: "script", value: "script" },
 ];
 
@@ -943,6 +944,14 @@ export function StatusLineConfigDialog({
                           icon: "⚡",
                           text: "{{tokenSpeed}}",
                           color: "bright_green",
+                        };
+                        break;
+                      case "totalTokens":
+                        newModule = {
+                          type: "totalTokens",
+                          icon: "📋",
+                          text: "{{totalTokens}}",
+                          color: "bright_white",
                         };
                         break;
                       case "script":
