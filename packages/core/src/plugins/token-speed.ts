@@ -176,8 +176,17 @@ export const tokenSpeedPlugin: CCRPlugin = {
       try {
         const userId = (request.body as any)?.metadata?.user_id;
         if (userId && typeof userId === 'string') {
-          const match = userId.match(/_session_([a-f0-9-]+)/i);
-          sessionId = match ? match[1] : undefined;
+          // Try JSON format first: {"session_id":"xxx"}
+          try {
+            const parsed = JSON.parse(userId);
+            if (parsed.session_id) {
+              sessionId = parsed.session_id;
+            }
+          } catch {
+            // Fallback to legacy format: user_..._session_xxx
+            const match = userId.match(/_session_([a-f0-9-]+)/i);
+            sessionId = match ? match[1] : undefined;
+          }
         }
       } catch (error) {
       }

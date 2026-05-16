@@ -36,10 +36,20 @@ function getUsageSessionId(req: any): string {
   try {
     const userId = req.body?.metadata?.user_id;
     if (userId && typeof userId === 'string') {
-      const match = userId.match(/_session_([a-f0-9-]+)/i);
-      if (match) {
-        req.usageSessionId = match[1];
-        return req.usageSessionId;
+      // Try JSON format first: {"session_id":"xxx"}
+      try {
+        const parsed = JSON.parse(userId);
+        if (parsed.session_id) {
+          req.usageSessionId = parsed.session_id;
+          return req.usageSessionId;
+        }
+      } catch {
+        // Fallback to legacy format: user_..._session_xxx
+        const match = userId.match(/_session_([a-f0-9-]+)/i);
+        if (match) {
+          req.usageSessionId = match[1];
+          return req.usageSessionId;
+        }
       }
     }
   } catch {}
