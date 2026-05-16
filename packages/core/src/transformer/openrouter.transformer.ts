@@ -66,7 +66,7 @@ export class OpenrouterTransformer implements Transformer {
       let reasoningContent = "";
       let isReasoningComplete = false;
       let hasToolCall = false;
-      let buffer = ""; // 用于缓冲不完整的数据
+      let buffer = ""; // Buffer for incomplete data
 
       const stream = new ReadableStream({
         async start(controller) {
@@ -121,6 +121,7 @@ export class OpenrouterTransformer implements Transformer {
                       })}\n\n`
                     )
                   );
+                  return;
                 }
 
                 if (
@@ -225,10 +226,18 @@ export class OpenrouterTransformer implements Transformer {
                   }
                 }
 
-                const modifiedLine = `data: ${JSON.stringify(data)}\n\n`;
-                controller.enqueue(encoder.encode(modifiedLine));
+                // Skip empty heartbeat chunks (delta with no keys and no finish_reason/usage)
+                const delta = data.choices?.[0]?.delta;
+                const hasMeaningfulDelta = delta && Object.keys(delta).length > 0;
+                const hasFinishReason = data.choices?.[0]?.finish_reason;
+                const hasUsage = data.usage;
+
+                if (hasMeaningfulDelta || hasFinishReason || hasUsage) {
+                  const modifiedLine = `data: ${JSON.stringify(data)}\n\n`;
+                  controller.enqueue(encoder.encode(modifiedLine));
+                }
               } catch (e) {
-                // 如果JSON解析失败，可能是数据不完整，将原始行传递下去
+                // If JSON parsing fails, pass through the original line
                 controller.enqueue(encoder.encode(line + "\n"));
               }
             } else {
@@ -241,14 +250,14 @@ export class OpenrouterTransformer implements Transformer {
             while (true) {
               const { done, value } = await reader.read();
               if (done) {
-                // 处理缓冲区中剩余的数据
+                // Process remaining data in buffer
                 if (buffer.trim()) {
                   processBuffer(buffer, controller, encoder);
                 }
                 break;
               }
 
-              // 检查value是否有效
+              // Check if value is valid
               if (!value || value.length === 0) {
                 continue;
               }
@@ -267,9 +276,9 @@ export class OpenrouterTransformer implements Transformer {
 
               buffer += chunk;
 
-              // 如果缓冲区过大，进行处理避免内存泄漏
+              // If buffer exceeds limit, process partial data to avoid memory leak
               if (buffer.length > 1000000) {
-                // 1MB 限制
+                // 1MB limit
                 console.warn(
                   "Buffer size exceeds limit, processing partial data"
                 );
@@ -293,7 +302,7 @@ export class OpenrouterTransformer implements Transformer {
                       });
                     } catch (error) {
                       console.error("Error processing line:", line, error);
-                      // 如果解析失败，直接传递原始行
+                      // If parsing fails, pass through the original line
                       controller.enqueue(encoder.encode(line + "\n"));
                     }
                   }
@@ -301,9 +310,9 @@ export class OpenrouterTransformer implements Transformer {
                 continue;
               }
 
-              // 处理缓冲区中完整的数据行
+              // Process complete data lines in buffer
               const lines = buffer.split("\n");
-              buffer = lines.pop() || ""; // 最后一行可能不完整，保留在缓冲区
+              buffer = lines.pop() || ""; // Last line may be incomplete, keep in buffer
 
               for (const line of lines) {
                 if (!line.trim()) continue;
@@ -322,7 +331,7 @@ export class OpenrouterTransformer implements Transformer {
                   });
                 } catch (error) {
                   console.error("Error processing line:", line, error);
-                  // 如果解析失败，直接传递原始行
+                  // If parsing fails, pass through the original line
                   controller.enqueue(encoder.encode(line + "\n"));
                 }
               }

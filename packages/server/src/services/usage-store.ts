@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync, statSync } from "fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync, statSync } from "fs";
 import { join } from "path";
 import { homedir, tmpdir } from "os";
 
@@ -252,18 +252,47 @@ export function readTokenSpeedStats(sessionId: string): {
   ttft: number | null;
   tokensPerSecond: number | null;
 } {
-  const tempFile = join(tmpdir(), "claude-code-router", `session-${sessionId}.json`);
-  if (!existsSync(tempFile)) {
-    return { ttft: null, tokensPerSecond: null };
+  const baseDir = join(tmpdir(), "claude-code-router");
+
+  // Try exact filename first (without timestamp)
+  const exactFile = join(baseDir, `session-${sessionId}.json`);
+  if (existsSync(exactFile)) {
+    try {
+      const content = readFileSync(exactFile, "utf-8");
+      const data = JSON.parse(content);
+      return {
+        ttft: data.timeToFirstToken ?? null,
+        tokensPerSecond: data.tokensPerSecond ?? null,
+      };
+    } catch {
+      // Continue to search for timestamped files
+    }
   }
+
+  // Search for files matching session-${sessionId}-*.json pattern (with timestamp)
   try {
-    const content = readFileSync(tempFile, "utf-8");
-    const data = JSON.parse(content);
-    return {
-      ttft: data.timeToFirstToken ?? null,
-      tokensPerSecond: data.tokensPerSecond ?? null,
-    };
+    const files = readdirSync(baseDir);
+    const pattern = new RegExp(`^session-${sessionId}-\\d+\\.json$`);
+    const matchingFiles = files.filter(f => pattern.test(f));
+
+    if (matchingFiles.length > 0) {
+      // Use the most recent file (highest timestamp)
+      const sortedFiles = matchingFiles.sort().reverse();
+      const latestFile = join(baseDir, sortedFiles[0]);
+      try {
+        const content = readFileSync(latestFile, "utf-8");
+        const data = JSON.parse(content);
+        return {
+          ttft: data.timeToFirstToken ?? null,
+          tokensPerSecond: data.tokensPerSecond ?? null,
+        };
+      } catch {
+        return { ttft: null, tokensPerSecond: null };
+      }
+    }
   } catch {
-    return { ttft: null, tokensPerSecond: null };
+    // Directory doesn't exist or read error
   }
+
+  return { ttft: null, tokensPerSecond: null };
 }

@@ -668,17 +668,28 @@ export async function parseStatusLineData(input: StatusLineInput, presetName?: s
         let inputTokens = 0;
         let outputTokens = 0;
 
+        // Also accumulate total tokens from all assistant messages
+        let sessionTotalInputTokens = 0;
+        let sessionTotalOutputTokens = 0;
+
         for (let i = lines.length - 1; i >= 0; i--) {
             try {
                 const message: AssistantMessage = JSON.parse(lines[i]);
                 if (message.type === "assistant" && message.message.model) {
-                    model = message.message.model;
-
+                    // Accumulate tokens for session total
                     if (message.message.usage) {
-                        inputTokens = message.message.usage.input_tokens;
-                        outputTokens = message.message.usage.output_tokens;
+                        sessionTotalInputTokens += message.message.usage.input_tokens;
+                        sessionTotalOutputTokens += message.message.usage.output_tokens;
                     }
-                    break;
+
+                    // Get last message's model and tokens
+                    if (!model) {
+                        model = message.message.model;
+                        if (message.message.usage) {
+                            inputTokens = message.message.usage.input_tokens;
+                            outputTokens = message.message.usage.output_tokens;
+                        }
+                    }
                 }
             } catch (parseError) {
                 // Ignore parse errors, continue searching
@@ -747,8 +758,9 @@ export async function parseStatusLineData(input: StatusLineInput, presetName?: s
 
         // Process context window data
         const contextPercent = input.context_window ? calculateContextPercent(input.context_window) : 0;
-        const totalInputTokens = input.context_window?.total_input_tokens || 0;
-        const totalOutputTokens = input.context_window?.total_output_tokens || 0;
+        // Use context_window totals if available, otherwise use accumulated session totals from transcript
+        const totalInputTokens = input.context_window?.total_input_tokens || sessionTotalInputTokens || 0;
+        const totalOutputTokens = input.context_window?.total_output_tokens || sessionTotalOutputTokens || 0;
         const contextWindowSize = input.context_window?.context_window_size || 0;
 
         // Process cost data

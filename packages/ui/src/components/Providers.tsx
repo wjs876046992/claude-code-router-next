@@ -19,7 +19,7 @@ import { Badge } from "@/components/ui/badge";
 import { Combobox } from "@/components/ui/combobox";
 import { ComboInput } from "@/components/ui/combo-input";
 import { api } from "@/lib/api";
-import type { Provider } from "@/types";
+import type { Provider, ProviderHealthState } from "@/types";
 
 interface ProviderType extends Provider {}
 
@@ -39,6 +39,7 @@ export function Providers() {
   const [apiKeyError, setApiKeyError] = useState<string | null>(null);
   const [nameError, setNameError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState<string>("");
+  const [healthStates, setHealthStates] = useState<ProviderHealthState[]>([]);
   const comboInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -71,6 +72,22 @@ export function Providers() {
     };
 
     fetchTransformers();
+  }, []);
+
+  // Fetch provider health status periodically
+  useEffect(() => {
+    const fetchHealth = async () => {
+      try {
+        const response = await api.getProviderHealth();
+        setHealthStates(response.states || []);
+      } catch (error) {
+        console.error('Failed to fetch provider health:', error);
+      }
+    };
+
+    fetchHealth();
+    const interval = setInterval(fetchHealth, 30000); // Refresh every 30 seconds
+    return () => clearInterval(interval);
   }, []);
 
   // Handle case where config is null or undefined
@@ -549,6 +566,7 @@ export function Providers() {
       <CardContent className="flex-grow overflow-y-auto p-4">
         <ProviderList
           providers={filteredProviders}
+          healthStates={healthStates}
           onEdit={handleEditProvider}
           onRemove={handleSetDeletingProviderIndex}
         />

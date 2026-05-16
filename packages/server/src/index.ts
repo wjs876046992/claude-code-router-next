@@ -32,6 +32,18 @@ const event = new EventEmitter()
 function getUsageSessionId(req: any): string {
   if (req.usageSessionId) return req.usageSessionId;
 
+  // Try to extract from metadata.user_id first (same as token-speed plugin)
+  try {
+    const userId = req.body?.metadata?.user_id;
+    if (userId && typeof userId === 'string') {
+      const match = userId.match(/_session_([a-f0-9-]+)/i);
+      if (match) {
+        req.usageSessionId = match[1];
+        return req.usageSessionId;
+      }
+    }
+  } catch {}
+
   const requestIdHeader = req.headers?.["x-request-id"];
   const requestId = Array.isArray(requestIdHeader) ? requestIdHeader[0] : requestIdHeader;
   req.usageSessionId = req.sessionId || (typeof requestId === "string" ? requestId : undefined) || req.id || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
