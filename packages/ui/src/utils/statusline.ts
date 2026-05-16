@@ -101,6 +101,7 @@ export function createDefaultStatusLineConfig(): StatusLineConfig {
         { type: "workDir", icon: "󰉋", text: "{{workDirName}}", color: "bright_blue" },
         { type: "gitBranch", icon: "", text: "{{gitBranch}}", color: "bright_magenta" },
         { type: "model", icon: "󰚩", text: "{{model}}", color: "bright_cyan" },
+        { type: "contextCircle", icon: "○", text: "{{contextPercent}}%", color: "bright_green" },
         { type: "usage", icon: "↑", text: "{{inputTokens}}", color: "bright_green" },
         { type: "usage", icon: "↓", text: "{{outputTokens}}", color: "bright_yellow" }
       ] 
@@ -110,6 +111,7 @@ export function createDefaultStatusLineConfig(): StatusLineConfig {
         { type: "workDir", icon: "󰉋", text: "{{workDirName}}", color: "white", background: "bg_bright_blue" },
         { type: "gitBranch", icon: "", text: "{{gitBranch}}", color: "white", background: "bg_bright_magenta" },
         { type: "model", icon: "󰚩", text: "{{model}}", color: "white", background: "bg_bright_cyan" },
+        { type: "contextCircle", icon: "○", text: "{{contextPercent}}%", color: "bright_green" },
         { type: "usage", icon: "↑", text: "{{inputTokens}}", color: "white", background: "bg_bright_green" },
         { type: "usage", icon: "↓", text: "{{outputTokens}}", color: "white", background: "bg_bright_yellow" }
       ] 

@@ -231,6 +231,12 @@ const DEFAULT_THEME: StatusLineThemeConfig = {
             color: "bright_cyan"
         },
         {
+            type: "contextCircle",
+            icon: "○",
+            text: "{{contextPercent}}%",
+            color: "#22c55e"
+        },
+        {
             type: "usage",
             icon: "↑", // Up arrow
             text: "{{inputTokens}}",
@@ -274,6 +280,13 @@ const POWERLINE_THEME: StatusLineThemeConfig = {
             text: "{{model}}",
             color: "white",
             background: "bg_bright_cyan"
+        },
+        {
+            type: "contextCircle",
+            icon: "○",
+            text: "{{contextPercent}}%",
+            color: "#22c55e",
+            background: "bg_bright_black"
         },
         {
             type: "usage",
@@ -321,6 +334,12 @@ const SIMPLE_THEME: StatusLineThemeConfig = {
             color: "bright_cyan"
         },
         {
+            type: "contextCircle",
+            icon: "○",
+            text: "{{contextPercent}}%",
+            color: "#22c55e"
+        },
+        {
             type: "usage",
             icon: "↑",
             text: "{{inputTokens}}",
@@ -355,6 +374,12 @@ const FULL_THEME: StatusLineThemeConfig = {
             icon: "󰚩",
             text: "{{model}}",
             color: "bright_cyan"
+        },
+        {
+            type: "contextCircle",
+            icon: "○",
+            text: "{{contextPercent}}%",
+            color: "#22c55e"
         },
         {
             type: "context",
@@ -421,6 +446,17 @@ function calculateContextPercent(context_window: StatusLineInput['context_window
                         current_usage.cache_creation_input_tokens +
                         current_usage.cache_read_input_tokens;
     return Math.round((currentTokens / context_window_size) * 100);
+}
+
+function getContextUsageColor(contextPercent: string): string {
+    const percent = parseInt(contextPercent || "0", 10);
+    if (percent > 75) {
+        return "#ef4444";
+    }
+    if (percent > 50) {
+        return "#eab308";
+    }
+    return "#22c55e";
 }
 
 // Format cost display
@@ -773,6 +809,9 @@ export async function parseStatusLineData(input: StatusLineInput, presetName?: s
         // Use context_window totals if available, otherwise use accumulated session totals from transcript
         const totalInputTokens = input.context_window?.total_input_tokens || sessionTotalInputTokens || 0;
         const totalOutputTokens = input.context_window?.total_output_tokens || sessionTotalOutputTokens || 0;
+        // Include cache tokens in total (they represent real token consumption)
+        const cacheCreationTokens = input.context_window?.current_usage?.cache_creation_input_tokens || 0;
+        const cacheReadTokens = input.context_window?.current_usage?.cache_read_input_tokens || 0;
         const contextWindowSize = input.context_window?.context_window_size || 0;
 
         // Process cost data
@@ -798,7 +837,7 @@ export async function parseStatusLineData(input: StatusLineInput, presetName?: s
             contextWindowSize: formatTokenCount(contextWindowSize),
             totalInputTokens: formatTokenCount(totalInputTokens),
             totalOutputTokens: formatTokenCount(totalOutputTokens),
-            totalTokens: formatTokenCount(totalInputTokens + totalOutputTokens),
+            totalTokens: formatTokenCount(totalInputTokens + totalOutputTokens + cacheCreationTokens + cacheReadTokens),
             cost: formattedCost || '',
             duration: formattedDuration || '',
             linesAdded: linesAdded.toString(),
@@ -835,7 +874,11 @@ async function renderDefaultStyle(
     for (let i = 0; i < modules.length; i++) {
         const module = modules[i];
 
-        const color = module.color ? getColorCode(module.color) : "";
+        const dynamicColor = module.type === "contextCircle"
+            ? getContextUsageColor(variables.contextPercent)
+            : module.color || "";
+
+        const color = dynamicColor ? getColorCode(dynamicColor) : "";
         const background = module.background ? getColorCode(module.background) : "";
         const icon = module.icon || "";
 
@@ -1018,7 +1061,9 @@ async function renderPowerlineStyle(
     // Iterate through module array, rendering each module (maximum 10)
     for (let i = 0; i < Math.min(modules.length, 10); i++) {
         const module = modules[i];
-        const color = module.color || "white";
+        const color = module.type === "contextCircle"
+            ? getContextUsageColor(variables.contextPercent)
+            : module.color || "white";
         const backgroundName = module.background || "";
         const icon = module.icon || "";
 

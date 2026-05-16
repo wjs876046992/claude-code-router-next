@@ -52,6 +52,7 @@ const MODULE_TYPES = [
   { label: "model", value: "model" },
   { label: "usage", value: "usage" },
   { label: "speed", value: "speed" },
+  { label: "contextCircle", value: "contextCircle" },
   { label: "totalTokens", value: "totalTokens" },
   { label: "script", value: "script" },
 ];
@@ -322,6 +323,7 @@ function renderModulePreview(
     model: "Claude Sonnet 4",
     inputTokens: "1.2k",
     outputTokens: "2.5k",
+    contextPercent: "42",
   };
 
   const text = replaceVariables(module.text, variables);
@@ -944,6 +946,14 @@ export function StatusLineConfigDialog({
                           icon: "⚡",
                           text: "{{tokenSpeed}}",
                           color: "bright_green",
+                        };
+                        break;
+                      case "contextCircle":
+                        newModule = {
+                          type: "contextCircle",
+                          icon: "○",
+                          text: "{{contextPercent}}%",
+                          color: "#22c55e",
                         };
                         break;
                       case "totalTokens":
