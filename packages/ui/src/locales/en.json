@@ -205,6 +205,8 @@
     "gitBranch": "Git Branch",
     "model": "Model",
     "usage": "Usage",
+    "speed": "Speed",
+    "totalTokens": "Total Tokens",
     "script": "Script",
     "background_none": "None",
     "color_black": "Black",

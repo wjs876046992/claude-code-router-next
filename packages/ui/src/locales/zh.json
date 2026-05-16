@@ -205,6 +205,8 @@
     "gitBranch": "Git分支",
     "model": "模型",
     "usage": "使用情况",
+    "speed": "速度",
+    "totalTokens": "总Token",
     "script": "脚本",
     "background_none": "无",
     "color_black": "黑色",
