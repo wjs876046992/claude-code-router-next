@@ -812,10 +812,10 @@ export async function parseStatusLineData(input: StatusLineInput, presetName?: s
 
         // Process context window data
         const contextPercent = input.context_window ? calculateContextPercent(input.context_window) : 0;
-        // Use context_window totals if available, otherwise use accumulated session totals from transcript
-        const totalInputTokens = input.context_window?.total_input_tokens || sessionTotalInputTokens || 0;
-        const totalOutputTokens = input.context_window?.total_output_tokens || sessionTotalOutputTokens || 0;
-        // Use transcript-accumulated cache tokens for stable totals (context_window.current_usage is per-request)
+        // Always use transcript-accumulated values for stable monotonically-increasing totals
+        // Fallback to context_window only when transcript has no data
+        const totalInputTokens = sessionTotalInputTokens || input.context_window?.total_input_tokens || 0;
+        const totalOutputTokens = sessionTotalOutputTokens || input.context_window?.total_output_tokens || 0;
         const totalCacheTokens = sessionTotalCacheCreationTokens + sessionTotalCacheReadTokens;
         const contextWindowSize = input.context_window?.context_window_size || 0;
 
