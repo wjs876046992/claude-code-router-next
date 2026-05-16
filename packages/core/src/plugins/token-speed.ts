@@ -49,6 +49,8 @@ const requestStats = new Map<string, TokenStats>();
 // Cache tokenizers by provider and model to avoid repeated initialization
 const tokenizerCache = new Map<string, ITokenizer>();
 
+const MIN_DECODE_DURATION_SECONDS = 1;
+
 /**
  * Token speed measurement plugin
  */
@@ -231,10 +233,8 @@ export const tokenSpeedPlugin: CCRPlugin = {
             } else {
               // For final output, use decode speed (total time minus TTFT)
               const ttft = stats.firstTokenTime ? (stats.firstTokenTime - stats.startTime) : 0;
-              const decodeDuration = (stats.lastTokenTime - stats.startTime - ttft) / 1000; // seconds
-              if (decodeDuration > 0) {
-                stats.tokensPerSecond = Math.round(stats.tokenCount / decodeDuration);
-              }
+              const totalDuration = stats.lastTokenTime - stats.startTime;
+              stats.tokensPerSecond = calculateFinalTokensPerSecond(stats.tokenCount, totalDuration, ttft);
             }
 
             await outputStats(stats, reporters, opts.outputOptions, isFinal).catch(err => {
@@ -348,6 +348,7 @@ export const tokenSpeedPlugin: CCRPlugin = {
       // Try to extract token count from the response payload
       const endTime = performance.now();
       let tokenCount = 0;
+      let hasTokenCount = false;
 
       // Payload should be a string or object for non-streaming responses
       if (payload && typeof payload === 'string') {
@@ -355,27 +356,31 @@ export const tokenSpeedPlugin: CCRPlugin = {
           const response = JSON.parse(payload);
 
           // Prefer usage.output_tokens if available (most accurate)
-          if (response.usage?.output_tokens) {
+          if (typeof response.usage?.output_tokens === 'number') {
             tokenCount = response.usage.output_tokens;
+            hasTokenCount = true;
           } else {
             // Fallback: calculate from content
-            const content = response.content || response.message?.content || '';
+            const content = response.content ?? response.message?.content;
 
-            if (tokenizer) {
-              if (Array.isArray(content)) {
-                tokenCount = content.reduce((sum: number, block: any) => {
-                  if (block.type === 'text') {
-                    const text = block.text || '';
-                    return sum + (tokenizer.encodeText ? tokenizer.encodeText(text).length : estimateTokens(text));
-                  }
-                  return sum;
-                }, 0);
-              } else if (typeof content === 'string') {
-                tokenCount = tokenizer.encodeText ? tokenizer.encodeText(content).length : estimateTokens(content);
+            if (content !== undefined) {
+              hasTokenCount = true;
+              if (tokenizer) {
+                if (Array.isArray(content)) {
+                  tokenCount = content.reduce((sum: number, block: any) => {
+                    if (block.type === 'text') {
+                      const text = block.text || '';
+                      return sum + (tokenizer.encodeText ? tokenizer.encodeText(text).length : estimateTokens(text));
+                    }
+                    return sum;
+                  }, 0);
+                } else if (typeof content === 'string') {
+                  tokenCount = tokenizer.encodeText ? tokenizer.encodeText(content).length : estimateTokens(content);
+                }
+              } else {
+                const text = Array.isArray(content) ? content.map((c: any) => c.text).join('') : (typeof content === 'string' ? content : '');
+                tokenCount = estimateTokens(text);
               }
-            } else {
-              const text = Array.isArray(content) ? content.map((c: any) => c.text).join('') : content;
-              tokenCount = estimateTokens(text);
             }
           }
         } catch (error) {
@@ -383,12 +388,10 @@ export const tokenSpeedPlugin: CCRPlugin = {
         }
       }
 
-      // Only output stats if we found tokens
-      if (tokenCount > 0) {
+      // Only output stats if token count was available
+      if (hasTokenCount) {
         const ttft = Math.round(endTime - startTime);
-        const decodeDuration = (endTime - startTime - ttft) > 0
-          ? (endTime - startTime - ttft) / 1000
-          : (endTime - startTime) / 1000;
+        const totalDuration = endTime - startTime;
 
         const stats: TokenStats = {
           requestId,
@@ -396,7 +399,7 @@ export const tokenSpeedPlugin: CCRPlugin = {
           startTime,
           lastTokenTime: endTime,
           tokenCount,
-          tokensPerSecond: decodeDuration > 0 ? Math.round(tokenCount / decodeDuration) : 0,
+          tokensPerSecond: calculateFinalTokensPerSecond(tokenCount, totalDuration),
           timeToFirstToken: ttft,
           stream: false,
           tokenTimestamps: []
@@ -410,6 +413,21 @@ export const tokenSpeedPlugin: CCRPlugin = {
     });
   }),
 };
+
+/**
+ * Calculate final decode speed using total duration minus TTFT.
+ */
+function calculateFinalTokensPerSecond(tokenCount: number, totalDurationMs: number, timeToFirstTokenMs = 0): number {
+  if (tokenCount <= 0) {
+    return 0;
+  }
+
+  const decodeDurationSeconds = Math.max(
+    (totalDurationMs - timeToFirstTokenMs) / 1000,
+    MIN_DECODE_DURATION_SECONDS
+  );
+  return Math.round(tokenCount / decodeDurationSeconds);
+}
 
 /**
  * Estimate token count (fallback method)
