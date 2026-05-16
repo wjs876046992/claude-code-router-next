@@ -8,14 +8,8 @@ import { apiKeyAuth } from "./middleware/auth";
 import { CONFIG_FILE, HOME_DIR, listPresets } from "@wengine-ai/claude-code-router-shared";
 import { createStream } from 'rotating-file-stream';
 import { sessionUsageCache } from "@wengine-ai/llms";
-// Inline health store to avoid TypeScript declaration issues during build
-// TODO: move to @wengine-ai/llms export once type declarations are properly generated
-function getHealthStore() {
-  // Simple singleton implementation for build-time compatibility
-  const { ProviderHealthStore } = require("@wengine-ai/llms");
-  const store = new ProviderHealthStore();
-  return store;
-}
+const _healthModule = require("@wengine-ai/llms") as any;
+const getHealthStore: () => any = _healthModule.getHealthStore;
 import { SSEParserTransform } from "./utils/SSEParser.transform";
 import { SSESerializerTransform } from "./utils/SSESerializer.transform";
 import { rewriteStream } from "./utils/rewriteStream";
