@@ -17,7 +17,7 @@ function getProviderHealth(providerName: string, healthStates?: ProviderHealthSt
   lastError?: string;
 } {
   if (!healthStates || healthStates.length === 0) {
-    return { status: 'unknown', hasFailure: false };
+    return { status: 'closed', hasFailure: false }; // No failures recorded = healthy
   }
 
   // Find all health states for this provider
