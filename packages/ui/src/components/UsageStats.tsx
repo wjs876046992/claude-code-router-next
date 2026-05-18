@@ -382,6 +382,62 @@ export function UsageStats() {
             </div>
           )}
 
+          {/* Provider Chart */}
+          {summary?.byProvider && Object.keys(summary.byProvider).length > 0 && (
+            <div className="mb-3">
+              <div className="flex items-center gap-1 text-xs text-gray-500 mb-1">
+                <BarChart3 className="h-3 w-3" aria-hidden="true" />
+                <span>{t("usage.provider_chart")}</span>
+              </div>
+              {(() => {
+                const providerData = Object.entries(summary.byProvider)
+                  .map(([provider, data]) => ({
+                    provider,
+                    count: data.count,
+                    totalTokens: data.inputTokens + data.outputTokens,
+                    inputTokens: data.inputTokens,
+                    outputTokens: data.outputTokens,
+                  }))
+                  .sort((a, b) => b.totalTokens - a.totalTokens);
+                const maxProviderTokens = Math.max(1, ...providerData.map(p => p.totalTokens));
+                return (
+                  <div className="space-y-1">
+                    {providerData.map(({ provider, count, totalTokens, inputTokens, outputTokens }) => {
+                      const width = Math.max(8, (totalTokens / maxProviderTokens) * 100);
+                      return (
+                        <Tooltip key={provider}>
+                          <TooltipTrigger asChild>
+                            <div className="flex items-center gap-2 cursor-pointer group">
+                              <div className="w-[80px] text-xs text-gray-600 truncate font-medium group-hover:text-gray-800">
+                                {provider}
+                              </div>
+                              <div className="flex-1 h-5 bg-gray-100 rounded overflow-hidden flex">
+                                <div
+                                  className="h-full bg-blue-400 group-hover:bg-blue-500 transition-colors"
+                                  style={{ width: `${width}%` }}
+                                />
+                              </div>
+                              <div className="w-[60px] text-xs text-gray-500 text-right">
+                                {formatTokens(totalTokens)}
+                              </div>
+                            </div>
+                          </TooltipTrigger>
+                          <TooltipContent side="top" className="text-xs">
+                            <div className="font-medium mb-1">{provider}</div>
+                            <div>{t("usage.requests")}: {count}</div>
+                            <div>{t("usage.input_tokens")}: {formatTokens(inputTokens)}</div>
+                            <div>{t("usage.output_tokens")}: {formatTokens(outputTokens)}</div>
+                            <div className="font-medium border-t mt-1 pt-1">{t("usage.total_tokens")}: {formatTokens(totalTokens)}</div>
+                          </TooltipContent>
+                        </Tooltip>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
+            </div>
+          )}
+
           {/* Table */}
           <div className="overflow-auto border rounded text-xs">
             <table className="w-full">

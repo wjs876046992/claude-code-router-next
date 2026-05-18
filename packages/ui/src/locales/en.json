@@ -374,6 +374,8 @@
     "avg_speed": "Avg Speed",
     "success_rate": "Success Rate",
     "daily_chart": "Daily Usage",
+    "provider_chart": "Provider Usage",
+    "requests": "Requests",
     "start_date": "Start Date",
     "end_date": "End Date",
     "provider": "Provider",
