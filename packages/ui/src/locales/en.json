@@ -376,6 +376,7 @@
     "daily_chart": "Daily Usage",
     "provider_chart": "Provider Usage",
     "model_chart": "Model Usage",
+    "records_tab": "Records",
     "requests": "Requests",
     "start_date": "Start Date",
     "end_date": "End Date",
