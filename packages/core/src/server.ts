@@ -300,7 +300,7 @@ export { TransformerService } from "./services/transformer";
 export { TokenizerService } from "./services/tokenizer";
 export { pluginManager, tokenSpeedPlugin, getTokenSpeedStats, getGlobalTokenSpeedStats, CCRPlugin, CCRPluginOptions, PluginMetadata } from "./plugins";
 export { SSEParserTransform, SSESerializerTransform, rewriteStream } from "./utils/sse";
-export { getHealthStore, ProviderHealthStore, ProviderHealthState, HealthPoolConfig, StickyFallbackEntry } from "./services/provider-health";
+export { getHealthStore, ProviderHealthStore, ProviderHealthState, HealthPoolConfig } from "./services/provider-health";
 export { getAllRateLimitInfo, getRateLimitInfo, RateLimitInfo } from "./services/rate-limit";
 export { getQuotaAdapter } from "./services/quota-adapters";
 export type { QuotaAdapter, ProviderQuotaResult } from "./services/quota-adapters";

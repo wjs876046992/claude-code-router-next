@@ -249,27 +249,10 @@ function resolveScenarioFallbackModel(
   familyFallback?: Record<string, string[] | undefined>,
   globalFallback?: Record<string, string[] | undefined>,
   family?: string
-): { model: string; isSticky: boolean } | null {
+): string | null {
   const healthStore = getHealthStore();
 
-  // Check for sticky fallback first
-  const stickyEntry = healthStore.getStickyFallback(scenarioType, family);
-  if (stickyEntry) {
-    const isUsable = healthStore.isStickyFallbackUsable(stickyEntry);
-    if (isUsable) {
-      // Verify the sticky model still exists in provider config
-      const model = resolveConfiguredModel(
-        `${stickyEntry.provider},${stickyEntry.model}`,
-        providers
-      );
-      if (model) {
-        return { model, isSticky: true };
-      }
-    }
-    // Sticky is not usable, clear it and continue to find next fallback
-    healthStore.clearStickyFallback(scenarioType, family);
-  }
-
+  // Iterate through fallback stages: family-specific first, then global
   const fallbackStages = [familyFallback?.[scenarioType], globalFallback?.[scenarioType]];
 
   for (const fallbackList of fallbackStages) {
@@ -277,30 +260,18 @@ function resolveScenarioFallbackModel(
       continue;
     }
 
+    // Queue-based fallback: iterate in configured order, return first available model
+    // Models in fail pool (open state) are automatically skipped
+    // This ensures consistent fallback selection without rotation
     for (const fallbackModel of fallbackList) {
       const model = resolveConfiguredModel(fallbackModel, providers);
       if (model) {
-        return { model, isSticky: false };
+        return model;
       }
     }
   }
 
   return null;
-}
-
-/**
- * Record sticky fallback success when a fallback model is selected
- */
-function recordStickyFallbackSuccess(
-  scenarioType: RouterScenarioType,
-  model: string,
-  family?: string
-): void {
-  const [provider, ...modelParts] = model.split(',');
-  const modelName = modelParts.join(',');
-  if (provider && modelName) {
-    getHealthStore().recordStickyFallbackSuccess(scenarioType, provider, modelName, family);
-  }
 }
 
 function requestHasImages(req: any): boolean {
@@ -377,9 +348,8 @@ function resolveFamilyModel(
 
     const fallbackResult = resolveScenarioFallbackModel('extendedContext', providers, familyConfig.fallback, globalFallback, family);
     if (fallbackResult) {
-      req.log.info(`Family: using extended context fallback model (1M+), tokens: ${effectiveTokenCount}, estimated: ${tokenCount}, explicit: ${modelExtended}, sticky: ${fallbackResult.isSticky}`);
-      recordStickyFallbackSuccess('extendedContext', fallbackResult.model, family);
-      return { model: fallbackResult.model, scenarioType: 'extendedContext', isFallback: true };
+      req.log.info(`Family: using extended context fallback model (1M+), tokens: ${effectiveTokenCount}, estimated: ${tokenCount}, explicit: ${modelExtended}`);
+      return { model: fallbackResult, scenarioType: 'extendedContext', isFallback: true };
     }
 
     req.log.warn(`Family: extendedContext model unavailable (fail pool), skipping`);
@@ -401,9 +371,8 @@ function resolveFamilyModel(
 
     const fallbackResult = resolveScenarioFallbackModel('longContext', providers, familyConfig.fallback, globalFallback, family);
     if (fallbackResult) {
-      req.log.info(`Family: using long context fallback model, tokens: ${effectiveTokenCount}, estimated: ${tokenCount}, sticky: ${fallbackResult.isSticky}`);
-      recordStickyFallbackSuccess('longContext', fallbackResult.model, family);
-      return { model: fallbackResult.model, scenarioType: 'longContext', isFallback: true };
+      req.log.info(`Family: using long context fallback model, tokens: ${effectiveTokenCount}, estimated: ${tokenCount}`);
+      return { model: fallbackResult, scenarioType: 'longContext', isFallback: true };
     }
 
     const forcedPrimary = familyConfig.longContext
@@ -438,9 +407,8 @@ function resolveFamilyModel(
 
     const fallbackResult = resolveScenarioFallbackModel('webSearch', providers, familyConfig.fallback, globalFallback, family);
     if (fallbackResult) {
-      req.log.info(`Family: using webSearch fallback model, sticky: ${fallbackResult.isSticky}`);
-      recordStickyFallbackSuccess('webSearch', fallbackResult.model, family);
-      return { model: fallbackResult.model, scenarioType: 'webSearch', isFallback: true };
+      req.log.info(`Family: using webSearch fallback model`);
+      return { model: fallbackResult, scenarioType: 'webSearch', isFallback: true };
     }
 
     req.log.warn(`Family: webSearch model unavailable (fail pool), skipping`);
@@ -454,9 +422,8 @@ function resolveFamilyModel(
 
     const fallbackResult = resolveScenarioFallbackModel('think', providers, familyConfig.fallback, globalFallback, family);
     if (fallbackResult) {
-      req.log.info(`Family: using think fallback model, sticky: ${fallbackResult.isSticky}`);
-      recordStickyFallbackSuccess('think', fallbackResult.model, family);
-      return { model: fallbackResult.model, scenarioType: 'think', isFallback: true };
+      req.log.info(`Family: using think fallback model`);
+      return { model: fallbackResult, scenarioType: 'think', isFallback: true };
     }
 
     req.log.warn(`Family: think model unavailable (fail pool), skipping`);
@@ -470,9 +437,8 @@ function resolveFamilyModel(
 
     const fallbackResult = resolveScenarioFallbackModel('default', providers, familyConfig.fallback, globalFallback, family);
     if (fallbackResult) {
-      req.log.info(`Family: using default fallback model, sticky: ${fallbackResult.isSticky}`);
-      recordStickyFallbackSuccess('default', fallbackResult.model, family);
-      return { model: fallbackResult.model, scenarioType: 'default', isFallback: true };
+      req.log.info(`Family: using default fallback model`);
+      return { model: fallbackResult, scenarioType: 'default', isFallback: true };
     }
 
     req.log.warn(`Family: default model unavailable (fail pool), skipping`);
@@ -502,9 +468,8 @@ const getUseModel = async (
     // Try fallback for default scenario (explicit models are treated as default)
     const fallbackResult = resolveScenarioFallbackModel('default', providers, undefined, globalFallback);
     if (fallbackResult) {
-      req.log.info(`Using fallback for explicit model: ${fallbackResult.model}, sticky: ${fallbackResult.isSticky}`);
-      recordStickyFallbackSuccess('default', fallbackResult.model);
-      return { model: fallbackResult.model, scenarioType: 'default' };
+      req.log.info(`Using fallback for explicit model: ${fallbackResult}`);
+      return { model: fallbackResult, scenarioType: 'default' };
     }
     // No fallback available, continue through routing logic as last resort
     req.log.warn(`No fallback available for explicit model ${req.body.model}, continuing through routing logic`);
