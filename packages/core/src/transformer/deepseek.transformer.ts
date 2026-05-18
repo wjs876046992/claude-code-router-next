@@ -132,6 +132,8 @@ export class DeepseekTransformer implements Transformer {
                 ) {
                   context.setReasoningComplete(true);
                   const signature = Date.now().toString();
+                  // Save the original content before we null it for thinking chunk
+                  const originalContent = data.choices[0].delta.content;
 
                   // Create a new chunk with thinking block
                   const thinkingChunk = {
@@ -156,6 +158,25 @@ export class DeepseekTransformer implements Transformer {
                     thinkingChunk
                   )}\n\n`;
                   controller.enqueue(encoder.encode(thinkingLine));
+
+                  // Immediately send the original content delta after thinking chunk
+                  // This ensures the first content chunk is not lost
+                  const contentChunk = {
+                    ...data,
+                    choices: [
+                      {
+                        ...data.choices[0],
+                        delta: {
+                          ...data.choices[0].delta,
+                          content: originalContent,
+                        },
+                      },
+                    ],
+                  };
+                  delete contentChunk.choices[0].delta.reasoning_content;
+                  const contentLine = `data: ${JSON.stringify(contentChunk)}\n\n`;
+                  controller.enqueue(encoder.encode(contentLine));
+                  return; // Skip further processing, we already sent the content
                 }
 
                 if (data.choices[0]?.delta?.reasoning_content) {
