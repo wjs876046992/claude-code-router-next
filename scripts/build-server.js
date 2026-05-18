@@ -17,7 +17,7 @@ try {
 
   // Generate type declaration files
   console.log('Generating type declaration files...');
-  execSync('tsc --emitDeclarationOnly', {
+  execSync('pnpm exec tsc --emitDeclarationOnly', {
     stdio: 'inherit',
     cwd: serverDir
   });
@@ -25,7 +25,7 @@ try {
   // Build the server application
   console.log('Building server application...');
   // 使用 minify 和 tree-shaking 优化体积；external lru-cache to avoid esbuild bundling issues
-  execSync('esbuild src/index.ts --bundle --platform=node --minify --tree-shaking=true --external:lru-cache --outfile=dist/index.js', {
+  execSync('pnpm exec esbuild src/index.ts --bundle --platform=node --minify --tree-shaking=true --external:lru-cache --outfile=dist/index.js', {
     stdio: 'inherit',
     cwd: serverDir
   });

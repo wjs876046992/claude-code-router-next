@@ -382,34 +382,37 @@ export function UsageStats() {
             </div>
           )}
 
-          {/* Provider Chart */}
-          {summary?.byProvider && Object.keys(summary.byProvider).length > 0 && (
+          {/* Model Chart */}
+          {summary?.byModel && Object.keys(summary.byModel).length > 0 && (
             <div className="mb-3">
               <div className="flex items-center gap-1 text-xs text-gray-500 mb-1">
                 <BarChart3 className="h-3 w-3" aria-hidden="true" />
-                <span>{t("usage.provider_chart")}</span>
+                <span>{t("usage.model_chart")}</span>
               </div>
               {(() => {
-                const providerData = Object.entries(summary.byProvider)
-                  .map(([provider, data]) => ({
-                    provider,
+                const modelData = Object.entries(summary.byModel)
+                  .map(([model, data]) => ({
+                    model,
                     count: data.count,
                     totalTokens: data.inputTokens + data.outputTokens,
                     inputTokens: data.inputTokens,
                     outputTokens: data.outputTokens,
                   }))
-                  .sort((a, b) => b.totalTokens - a.totalTokens);
-                const maxProviderTokens = Math.max(1, ...providerData.map(p => p.totalTokens));
+                  .sort((a, b) => b.totalTokens - a.totalTokens)
+                  .slice(0, 10); // Top 10 models
+                const maxModelTokens = Math.max(1, ...modelData.map(p => p.totalTokens));
                 return (
                   <div className="space-y-1">
-                    {providerData.map(({ provider, count, totalTokens, inputTokens, outputTokens }) => {
-                      const width = Math.max(8, (totalTokens / maxProviderTokens) * 100);
+                    {modelData.map(({ model, count, totalTokens, inputTokens, outputTokens }) => {
+                      const width = Math.max(8, (totalTokens / maxModelTokens) * 100);
+                      // Truncate long model names
+                      const displayModel = model.length > 25 ? model.slice(0, 25) + '...' : model;
                       return (
-                        <Tooltip key={provider}>
+                        <Tooltip key={model}>
                           <TooltipTrigger asChild>
                             <div className="flex items-center gap-2 cursor-pointer group">
-                              <div className="w-[80px] text-xs text-gray-600 truncate font-medium group-hover:text-gray-800">
-                                {provider}
+                              <div className="w-[120px] text-xs text-gray-600 truncate font-medium group-hover:text-gray-800" title={model}>
+                                {displayModel}
                               </div>
                               <div className="flex-1 h-5 bg-gray-100 rounded overflow-hidden flex">
                                 <div
@@ -423,7 +426,7 @@ export function UsageStats() {
                             </div>
                           </TooltipTrigger>
                           <TooltipContent side="top" className="text-xs">
-                            <div className="font-medium mb-1">{provider}</div>
+                            <div className="font-medium mb-1">{model}</div>
                             <div>{t("usage.requests")}: {count}</div>
                             <div>{t("usage.input_tokens")}: {formatTokens(inputTokens)}</div>
                             <div>{t("usage.output_tokens")}: {formatTokens(outputTokens)}</div>

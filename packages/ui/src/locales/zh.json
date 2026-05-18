@@ -375,6 +375,7 @@
     "success_rate": "成功率",
     "daily_chart": "每日用量",
     "provider_chart": "供应商用量",
+    "model_chart": "模型用量",
     "requests": "请求",
     "start_date": "开始日期",
     "end_date": "结束日期",
