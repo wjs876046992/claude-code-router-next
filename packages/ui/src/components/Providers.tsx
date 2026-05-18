@@ -27,6 +27,7 @@ interface ProviderType extends Provider {}
 export function Providers() {
   const { t } = useTranslation();
   const { config, setConfig } = useConfig();
+  const [isSaving, setIsSaving] = useState(false);
   const [editingProviderIndex, setEditingProviderIndex] = useState<number | null>(null);
   const [deletingProviderIndex, setDeletingProviderIndex] = useState<number | null>(null);
   const [hasFetchedModels, setHasFetchedModels] = useState<Record<number, boolean>>({});
@@ -156,7 +157,7 @@ export function Providers() {
     setNameError(null);
   };
 
-  const handleSaveProvider = () => {
+  const handleSaveProvider = async () => {
     if (!editingProviderData) return;
     
     // Validate name
@@ -197,7 +198,17 @@ export function Providers() {
       } else {
         newProviders[editingProviderIndex] = editingProviderData;
       }
-      setConfig({ ...config, Providers: newProviders });
+      const newConfig = { ...config, Providers: newProviders };
+      setConfig(newConfig);
+      // Persist to server immediately
+      setIsSaving(true);
+      try {
+        await api.updateConfig(newConfig);
+      } catch (e) {
+        console.error('Failed to persist provider changes:', e);
+      } finally {
+        setIsSaving(false);
+      }
     }
     // Reset API key visibility for this provider
     if (editingProviderIndex !== null) {
@@ -240,13 +251,20 @@ export function Providers() {
   };
 
   // Handle deletion by passing the filtered index to get the actual index in the original array
-  const handleRemoveProvider = (filteredIndex: number) => {
+  const handleRemoveProvider = async (filteredIndex: number) => {
     // Find the actual index in the original providers array
     const actualIndex = validProviders.indexOf(filteredProviders[filteredIndex]);
     const newProviders = [...config.Providers];
     newProviders.splice(actualIndex, 1);
-    setConfig({ ...config, Providers: newProviders });
+    const newConfig = { ...config, Providers: newProviders };
+    setConfig(newConfig);
     setDeletingProviderIndex(null);
+    // Persist to server immediately
+    try {
+      await api.updateConfig(newConfig);
+    } catch (e) {
+      console.error('Failed to persist provider removal:', e);
+    }
   };
 
   const handleProviderChange = (_index: number, field: string, value: string) => {
@@ -1094,7 +1112,7 @@ export function Providers() {
                 <Wifi className="mr-2 h-4 w-4" />
                 {isTestingConnectivity ? t("providers.testing") : t("providers.test_connectivity")}
               </Button> */}
-              <Button onClick={handleSaveProvider}>{t("app.save")}</Button>
+              <Button onClick={handleSaveProvider} disabled={isSaving}>{isSaving ? "..." : t("app.save")}</Button>
             </div>
           </div>
         </DialogContent>
