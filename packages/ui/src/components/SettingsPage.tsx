@@ -36,15 +36,28 @@ export function SettingsPage() {
   // Use useEffect without ref guard - React StrictMode runs effects twice in dev
   // but the state check ensures we only set once (null -> value)
   useEffect(() => {
+    console.log('[SettingsPage] useEffect triggered', { 
+      expandedFamily, 
+      hasConfig: !!config, 
+      hasRouter: !!config?.Router,
+      familiesKeys: config?.Router?.families ? Object.keys(config.Router.families) : '(no families)'
+    });
     // Skip if already expanded or config not loaded
-    if (expandedFamily !== null || !config?.Router) return;
+    if (expandedFamily !== null || !config?.Router) {
+      console.log('[SettingsPage] skipping', { expandedFamily, hasRouter: !!config?.Router });
+      return;
+    }
     
     const families = config.Router.families;
+    console.log('[SettingsPage] families', families, Object.keys(families || {}));
     if (families && Object.keys(families).length > 0) {
       // Prefer opus, otherwise use first configured family
-      setExpandedFamily(families.opus ? "opus" : Object.keys(families)[0]);
+      const selected = families.opus ? "opus" : Object.keys(families)[0];
+      console.log('[SettingsPage] setting expandedFamily to', selected);
+      setExpandedFamily(selected);
     } else {
       // No families configured, default to opus for new config
+      console.log('[SettingsPage] no families, defaulting to opus');
       setExpandedFamily("opus");
     }
   }, [config?.Router, expandedFamily]);
