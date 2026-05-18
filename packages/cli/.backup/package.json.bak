@@ -1,13 +1,9 @@
 {
-  "name": "@wengine-ai/claude-code-router-cli",
-  "version": "2.0.37",
+  "name": "@wengine-ai/claude-code-router",
+  "version": "2.0.61",
   "description": "CLI for Claude Code Router",
   "bin": {
     "ccr": "dist/cli.js"
-  },
-  "scripts": {
-    "build": "node ../../scripts/build-cli.js",
-    "dev": "ts-node src/cli.ts"
   },
   "keywords": [
     "claude",
@@ -18,6 +14,7 @@
   "author": "musistudio",
   "license": "MIT",
   "dependencies": {
+    "@wengine-ai/llms": "^2.0.55",
     "lru-cache": "^11.2.2"
   },
   "devDependencies": {
@@ -33,6 +30,24 @@
     "minimist": "^1.2.8",
     "openurl": "^1.1.1",
     "ts-node": "^10.9.2",
-    "typescript": "^5.8.2"
+    "typescript": "^5.8.2",
+    "json5": "^2.2.3",
+    "@inquirer/input": "^2.1.4",
+    "@inquirer/editor": "^2.1.4",
+    "@inquirer/select": "^2.3.0",
+    "@inquirer/confirm": "^3.1.4",
+    "@inquirer/checkbox": "^2.3.0",
+    "@inquirer/password": "^2.1.4"
+  },
+  "files": [
+    "dist/*",
+    "README.md",
+    "LICENSE"
+  ],
+  "peerDependencies": {
+    "node": ">=18.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }

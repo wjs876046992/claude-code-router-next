@@ -10,7 +10,7 @@ import { MultiCombobox } from "@/components/ui/multi-combobox";
 import { useConfig } from "./ConfigProvider";
 import { StatusLineConfigDialog } from "./StatusLineConfigDialog";
 import { UsageStats } from "./UsageStats";
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { LogViewer } from '@/components/LogViewer';
 import type { StatusLineConfig, FallbackConfig } from "@/types";
 import { FileJson, FileText, CircleArrowUp, FileCog, ArrowLeft, Save, RefreshCw, Trash2 } from "lucide-react";
@@ -31,24 +31,20 @@ export function SettingsPage() {
   const [isRestarting, setIsRestarting] = useState(false);
   const [isLogViewerOpen, setIsLogViewerOpen] = useState(false);
   const [expandedFamily, setExpandedFamily] = useState<string | null>(null);
+  const familyInitRef = useRef(false);
 
-  // Default-select a family route when config loads (prefer opus)
+  // Auto-expand first family on initial load so the section is not empty
   useEffect(() => {
-    if (config?.Router?.families && expandedFamily === null) {
-      const families = config.Router.families;
-      if (families.opus) {
-        setExpandedFamily("opus");
-      } else {
-        const firstConfigured = Object.keys(families)[0];
-        if (firstConfigured) {
-          setExpandedFamily(firstConfigured);
-        } else {
-          // If no families configured, default to opus tab for new config
-          setExpandedFamily("opus");
-        }
-      }
+    if (familyInitRef.current) return;
+    if (!config?.Router) return;
+    const families = config.Router.families;
+    if (families && Object.keys(families).length > 0) {
+      setExpandedFamily(families.opus ? "opus" : Object.keys(families)[0]);
+    } else {
+      setExpandedFamily("opus");
     }
-  }, [config?.Router?.families, expandedFamily]);
+    familyInitRef.current = true;
+  }, [config?.Router]);
 
   const providers = useMemo(
     () => (Array.isArray(config?.Providers) ? config.Providers : []),
@@ -546,7 +542,7 @@ export function SettingsPage() {
                         variant={isExpanded ? "default" : (isConfigured ? "secondary" : "outline")}
                         size="sm"
                         onClick={() => handleAddFamily(family)}
-                        className={`capitalize ${isExpanded ? "ring-2 ring-blue-400 shadow-sm" : ""}`}
+                        className={`capitalize ${isExpanded ? "bg-blue-500 hover:bg-blue-600 text-white ring-2 ring-blue-300 shadow-sm" : isConfigured ? "bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100" : ""}`}
                       >
                         {family}
                         {!isConfigured && !isExpanded && " +"}
