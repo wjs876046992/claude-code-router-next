@@ -13,6 +13,18 @@ export interface ProviderHealthState {
 }
 
 /**
+ * Sticky fallback entry - remembers the last successful fallback model for a scenario
+ */
+export interface StickyFallbackEntry {
+  provider: string;
+  model: string;
+  scenarioType: string;
+  family: string;
+  lastSuccessTime: number;
+  failureCount: number; // Track consecutive failures to clear sticky when truly failing
+}
+
+/**
  * Configuration for health pool behavior
  */
 export interface HealthPoolConfig {
@@ -34,9 +46,11 @@ const DEFAULT_CONFIG: Required<HealthPoolConfig> = {
 /**
  * Provider health store implementing circuit breaker pattern
  * Tracks provider/model health and manages state transitions
+ * Also manages sticky fallback - remembering successful fallback models per scenario
  */
 export class ProviderHealthStore {
   private states: Map<string, ProviderHealthState> = new Map();
+  private stickyFallbacks: Map<string, StickyFallbackEntry> = new Map();
   private config: Required<HealthPoolConfig>;
   private probeTimer?: NodeJS.Timeout;
 
@@ -46,6 +60,14 @@ export class ProviderHealthStore {
 
   private getKey(provider: string, model: string): string {
     return `${provider},${model}`;
+  }
+
+  /**
+   * Generate sticky fallback key from scenario type and family
+   * Format: "family/scenarioType" (e.g., "sonnet/longContext")
+   */
+  private getStickyKey(scenarioType: string, family?: string): string {
+    return family ? `${family}/${scenarioType}` : `default/${scenarioType}`;
   }
 
   /**
@@ -131,6 +153,115 @@ export class ProviderHealthStore {
       state.status = 'open';
       state.lastProbeTime = 0;
     }
+  }
+
+  // ==================== Sticky Fallback Methods ====================
+
+  /**
+   * Get the sticky fallback model for a scenario+family combination
+   * Returns null if no sticky fallback is set
+   */
+  getStickyFallback(scenarioType: string, family?: string): StickyFallbackEntry | null {
+    const key = this.getStickyKey(scenarioType, family);
+    return this.stickyFallbacks.get(key) || null;
+  }
+
+  /**
+   * Check if a sticky fallback model can be used
+   * - Returns true if model is available (closed or half-open)
+   * - Returns true if model is open but probe interval has elapsed (for probe recovery)
+   * - Returns false if model is truly unavailable
+   */
+  isStickyFallbackUsable(entry: StickyFallbackEntry): boolean {
+    const state = this.getState(entry.provider, entry.model);
+
+    // No state means model is healthy (closed)
+    if (!state) return true;
+
+    // Closed or half-open states are usable
+    if (state.status === 'closed' || state.status === 'half-open') return true;
+
+    // Open state: check if probe interval has elapsed for recovery attempt
+    if (state.status === 'open') {
+      const elapsed = Date.now() - state.lastProbeTime;
+      const probeIntervalMs = this.config.probeIntervalMinutes * 60 * 1000;
+      // Allow probe recovery if enough time has passed
+      return elapsed >= probeIntervalMs;
+    }
+
+    return false;
+  }
+
+  /**
+   * Record a sticky fallback success
+   * Called when a fallback model successfully handles a request
+   */
+  recordStickyFallbackSuccess(
+    scenarioType: string,
+    provider: string,
+    model: string,
+    family?: string
+  ): void {
+    const key = this.getStickyKey(scenarioType, family);
+    const existing = this.stickyFallbacks.get(key);
+
+    // Update or create sticky entry
+    this.stickyFallbacks.set(key, {
+      provider,
+      model,
+      scenarioType,
+      family: family || '',
+      lastSuccessTime: Date.now(),
+      failureCount: 0, // Reset failure count on success
+    });
+
+    // Also record health success for the model
+    this.recordSuccess(provider, model);
+  }
+
+  /**
+   * Record a sticky fallback failure
+   * Increments failure count and clears sticky if threshold exceeded
+   */
+  recordStickyFallbackFailure(
+    scenarioType: string,
+    family?: string
+  ): void {
+    const key = this.getStickyKey(scenarioType, family);
+    const entry = this.stickyFallbacks.get(key);
+    if (!entry) return;
+
+    entry.failureCount++;
+
+    // Clear sticky if too many consecutive failures
+    const STICKY_FAILURE_THRESHOLD = 3;
+    if (entry.failureCount >= STICKY_FAILURE_THRESHOLD) {
+      this.stickyFallbacks.delete(key);
+    }
+  }
+
+  /**
+   * Clear sticky fallback for a scenario+family combination
+   * Called when config changes or model is explicitly removed
+   */
+  clearStickyFallback(scenarioType: string, family?: string): void {
+    const key = this.getStickyKey(scenarioType, family);
+    this.stickyFallbacks.delete(key);
+  }
+
+  /**
+   * Clear all sticky fallbacks
+   * Called when fallback config changes globally
+   */
+  clearAllStickyFallbacks(): void {
+    this.stickyFallbacks.clear();
+  }
+
+  /**
+   * Get all sticky fallbacks for debugging/monitoring
+   */
+  getAllStickyFallbacks(): StickyFallbackEntry[] {
+    return Array.from(this.stickyFallbacks.values());
   }
 
   /**
@@ -230,6 +361,7 @@ export class ProviderHealthStore {
    */
   clear(): void {
     this.states.clear();
+    this.stickyFallbacks.clear();
   }
 
   /**
