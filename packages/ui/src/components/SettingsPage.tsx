@@ -113,11 +113,12 @@ export function SettingsPage() {
     if (expandedFamily === familyName) {
       setExpandedFamily(null);
     } else {
-      // If family doesn't exist, create it first
+      // If family doesn't exist, create it with first available model as default
       if (!families[familyName]) {
+        const firstModel = modelOptions.length > 0 ? modelOptions[0].value : "";
         setConfig({
           ...config,
-          Router: { ...currentRouter, families: { ...families, [familyName]: { default: "" } } },
+          Router: { ...currentRouter, families: { ...families, [familyName]: { default: firstModel } } },
         });
       }
       setExpandedFamily(familyName);
