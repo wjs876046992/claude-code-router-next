@@ -163,13 +163,11 @@ export class DeepseekTransformer implements Transformer {
                 }
 
                 // Send the modified chunk
+                // Send the modified chunk (reasoning_content already deleted above)
                 if (
                   data.choices?.[0]?.delta &&
                   Object.keys(data.choices[0].delta).length > 0
                 ) {
-                  if (context.isReasoningComplete()) {
-                    data.choices[0].index++;
-                  }
                   const modifiedLine = `data: ${JSON.stringify(data)}\n\n`;
                   controller.enqueue(encoder.encode(modifiedLine));
                 }

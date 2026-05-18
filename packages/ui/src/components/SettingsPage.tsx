@@ -536,13 +536,21 @@ export function SettingsPage() {
                   {MODEL_FAMILIES.map((family) => {
                     const isConfigured = config.Router?.families?.[family];
                     const isExpanded = expandedFamily === family;
+                    // Use outline variant for all buttons, control colors via className
+                    // This ensures Tailwind classes override default variant styles
                     return (
                       <Button
                         key={family}
-                        variant={isExpanded ? "default" : (isConfigured ? "secondary" : "outline")}
+                        variant="outline"
                         size="sm"
                         onClick={() => handleAddFamily(family)}
-                        className={`capitalize ${isExpanded ? "bg-blue-500 hover:bg-blue-600 text-white ring-2 ring-blue-300 shadow-sm" : isConfigured ? "bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100" : ""}`}
+                        className={`capitalize ${
+                          isExpanded 
+                            ? "bg-blue-500 hover:bg-blue-600 text-white border-blue-500 ring-2 ring-blue-300 shadow-sm" 
+                            : isConfigured 
+                              ? "bg-blue-100 text-blue-700 border-blue-300 hover:bg-blue-200" 
+                              : "text-gray-500 hover:text-gray-700"
+                        }`}
                       >
                         {family}
                         {!isConfigured && !isExpanded && " +"}

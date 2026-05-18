@@ -131,11 +131,10 @@ export class OpenrouterTransformer implements Transformer {
                   context.setHasTextContent(true);
                 }
 
-                // Extract reasoning_content from delta
-                if (data.choices?.[0]?.delta?.reasoning) {
-                  context.appendReasoningContent(
-                    data.choices[0].delta.reasoning
-                  );
+                // Extract reasoning content from delta (OpenRouter: reasoning, DeepSeek native: reasoning_content)
+                const reasoningDelta = data.choices?.[0]?.delta?.reasoning || data.choices?.[0]?.delta?.reasoning_content;
+                if (reasoningDelta) {
+                  context.appendReasoningContent(reasoningDelta);
                   const thinkingChunk = {
                     ...data,
                     choices: [
@@ -144,7 +143,7 @@ export class OpenrouterTransformer implements Transformer {
                         delta: {
                           ...data.choices[0].delta,
                           thinking: {
-                            content: data.choices[0].delta.reasoning,
+                            content: reasoningDelta,
                           },
                         },
                       },
@@ -152,6 +151,7 @@ export class OpenrouterTransformer implements Transformer {
                   };
                   if (thinkingChunk.choices?.[0]?.delta) {
                     delete thinkingChunk.choices[0].delta.reasoning;
+                    delete thinkingChunk.choices[0].delta.reasoning_content;
                   }
                   const thinkingLine = `data: ${JSON.stringify(
                     thinkingChunk
@@ -197,6 +197,9 @@ export class OpenrouterTransformer implements Transformer {
                 if (data.choices?.[0]?.delta?.reasoning) {
                   delete data.choices[0].delta.reasoning;
                 }
+                if (data.choices?.[0]?.delta?.reasoning_content) {
+                  delete data.choices[0].delta.reasoning_content;
+                }
                 if (
                   data.choices?.[0]?.delta?.tool_calls?.length &&
                   !Number.isNaN(
@@ -215,16 +218,8 @@ export class OpenrouterTransformer implements Transformer {
                   hasToolCall = true;
                 }
 
-                if (
-                  data.choices?.[0]?.delta?.tool_calls?.length &&
-                  context.hasTextContent()
-                ) {
-                  if (typeof data.choices[0].index === "number") {
-                    data.choices[0].index += 1;
-                  } else {
-                    data.choices[0].index = 1;
-                  }
-                }
+                // Note: tool_calls and content in same response is handled by Claude Code
+                // Do not modify index to avoid chunk ordering issues
 
                 // Skip empty heartbeat chunks (delta with no keys and no finish_reason/usage)
                 const delta = data.choices?.[0]?.delta;
