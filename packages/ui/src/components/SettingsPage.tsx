@@ -10,7 +10,7 @@ import { MultiCombobox } from "@/components/ui/multi-combobox";
 import { useConfig } from "./ConfigProvider";
 import { StatusLineConfigDialog } from "./StatusLineConfigDialog";
 import { UsageStats } from "./UsageStats";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { LogViewer } from '@/components/LogViewer';
 import type { StatusLineConfig, FallbackConfig } from "@/types";
 import { FileJson, FileText, CircleArrowUp, FileCog, ArrowLeft, Save, RefreshCw, Trash2 } from "lucide-react";
@@ -31,6 +31,24 @@ export function SettingsPage() {
   const [isRestarting, setIsRestarting] = useState(false);
   const [isLogViewerOpen, setIsLogViewerOpen] = useState(false);
   const [expandedFamily, setExpandedFamily] = useState<string | null>(null);
+
+  // Default-select a family route when config loads (prefer opus)
+  useEffect(() => {
+    if (config?.Router?.families && expandedFamily === null) {
+      const families = config.Router.families;
+      if (families.opus) {
+        setExpandedFamily("opus");
+      } else {
+        const firstConfigured = Object.keys(families)[0];
+        if (firstConfigured) {
+          setExpandedFamily(firstConfigured);
+        } else {
+          // If no families configured, default to opus tab for new config
+          setExpandedFamily("opus");
+        }
+      }
+    }
+  }, [config?.Router?.families, expandedFamily]);
 
   const providers = useMemo(
     () => (Array.isArray(config?.Providers) ? config.Providers : []),

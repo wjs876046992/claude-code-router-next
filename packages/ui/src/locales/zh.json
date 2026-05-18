@@ -388,6 +388,8 @@
     "speed": "速度",
     "duration": "耗时",
     "status": "状态",
+    "success": "成功",
+    "error": "错误",
     "page": "第",
     "records": "条记录",
     "no_data": "暂无用量数据",

@@ -115,6 +115,7 @@ export function UsageStats() {
   const [filterModel, setFilterModel] = useState("");
   const [filterProvider, setFilterProvider] = useState("");
   const [filterScenario, setFilterScenario] = useState("");
+  const [filterStatus, setFilterStatus] = useState<"success" | "error" | "">("");
 
   const pageSize = 20;
 
@@ -127,6 +128,7 @@ export function UsageStats() {
       if (filterModel) params.model = filterModel;
       if (filterProvider) params.provider = filterProvider;
       if (filterScenario) params.scenario = filterScenario;
+      if (filterStatus) params.status = filterStatus;
 
       const result = await api.getUsage(params);
       setRecords(result.records || []);
@@ -137,7 +139,7 @@ export function UsageStats() {
     } finally {
       setLoading(false);
     }
-  }, [page, startDate, endDate, filterModel, filterProvider, filterScenario]);
+  }, [page, startDate, endDate, filterModel, filterProvider, filterScenario, filterStatus]);
 
   useEffect(() => {
     loadData();
@@ -189,10 +191,10 @@ export function UsageStats() {
                   key={hours}
                   type="button"
                   aria-pressed={isActive}
-                  className={`h-7 px-3 text-xs font-medium rounded transition-colors ${
+                  className={`h-7 px-3 text-xs font-semibold rounded border transition-colors ${
                     isActive
-                      ? "bg-blue-600 text-white shadow-sm ring-2 ring-blue-200 hover:bg-blue-700"
-                      : "text-gray-600 hover:bg-gray-50"
+                      ? "border-blue-700 bg-blue-600 text-white shadow-sm ring-2 ring-blue-200 hover:bg-blue-700"
+                      : "border-transparent text-gray-600 hover:bg-gray-100"
                   }`}
                   onClick={() => {
                     const now = new Date();
@@ -265,6 +267,16 @@ export function UsageStats() {
             <SelectContent>
               <SelectItem value="__all__">{t("usage.scenario")}: {t("usage.all")}</SelectItem>
               {scenarios.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <Select value={filterStatus || "__all__"} onValueChange={(v) => { setFilterStatus(v === "__all__" ? "" : v as "success" | "error"); setPage(1); }}>
+            <SelectTrigger className="h-8 text-xs w-[100px] bg-white shadow-sm">
+              <SelectValue placeholder={t("usage.status")} />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all__">{t("usage.status")}: {t("usage.all")}</SelectItem>
+              <SelectItem value="success">{t("usage.success")}</SelectItem>
+              <SelectItem value="error">{t("usage.error")}</SelectItem>
             </SelectContent>
           </Select>
 

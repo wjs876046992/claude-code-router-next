@@ -1,0 +1,430 @@
+/**
+ * Active health/quota probing service for providers
+ * Runs periodic probes to refresh health and quota info without waiting for real traffic
+ */
+
+import { getHealthStore, ProviderHealthState } from './provider-health';
+import { captureRateLimitHeaders } from './rate-limit';
+import { getQuotaAdapter } from './quota-adapters';
+import { storeQuotaResult } from './quota-store';
+import type { LLMProvider } from '../types/llm';
+
+/**
+ * Configuration for active probing behavior
+ */
+export interface ActiveProbeConfig {
+  /** Enable active probing (default: true) */
+  enabled?: boolean;
+  /** Interval in minutes for periodic quota probes (default: 10) */
+  quotaProbeIntervalMinutes?: number;
+  /** Timeout in milliseconds for probe requests (default: 15000) */
+  probeTimeoutMs?: number;
+  /** Initial delay before starting first probe (default: 5000) */
+  initialDelayMs?: number;
+  /** Providers to exclude from active probing (e.g., providers without models endpoint) */
+  excludeProviders?: string[];
+}
+
+const DEFAULT_CONFIG: Required<ActiveProbeConfig> = {
+  enabled: true,
+  quotaProbeIntervalMinutes: 10,
+  probeTimeoutMs: 15000,
+  initialDelayMs: 5000,
+  excludeProviders: [],
+};
+
+/**
+ * Derive a models endpoint URL from the provider base URL
+ * Prefers lightweight GET requests to /models or /v1/models endpoints
+ */
+function deriveModelsEndpoint(baseUrl: string): string | null {
+  try {
+    const url = new URL(baseUrl);
+    // Normalize path: remove trailing /v1/messages or similar
+    let path = url.pathname;
+
+    // Remove common endpoint suffixes
+    if (path.endsWith('/v1/messages')) {
+      path = path.slice(0, -'/v1/messages'.length);
+    } else if (path.endsWith('/messages')) {
+      path = path.slice(0, -'/messages'.length);
+    } else if (path.endsWith('/v1/chat/completions')) {
+      path = path.slice(0, -'/v1/chat/completions'.length);
+    } else if (path.endsWith('/chat/completions')) {
+      path = path.slice(0, -'/chat/completions'.length);
+    }
+
+    // Ensure path ends with /v1 for OpenAI-compatible endpoints
+    if (!path.endsWith('/v1')) {
+      path = path.endsWith('/') ? `${path}v1` : `${path}/v1`;
+    }
+
+    // Use /models endpoint
+    url.pathname = `${path}/models`;
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Keep the existing active header probe for providers known to expose quota
+ * headers on lightweight model-list requests.
+ */
+function shouldProbeRateLimitHeaders(baseUrl: string): boolean {
+  try {
+    const hostname = new URL(baseUrl).hostname.toLowerCase();
+    return hostname.includes('moonshot') || hostname.includes('kimi');
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Perform a single probe against a provider
+ * Uses lightweight GET to models endpoint when available
+ */
+async function probeProvider(
+  provider: LLMProvider,
+  timeoutMs: number,
+  proxyUrl?: string
+): Promise<{ success: boolean; error?: string; headers?: Headers }> {
+  const modelsUrl = deriveModelsEndpoint(provider.baseUrl);
+
+  if (!modelsUrl) {
+    // Cannot derive endpoint, skip probe
+    return { success: false, error: 'Cannot derive models endpoint from baseUrl' };
+  }
+
+  try {
+    const fetchOptions: RequestInit = {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${provider.apiKey}`,
+      },
+      signal: AbortSignal.timeout(timeoutMs),
+    };
+
+    // Add proxy if configured
+    if (proxyUrl) {
+      try {
+        const { ProxyAgent } = await import('undici');
+        (fetchOptions as any).dispatcher = new ProxyAgent(new URL(proxyUrl).toString());
+      } catch {
+        // Proxy agent not available, continue without proxy
+      }
+    }
+
+    const response = await fetch(modelsUrl, fetchOptions);
+
+    // Capture rate limit headers regardless of success/failure
+    if (response.headers) {
+      captureRateLimitHeaders(provider.name, provider.baseUrl, response.headers);
+    }
+
+    if (response.ok) {
+      return { success: true, headers: response.headers };
+    }
+
+    // Treat 401/403 as success for health (endpoint exists, auth works)
+    if (response.status === 401 || response.status === 403) {
+      return { success: true, headers: response.headers };
+    }
+
+    const errorText = await response.text().catch(() => '');
+    return {
+      success: false,
+      error: `HTTP ${response.status}: ${errorText.slice(0, 100)}`,
+      headers: response.headers,
+    };
+  } catch (err: any) {
+    const errorMessage = err?.message || err?.toString() || 'Unknown probe error';
+    return { success: false, error: errorMessage };
+  }
+}
+
+/**
+ * Active probe scheduler
+ */
+export class ActiveProbeService {
+  private config: Required<ActiveProbeConfig>;
+  private quotaProbeTimer?: NodeJS.Timeout;
+  private healthProbeTimer?: NodeJS.Timeout;
+  private getProviders: () => LLMProvider[];
+  private getHttpsProxy?: () => string | undefined;
+  private logger?: any;
+  private running = false;
+
+  constructor(
+    getProviders: () => LLMProvider[],
+    config?: ActiveProbeConfig,
+    getHttpsProxy?: () => string | undefined,
+    logger?: any
+  ) {
+    this.config = { ...DEFAULT_CONFIG, ...config };
+    this.getProviders = getProviders;
+    this.getHttpsProxy = getHttpsProxy;
+    this.logger = logger;
+  }
+
+  /**
+   * Start the active probe loop
+   */
+  start(): void {
+    if (!this.config.enabled || this.running) return;
+
+    this.running = true;
+
+    // Initial probe after delay
+    setTimeout(() => {
+      if (!this.running) return;
+      this.runQuotaProbe();
+      this.runHealthProbe();
+    }, this.config.initialDelayMs);
+
+    // Periodic quota probe
+    this.quotaProbeTimer = setInterval(
+      () => this.runQuotaProbe(),
+      this.config.quotaProbeIntervalMinutes * 60 * 1000
+    );
+
+    // Periodic health probe (aligned with ProviderHealthStore probeInterval)
+    // Run every 5 minutes to check open states
+    this.healthProbeTimer = setInterval(
+      () => this.runHealthProbe(),
+      5 * 60 * 1000
+    );
+
+    this.logger?.info('Active probe service started');
+  }
+
+  /**
+   * Stop all probe timers
+   */
+  stop(): void {
+    this.running = false;
+
+    if (this.quotaProbeTimer) {
+      clearInterval(this.quotaProbeTimer);
+      this.quotaProbeTimer = undefined;
+    }
+
+    if (this.healthProbeTimer) {
+      clearInterval(this.healthProbeTimer);
+      this.healthProbeTimer = undefined;
+    }
+
+    this.logger?.info('Active probe service stopped');
+  }
+
+  /**
+   * Run quota probes for configured providers.
+   * Provider-specific adapters actively query official quota APIs, while the
+   * Kimi/Moonshot models probe continues to capture header-based limits.
+   */
+  private async runQuotaProbe(): Promise<void> {
+    const providers = this.getProviders().filter(
+      p => p?.name && !this.config.excludeProviders.includes(p.name)
+    );
+    const proxy = this.getHttpsProxy?.();
+
+    if (providers.length === 0) return;
+
+    const tasks: Array<{ provider: string; type: string; promise: Promise<void> }> = [];
+
+    for (const provider of providers) {
+      const adapter = getQuotaAdapter(provider.baseUrl);
+
+      if (adapter) {
+        tasks.push({
+          provider: provider.name,
+          type: 'quota-adapter',
+          promise: adapter
+            .queryQuota(provider, this.config.probeTimeoutMs, proxy)
+            .then(result => {
+              if (result) {
+                storeQuotaResult(provider.name, result);
+                this.logger?.debug?.(`Stored quota probe result for ${provider.name}`);
+              }
+            }),
+        });
+      }
+
+      if (shouldProbeRateLimitHeaders(provider.baseUrl)) {
+        tasks.push({
+          provider: provider.name,
+          type: 'rate-limit-headers',
+          promise: probeProvider(provider, this.config.probeTimeoutMs, proxy).then(() => undefined),
+        });
+      }
+    }
+
+    if (tasks.length === 0) return;
+
+    this.logger?.debug?.(
+      `Running quota probe with ${tasks.length} tasks for ${providers.length} providers`
+    );
+
+    const results = await Promise.allSettled(tasks.map(task => task.promise));
+
+    for (let i = 0; i < tasks.length; i++) {
+      const result = results[i];
+      if (result.status === 'rejected') {
+        const task = tasks[i];
+        this.logger?.warn?.(
+          `Quota probe failed for ${task.provider} (${task.type}): ${result.reason}`
+        );
+      }
+    }
+  }
+
+  /**
+   * Run health probe for providers in open state
+   * Only probes models that need probing (needsProbe returns true)
+   */
+  private async runHealthProbe(): Promise<void> {
+    const healthStore = getHealthStore();
+    const providers = this.getProviders();
+    const proxy = this.getHttpsProxy?.();
+
+    // Find all models in open state that need probing
+    const openStates = healthStore.getFailPoolModels();
+    const toProbe: Array<{ provider: LLMProvider; model: string; state: ProviderHealthState }> = [];
+
+    for (const key of openStates) {
+      const [providerName, model] = key.split(',');
+      const state = healthStore.getState(providerName, model);
+
+      if (state && state.status === 'open' && healthStore.needsProbe(state)) {
+        const provider = providers.find(p => p.name === providerName);
+        if (provider && !this.config.excludeProviders.includes(providerName)) {
+          toProbe.push({ provider, model, state });
+        }
+      }
+    }
+
+    if (toProbe.length === 0) return;
+
+    this.logger?.debug?.(`Running health probe for ${toProbe.length} open models`);
+
+    // Mark probe attempts first
+    for (const { provider, model } of toProbe) {
+      healthStore.markProbeAttempt(provider.name, model);
+    }
+
+    // Probe each provider concurrently
+    const results = await Promise.allSettled(
+      toProbe.map(({ provider }) =>
+        probeProvider(provider, this.config.probeTimeoutMs, proxy)
+      )
+    );
+
+    // Record results for each provider/model combination
+    for (let i = 0; i < toProbe.length; i++) {
+      const { provider, model } = toProbe[i];
+      const result = results[i];
+
+      if (result.status === 'fulfilled') {
+        const probeResult = result.value;
+        if (probeResult.success) {
+          // Probe succeeded - record for each model of this provider
+          for (const m of provider.models) {
+            healthStore.recordSuccess(provider.name, m);
+          }
+          this.logger?.info?.(`Health probe succeeded for ${provider.name}`);
+        } else {
+          // Probe failed - record for each model
+          for (const m of provider.models) {
+            healthStore.recordFailure(provider.name, m, probeResult.error);
+          }
+          this.logger?.warn?.(`Health probe failed for ${provider.name}: ${probeResult.error}`);
+        }
+      } else {
+        // Probe threw error
+        for (const m of provider.models) {
+          healthStore.recordFailure(provider.name, m, result.reason?.message || 'Probe error');
+        }
+        this.logger?.warn?.(`Health probe error for ${provider.name}: ${result.reason}`);
+      }
+    }
+  }
+
+  /**
+   * Trigger a manual probe for a specific provider
+   */
+  async probeProviderManually(providerName: string): Promise<boolean> {
+    const providers = this.getProviders();
+    const provider = providers.find(p => p.name === providerName);
+
+    if (!provider) {
+      this.logger?.warn?.(`Provider ${providerName} not found for manual probe`);
+      return false;
+    }
+
+    const proxy = this.getHttpsProxy?.();
+    const result = await probeProvider(provider, this.config.probeTimeoutMs, proxy);
+
+    if (result.success) {
+      for (const m of provider.models) {
+        getHealthStore().recordSuccess(provider.name, m);
+      }
+    } else {
+      for (const m of provider.models) {
+        getHealthStore().recordFailure(provider.name, m, result.error);
+      }
+    }
+
+    return result.success;
+  }
+}
+
+// Singleton instance
+let activeProbeService: ActiveProbeService | null = null;
+
+/**
+ * Initialize and get the active probe service
+ */
+export function getActiveProbeService(
+  getProviders: () => LLMProvider[],
+  config?: ActiveProbeConfig,
+  getHttpsProxy?: () => string | undefined,
+  logger?: any
+): ActiveProbeService {
+  if (!activeProbeService) {
+    activeProbeService = new ActiveProbeService(getProviders, config, getHttpsProxy, logger);
+  }
+  return activeProbeService;
+}
+
+/**
+ * Start the active probe service (convenience function)
+ */
+export function startActiveProbe(
+  getProviders: () => LLMProvider[],
+  config?: ActiveProbeConfig,
+  getHttpsProxy?: () => string | undefined,
+  logger?: any
+): ActiveProbeService {
+  const service = getActiveProbeService(getProviders, config, getHttpsProxy, logger);
+  service.start();
+  return service;
+}
+
+/**
+ * Stop the active probe service
+ */
+export function stopActiveProbe(): void {
+  if (activeProbeService) {
+    activeProbeService.stop();
+  }
+}
+
+/**
+ * Reset the active probe service (for testing)
+ */
+export function resetActiveProbeService(): void {
+  if (activeProbeService) {
+    activeProbeService.stop();
+    activeProbeService = null;
+  }
+}

@@ -298,6 +298,7 @@ export const createServer = async (config: any): Promise<any> => {
         provider: q.provider,
         scenario: q.scenario,
         sessionId: q.sessionId,
+        status: q.status,
         page: q.page ? parseInt(q.page, 10) : undefined,
         pageSize: q.pageSize ? parseInt(q.pageSize, 10) : undefined,
       });
@@ -312,7 +313,7 @@ export const createServer = async (config: any): Promise<any> => {
   app.get("/api/usage/summary", async (req: any, reply: any) => {
     try {
       const q = req.query as any;
-      return queryUsageSummary(q.startDate, q.endDate);
+      return queryUsageSummary(q.startDate, q.endDate, q.status);
     } catch (error) {
       console.error("Failed to query usage summary:", error);
       reply.status(500).send({ error: "Failed to query usage summary" });

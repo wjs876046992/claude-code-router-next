@@ -253,6 +253,7 @@ class ApiClient {
   async getUsage(params?: {
     startDate?: string; endDate?: string; model?: string;
     provider?: string; scenario?: string; sessionId?: string;
+    status?: "success" | "error";
     page?: number; pageSize?: number;
   }): Promise<{ records: any[]; summary: any; total: number; page: number; pageSize: number }> {
     const query = new URLSearchParams();
@@ -264,7 +265,7 @@ class ApiClient {
   }
 
   // Get usage summary only
-  async getUsageSummary(params?: { startDate?: string; endDate?: string }): Promise<any> {
+  async getUsageSummary(params?: { startDate?: string; endDate?: string; status?: "success" | "error" }): Promise<any> {
     const query = new URLSearchParams();
     if (params) {
       Object.entries(params).forEach(([k, v]) => { if (v != null) query.set(k, String(v)); });

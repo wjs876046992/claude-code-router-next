@@ -52,6 +52,7 @@ export interface UsageQueryFilters {
   provider?: string;
   scenario?: string;
   sessionId?: string;
+  status?: "success" | "error";
   page?: number;
   pageSize?: number;
 }
@@ -227,6 +228,9 @@ export function query(filters: UsageQueryFilters): UsageQueryResult {
   if (filters.sessionId) {
     records = records.filter((r) => r.sessionId === filters.sessionId);
   }
+  if (filters.status) {
+    records = records.filter((r) => r.status === filters.status);
+  }
 
   // Sort newest first
   records.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
@@ -241,7 +245,7 @@ export function query(filters: UsageQueryFilters): UsageQueryResult {
   return { records: paged, summary, total, page, pageSize };
 }
 
-export function querySummary(startTime?: string, endTime?: string): UsageSummary {
+export function querySummary(startTime?: string, endTime?: string, status?: "success" | "error"): UsageSummary {
   let records = readAllRecords();
 
   if (startTime) {
@@ -249,6 +253,9 @@ export function querySummary(startTime?: string, endTime?: string): UsageSummary
   }
   if (endTime) {
     records = records.filter((r) => r.timestamp <= endTime!);
+  }
+  if (status) {
+    records = records.filter((r) => r.status === status);
   }
 
   return computeSummary(records);

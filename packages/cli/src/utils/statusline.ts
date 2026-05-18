@@ -397,7 +397,7 @@ const FULL_THEME: StatusLineThemeConfig = {
         {
             type: "speed",
             icon: "⚡",
-            text: "{{tokenSpeed}} t/s {{isStreaming}}",
+            text: "{{tokenSpeed}}tok/s {{isStreaming}}",
             color: "bright_yellow"
         },
         {
@@ -421,22 +421,21 @@ const FULL_THEME: StatusLineThemeConfig = {
     ]
 };
 
-// Format token count with auto unit: t -> k -> m -> b (always show unit for consistency)
+// Format token count with fixed-width units for stable display
 function formatTokenCount(count: number): string {
     if (count < 1000) {
-        // For small counts, show 't' suffix for consistency
-        return `${count}t`;
+        return `${count}`.padStart(4, ' ');
     }
     if (count < 1_000_000) {
         const val = count / 1000;
-        return `${val % 1 === 0 ? val.toFixed(0) : val.toFixed(1)}k`;
+        return (val % 1 === 0 ? val.toFixed(0) : val.toFixed(1)) + 'k';
     }
     if (count < 1_000_000_000) {
         const val = count / 1_000_000;
-        return `${val % 1 === 0 ? val.toFixed(0) : val.toFixed(1)}m`;
+        return (val % 1 === 0 ? val.toFixed(0) : val.toFixed(1)) + 'm';
     }
     const val = count / 1_000_000_000;
-    return `${val % 1 === 0 ? val.toFixed(0) : val.toFixed(1)}b`;
+    return (val % 1 === 0 ? val.toFixed(0) : val.toFixed(1)) + 'b';
 }
 
 // Format usage information with auto unit
@@ -933,8 +932,9 @@ async function renderDefaultStyle(
         parts.push(displayText);
     }
 
-    // Join all parts with spaces
-    return parts.join(" ");
+    // Join all parts with double spaces for clearer visual separation
+    // Prevents emoji-width issues where single space might visually overlap
+    return parts.join("  ");
 }
 
 // Powerline symbols

@@ -179,21 +179,10 @@ async function handleFallback(
   req.log.warn(`Request failed for ${scenarioType}, trying ${totalFallbacks} fallback models across ${fallbackStages.length} fallback stage(s)`);
 
   for (const fallbackStage of fallbackStages) {
-    const sortedFallbacks = [...fallbackStage.models].sort((a, b) => {
-      const aRoute = parseFallbackModel(a);
-      const bRoute = parseFallbackModel(b);
+    req.log.info(`Trying ${fallbackStage.name} fallback stage with ${fallbackStage.models.length} models`);
 
-      if (!aRoute || !bRoute) {
-        return !aRoute && !bRoute ? 0 : !aRoute ? 1 : -1;
-      }
-
-      return healthStore.getPriority(aRoute.provider, aRoute.model) - healthStore.getPriority(bRoute.provider, bRoute.model);
-    });
-
-    req.log.info(`Trying ${fallbackStage.name} fallback stage with ${sortedFallbacks.length} models`);
-
-    // Try each fallback model in sequence, skipping open (fail pool) models
-    for (const fallbackModel of sortedFallbacks) {
+    // Try each fallback model in configured order, skipping open (fail pool) models
+    for (const fallbackModel of fallbackStage.models) {
       const fallbackRoute = parseFallbackModel(fallbackModel);
       if (!fallbackRoute) {
         req.log.warn(`Fallback model '${fallbackModel}' is invalid, skipping`);

@@ -388,6 +388,8 @@
     "speed": "Speed",
     "duration": "Duration",
     "status": "Status",
+    "success": "Success",
+    "error": "Error",
     "page": "Page",
     "records": "records",
     "no_data": "No usage data available",

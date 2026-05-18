@@ -257,19 +257,7 @@ function resolveScenarioFallbackModel(
       continue;
     }
 
-    const sortedFallbacks = [...fallbackList].sort((a, b) => {
-      const aRoute = parseConfiguredRoute(a);
-      const bRoute = parseConfiguredRoute(b);
-
-      if (!aRoute || !bRoute) {
-        return !aRoute && !bRoute ? 0 : !aRoute ? 1 : -1;
-      }
-
-      return healthStore.getPriority(aRoute.providerName, aRoute.routeModel) -
-        healthStore.getPriority(bRoute.providerName, bRoute.routeModel);
-    });
-
-    for (const fallbackModel of sortedFallbacks) {
+    for (const fallbackModel of fallbackList) {
       const model = resolveConfiguredModel(fallbackModel, providers);
       if (model) {
         return model;
@@ -463,12 +451,21 @@ const getUseModel = async (
   const Router = projectSpecificRouter || configService.get("Router");
   const globalFallback = configService.get<RouterFallbackConfig>('fallback');
 
+  // Handle explicit provider,model format
   if (req.body.model.includes(",")) {
     const model = resolveConfiguredModel(req.body.model, providers);
     if (model) {
       return { model, scenarioType: 'default' };
     }
-    req.log.warn(`Explicit model ${req.body.model} unavailable (fail pool), trying alternatives`);
+    req.log.warn(`Explicit model ${req.body.model} unavailable (fail pool), trying fallback`);
+    // Try fallback for default scenario (explicit models are treated as default)
+    const fallbackModel = resolveScenarioFallbackModel('default', providers, undefined, globalFallback);
+    if (fallbackModel) {
+      req.log.info(`Using fallback for explicit model: ${fallbackModel}`);
+      return { model: fallbackModel, scenarioType: 'default' };
+    }
+    // No fallback available, continue through routing logic as last resort
+    req.log.warn(`No fallback available for explicit model ${req.body.model}, continuing through routing logic`);
   }
 
   // Model family routing: extract opus/sonnet/haiku and use family-specific config

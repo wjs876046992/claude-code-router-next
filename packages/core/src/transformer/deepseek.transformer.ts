@@ -59,7 +59,7 @@ export class DeepseekTransformer implements Transformer {
       const encoder = new TextEncoder();
       let reasoningContent = "";
       let isReasoningComplete = false;
-      let buffer = ""; // 用于缓冲不完整的数据
+      let buffer = ""; // Buffer for incomplete data chunks
 
       const stream = new ReadableStream({
         async start(controller) {
@@ -151,7 +151,7 @@ export class DeepseekTransformer implements Transformer {
                     ],
                   };
                   delete thinkingChunk.choices[0].delta.reasoning_content;
-                  // Send the thinking chunk
+                  // Send the accumulated thinking as a single chunk
                   const thinkingLine = `data: ${JSON.stringify(
                     thinkingChunk
                   )}\n\n`;
@@ -187,7 +187,7 @@ export class DeepseekTransformer implements Transformer {
             while (true) {
               const { done, value } = await reader.read();
               if (done) {
-                // 处理缓冲区中剩余的数据
+                // Process remaining buffered data
                 if (buffer.trim()) {
                   processBuffer(buffer, controller, encoder);
                 }
@@ -197,9 +197,9 @@ export class DeepseekTransformer implements Transformer {
               const chunk = decoder.decode(value, { stream: true });
               buffer += chunk;
 
-              // 处理缓冲区中完整的数据行
+              // Process complete data lines in buffer
               const lines = buffer.split("\n");
-              buffer = lines.pop() || ""; // 最后一行可能不完整，保留在缓冲区
+              buffer = lines.pop() || ""; // Last line may be incomplete, keep in buffer
 
               for (const line of lines) {
                 if (!line.trim()) continue;
@@ -216,7 +216,7 @@ export class DeepseekTransformer implements Transformer {
                   });
                 } catch (error) {
                   console.error("Error processing line:", line, error);
-                  // 如果解析失败，直接传递原始行
+                  // If parsing fails, pass through original line
                   controller.enqueue(encoder.encode(line + "\n"));
                 }
               }
