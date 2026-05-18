@@ -1,6 +1,6 @@
 {
   "name": "@wengine-ai/claude-code-router-server",
-  "version": "2.0.44",
+  "version": "2.0.57",
   "description": "Server for Claude Code Router",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

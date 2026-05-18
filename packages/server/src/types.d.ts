@@ -49,6 +49,87 @@ declare module "@wengine-ai/llms" {
   export const calculateTokenCount: (messages: any[], system: any, tools: any[]) => number;
   export const searchProjectBySession: (sessionId: string) => Promise<string | null>;
 
+  // Export rate limit info captured from upstream provider response headers
+  export interface RateLimitInfo {
+    provider: string;
+    remaining: number | null;
+    limit: number | null;
+    reset: number | null;
+    capturedAt: number;
+  }
+
+  export const getAllRateLimitInfo: () => RateLimitInfo[];
+  export const getRateLimitInfo: (providerName: string) => RateLimitInfo | undefined;
+
+  // Active probe configuration
+  export interface ActiveProbeConfig {
+    enabled?: boolean;
+    quotaProbeIntervalMinutes?: number;
+    probeTimeoutMs?: number;
+    initialDelayMs?: number;
+    excludeProviders?: string[];
+  }
+
+  export interface LLMProvider {
+    name: string;
+    baseUrl: string;
+    apiKey: string;
+    models: string[];
+    transformer?: any;
+  }
+
+  export interface ProviderQuotaResult {
+    totalBalance?: number;
+    usedBalance?: number;
+    remainingBalance?: number;
+    usedDailyBalance?: number;
+    limitDaily?: number;
+    currency?: string;
+    resetTime?: string;
+  }
+
+  export interface StoredQuotaResult extends ProviderQuotaResult {
+    provider: string;
+    capturedAt: number;
+  }
+
+  export interface QuotaAdapter {
+    queryQuota(
+      provider: LLMProvider,
+      timeoutMs: number,
+      proxyUrl?: string
+    ): Promise<ProviderQuotaResult | null>;
+  }
+
+  export const getQuotaAdapter: (baseUrl: string) => QuotaAdapter | null;
+  export const storeQuotaResult: (providerName: string, result: ProviderQuotaResult) => void;
+  export const getQuotaResult: (providerName: string) => StoredQuotaResult | undefined;
+  export const getAllQuotaResults: () => StoredQuotaResult[];
+
+  // Active probe service for health/quota probing
+  export class ActiveProbeService {
+    start(): void;
+    stop(): void;
+    probeProviderManually(providerName: string): Promise<boolean>;
+  }
+
+  export const getActiveProbeService: (
+    getProviders: () => LLMProvider[],
+    config?: ActiveProbeConfig,
+    getHttpsProxy?: () => string | undefined,
+    logger?: any
+  ) => ActiveProbeService;
+
+  export const startActiveProbe: (
+    getProviders: () => LLMProvider[],
+    config?: ActiveProbeConfig,
+    getHttpsProxy?: () => string | undefined,
+    logger?: any
+  ) => ActiveProbeService;
+
+  export const stopActiveProbe: () => void;
+  export const resetActiveProbeService: () => void;
+
   // Export services
   export class ConfigService {
     constructor(options?: any);

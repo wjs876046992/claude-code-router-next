@@ -187,14 +187,39 @@ function lookupModelMapping(
   return null;
 }
 
-function resolveConfiguredModel(modelName: string, providers: any[], skipHealthCheck?: boolean): string {
+function getUsageInputTokens(usage?: Usage): number {
+  if (!usage) {
+    return 0;
+  }
+
+  return (usage.input_tokens || 0) +
+    (usage.cache_read_input_tokens || 0) +
+    (usage.cache_creation_input_tokens || 0);
+}
+
+function parseConfiguredRoute(modelName: string): { providerName: string; routeModel: string } | null {
   if (!modelName?.includes(",")) {
-    return modelName;
+    return null;
   }
 
   const [provider, ...modelParts] = modelName.split(",");
   const providerName = provider.trim();
   const routeModel = modelParts.join(",").trim();
+
+  if (!providerName || !routeModel) {
+    return null;
+  }
+
+  return { providerName, routeModel };
+}
+
+function resolveConfiguredModel(modelName: string, providers: any[], skipHealthCheck?: boolean): string | null {
+  const route = parseConfiguredRoute(modelName);
+  if (!route) {
+    return modelName;
+  }
+
+  const { providerName, routeModel } = route;
 
   // Check health status - skip if model is in fail pool
   if (!skipHealthCheck) {
@@ -216,6 +241,43 @@ function resolveConfiguredModel(modelName: string, providers: any[], skipHealthC
   }
 
   return modelName;
+}
+
+function resolveScenarioFallbackModel(
+  scenarioType: RouterScenarioType,
+  providers: any[],
+  familyFallback?: Record<string, string[] | undefined>,
+  globalFallback?: Record<string, string[] | undefined>
+): string | null {
+  const healthStore = getHealthStore();
+  const fallbackStages = [familyFallback?.[scenarioType], globalFallback?.[scenarioType]];
+
+  for (const fallbackList of fallbackStages) {
+    if (!Array.isArray(fallbackList) || fallbackList.length === 0) {
+      continue;
+    }
+
+    const sortedFallbacks = [...fallbackList].sort((a, b) => {
+      const aRoute = parseConfiguredRoute(a);
+      const bRoute = parseConfiguredRoute(b);
+
+      if (!aRoute || !bRoute) {
+        return !aRoute && !bRoute ? 0 : !aRoute ? 1 : -1;
+      }
+
+      return healthStore.getPriority(aRoute.providerName, aRoute.routeModel) -
+        healthStore.getPriority(bRoute.providerName, bRoute.routeModel);
+    });
+
+    for (const fallbackModel of sortedFallbacks) {
+      const model = resolveConfiguredModel(fallbackModel, providers);
+      if (model) {
+        return model;
+      }
+    }
+  }
+
+  return null;
 }
 
 function requestHasImages(req: any): boolean {
@@ -272,36 +334,70 @@ function resolveFamilyModel(
   familyConfig: RouterFamilyConfig,
   providers: any[],
   lastUsage?: Usage,
-  modelExtended?: boolean
+  modelExtended?: boolean,
+  globalFallback?: RouterFallbackConfig
 ): { model: string; scenarioType: RouterScenarioType } | null {
   const longContextThreshold = familyConfig.longContextThreshold || 60000;
+  const effectiveTokenCount = Math.max(tokenCount, getUsageInputTokens(lastUsage));
 
   // Check extended context (1M+) first - higher priority than long context
   // Triggered by: 1) explicit [1m] suffix in model name, 2) token count > 200k
   const extendedThreshold = 200000;
-  const shouldUseExtended = modelExtended || tokenCount > extendedThreshold;
+  const shouldUseExtended = modelExtended || effectiveTokenCount > extendedThreshold;
   if (shouldUseExtended && familyConfig.extendedContext) {
     const model = resolveConfiguredModel(familyConfig.extendedContext, providers);
     if (model) {
-      req.log.info(`Family: using extended context model (1M+), tokens: ${tokenCount}, explicit: ${modelExtended}`);
+      req.log.info(`Family: using extended context model (1M+), tokens: ${effectiveTokenCount}, estimated: ${tokenCount}, explicit: ${modelExtended}`);
       return { model, scenarioType: 'extendedContext' };
     }
+
+    const fallbackModel = resolveScenarioFallbackModel('extendedContext', providers, familyConfig.fallback, globalFallback);
+    if (fallbackModel) {
+      req.log.info(`Family: using extended context fallback model (1M+), tokens: ${effectiveTokenCount}, estimated: ${tokenCount}, explicit: ${modelExtended}`);
+      return { model: fallbackModel, scenarioType: 'extendedContext' };
+    }
+
     req.log.warn(`Family: extendedContext model unavailable (fail pool), skipping`);
   }
 
-  const lastUsageThreshold =
-    lastUsage &&
-    lastUsage.input_tokens > longContextThreshold &&
-    tokenCount > 20000;
-  const tokenCountThreshold = tokenCount > longContextThreshold;
+  const tokenCountThreshold = effectiveTokenCount > longContextThreshold;
 
-  if ((lastUsageThreshold || tokenCountThreshold) && familyConfig.longContext) {
-    const model = resolveConfiguredModel(familyConfig.longContext, providers);
-    if (model) {
-      req.log.info(`Family: using long context model, tokens: ${tokenCount}`);
-      return { model, scenarioType: 'longContext' };
+  if (
+    tokenCountThreshold &&
+    (familyConfig.longContext || familyConfig.fallback?.longContext?.length || globalFallback?.longContext?.length)
+  ) {
+    const primary = familyConfig.longContext
+      ? resolveConfiguredModel(familyConfig.longContext, providers)
+      : null;
+    if (primary) {
+      req.log.info(`Family: using long context model, tokens: ${effectiveTokenCount}, estimated: ${tokenCount}`);
+      return { model: primary, scenarioType: 'longContext' };
     }
-    req.log.warn(`Family: longContext model unavailable (fail pool), skipping`);
+
+    const fallbackModel = resolveScenarioFallbackModel('longContext', providers, familyConfig.fallback, globalFallback);
+    if (fallbackModel) {
+      req.log.info(`Family: using long context fallback model, tokens: ${effectiveTokenCount}, estimated: ${tokenCount}`);
+      return { model: fallbackModel, scenarioType: 'longContext' };
+    }
+
+    const forcedPrimary = familyConfig.longContext
+      ? resolveConfiguredModel(familyConfig.longContext, providers, true)
+      : null;
+    if (forcedPrimary) {
+      req.log.warn(`Family: no healthy longContext model, forcing primary to keep scenarioType=longContext`);
+      return { model: forcedPrimary, scenarioType: 'longContext' };
+    }
+
+    const forcedFallback = [
+      ...(familyConfig.fallback?.longContext || []),
+      ...(globalFallback?.longContext || []),
+    ]
+      .map((fallbackModel) => resolveConfiguredModel(fallbackModel, providers, true))
+      .find(Boolean);
+    if (forcedFallback) {
+      req.log.warn(`Family: no healthy longContext model, forcing fallback to keep scenarioType=longContext`);
+      return { model: forcedFallback, scenarioType: 'longContext' };
+    }
   }
 
   if (
@@ -313,6 +409,13 @@ function resolveFamilyModel(
     if (model) {
       return { model, scenarioType: 'webSearch' };
     }
+
+    const fallbackModel = resolveScenarioFallbackModel('webSearch', providers, familyConfig.fallback, globalFallback);
+    if (fallbackModel) {
+      req.log.info(`Family: using webSearch fallback model`);
+      return { model: fallbackModel, scenarioType: 'webSearch' };
+    }
+
     req.log.warn(`Family: webSearch model unavailable (fail pool), skipping`);
   }
 
@@ -321,6 +424,13 @@ function resolveFamilyModel(
     if (model) {
       return { model, scenarioType: 'think' };
     }
+
+    const fallbackModel = resolveScenarioFallbackModel('think', providers, familyConfig.fallback, globalFallback);
+    if (fallbackModel) {
+      req.log.info(`Family: using think fallback model`);
+      return { model: fallbackModel, scenarioType: 'think' };
+    }
+
     req.log.warn(`Family: think model unavailable (fail pool), skipping`);
   }
 
@@ -329,6 +439,13 @@ function resolveFamilyModel(
     if (model) {
       return { model, scenarioType: 'default' };
     }
+
+    const fallbackModel = resolveScenarioFallbackModel('default', providers, familyConfig.fallback, globalFallback);
+    if (fallbackModel) {
+      req.log.info(`Family: using default fallback model`);
+      return { model: fallbackModel, scenarioType: 'default' };
+    }
+
     req.log.warn(`Family: default model unavailable (fail pool), skipping`);
   }
 
@@ -344,6 +461,7 @@ const getUseModel = async (
   const projectSpecificRouter = await getProjectSpecificRouter(req, configService);
   const providers = configService.get<any[]>("providers") || [];
   const Router = projectSpecificRouter || configService.get("Router");
+  const globalFallback = configService.get<RouterFallbackConfig>('fallback');
 
   if (req.body.model.includes(",")) {
     const model = resolveConfiguredModel(req.body.model, providers);
@@ -360,7 +478,15 @@ const getUseModel = async (
     req.log.info(`Using model family routing for: ${family}${modelExtended ? ' (1M)' : ''}`);
     req.modelFamily = family;
     req.familyFallback = familyConfig.fallback;
-    const familyResult = resolveFamilyModel(req, tokenCount, familyConfig, providers, lastUsage, modelExtended);
+    const familyResult = resolveFamilyModel(
+      req,
+      tokenCount,
+      familyConfig,
+      providers,
+      lastUsage,
+      modelExtended,
+      globalFallback
+    );
     if (familyResult) {
       return familyResult;
     }
@@ -376,25 +502,23 @@ const getUseModel = async (
     req.log.warn(`Mapped model ${mappedModel} unavailable (fail pool), skipping`);
   }
 
+  const effectiveTokenCount = Math.max(tokenCount, getUsageInputTokens(lastUsage));
+
   // Check extended context (1M+) first
   const extendedContextThreshold = Router?.extendedContextThreshold || 200000;
-  if (tokenCount > extendedContextThreshold && Router?.extendedContext) {
+  if (effectiveTokenCount > extendedContextThreshold && Router?.extendedContext) {
     req.log.info(
-      `Using extended context (1M) model due to token count: ${tokenCount}, threshold: ${extendedContextThreshold}`
+      `Using extended context (1M) model due to token count: ${effectiveTokenCount}, estimated: ${tokenCount}, threshold: ${extendedContextThreshold}`
     );
     return { model: Router.extendedContext, scenarioType: 'extendedContext' };
   }
 
   // if tokenCount is greater than the configured threshold, use the long context model
   const longContextThreshold = Router?.longContextThreshold || 60000;
-  const lastUsageThreshold =
-    lastUsage &&
-    lastUsage.input_tokens > longContextThreshold &&
-    tokenCount > 20000;
-  const tokenCountThreshold = tokenCount > longContextThreshold;
-  if ((lastUsageThreshold || tokenCountThreshold) && Router?.longContext) {
+  const tokenCountThreshold = effectiveTokenCount > longContextThreshold;
+  if (tokenCountThreshold && Router?.longContext) {
     req.log.info(
-      `Using long context model due to token count: ${tokenCount}, threshold: ${longContextThreshold}`
+      `Using long context model due to token count: ${effectiveTokenCount}, estimated: ${tokenCount}, threshold: ${longContextThreshold}`
     );
     return { model: Router.longContext, scenarioType: 'longContext' };
   }
@@ -448,10 +572,12 @@ export interface RouterContext {
 export type RouterScenarioType = 'default' | 'background' | 'think' | 'longContext' | 'extendedContext' | 'webSearch' | 'modelMapping' | 'image';
 
 export interface RouterFallbackConfig {
+  [key: string]: string[] | undefined;
   default?: string[];
   background?: string[];
   think?: string[];
   longContext?: string[];
+  extendedContext?: string[];
   webSearch?: string[];
   modelMapping?: string[];
   image?: string[];

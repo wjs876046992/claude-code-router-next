@@ -13,6 +13,7 @@ import { ProviderService } from "@/services/provider";
 import { TransformerService } from "@/services/transformer";
 import { Transformer } from "@/types/transformer";
 import { getHealthStore } from "@/services/provider-health";
+import { captureRateLimitHeaders } from "@/services/rate-limit";
 
 // Extend FastifyInstance to include custom services
 declare module "fastify" {
@@ -76,6 +77,13 @@ async function handleTransformerEndpoint(
       }
     );
 
+    // Capture rate limit headers from upstream response
+    try {
+      if (provider?.baseUrl && response?.headers) {
+        captureRateLimitHeaders(providerName, provider.baseUrl, response.headers);
+      }
+    } catch {}
+
     // Process response transformer chain
     const finalResponse = await processResponseTransformers(
       requestBody,
@@ -114,109 +122,167 @@ async function handleFallback(
 ): Promise<any> {
   const scenarioType = (req as any).scenarioType || 'default';
   const familyFallback = (req as any).familyFallback;
+  const modelFamily = (req as any).modelFamily;
   const globalFallback = fastify.configService.get<any>('fallback');
   const healthStore = getHealthStore();
 
-  // Try family fallback first, then global fallback
-  let fallbackList: string[] = [];
-  if (familyFallback?.[scenarioType]) {
-    fallbackList = familyFallback[scenarioType];
-  } else if (globalFallback?.[scenarioType]) {
-    fallbackList = globalFallback[scenarioType];
+  const parseFallbackModel = (fallbackModel: string) => {
+    const [provider, ...modelParts] = fallbackModel.split(',');
+    const providerName = provider?.trim();
+    const model = modelParts.join(',').trim();
+
+    if (!providerName || !model) {
+      return null;
+    }
+
+    return {
+      provider: providerName,
+      model,
+      key: `${providerName},${model}`,
+    };
+  };
+
+  const fallbackStages: Array<{ name: string; models: string[] }> = [];
+  if (modelFamily) {
+    const familyScenarioFallback = familyFallback?.[scenarioType];
+    if (Array.isArray(familyScenarioFallback) && familyScenarioFallback.length > 0) {
+      fallbackStages.push({
+        name: `${modelFamily}/${scenarioType}`,
+        models: familyScenarioFallback,
+      });
+    } else {
+      req.log.warn(`No ${modelFamily} fallback configured for ${scenarioType}; will try global ${scenarioType} fallback`);
+    }
   }
 
-  if (!Array.isArray(fallbackList) || fallbackList.length === 0) {
+  if (Array.isArray(globalFallback?.[scenarioType]) && globalFallback[scenarioType].length > 0) {
+    fallbackStages.push({
+      name: `global/${scenarioType}`,
+      models: globalFallback[scenarioType],
+    });
+  }
+
+  if (fallbackStages.length === 0) {
     return null;
   }
 
-  // Record failure for the original model
   const originalProvider = req.provider || "";
   const originalModel = (req.body as any).model || "";
-  healthStore.recordFailure(originalProvider, originalModel, error?.message);
+  const attemptedFallbacks = new Set<string>();
 
-  req.log.warn(`Request failed for ${(req as any).scenarioType}, trying ${fallbackList.length} fallback models`);
+  if (originalProvider && originalModel) {
+    healthStore.recordFailure(originalProvider, originalModel, error?.message);
+    attemptedFallbacks.add(`${originalProvider},${originalModel}`);
+  }
 
-  // Sort fallback models by health priority: closed first, then half-open
-  const sortedFallbacks = fallbackList.sort((a, b) => {
-    const [aProvider, aModel] = a.split(',');
-    const [bProvider, bModel] = b.split(',');
-    return healthStore.getPriority(aProvider, aModel) - healthStore.getPriority(bProvider, bModel);
-  });
+  const totalFallbacks = fallbackStages.reduce((total, stage) => total + stage.models.length, 0);
+  req.log.warn(`Request failed for ${scenarioType}, trying ${totalFallbacks} fallback models across ${fallbackStages.length} fallback stage(s)`);
 
-  // Try each fallback model in sequence, skipping open (fail pool) models
-  for (const fallbackModel of sortedFallbacks) {
-    try {
-      const [fallbackProvider, ...fallbackModelName] = fallbackModel.split(',');
-      const model = fallbackModelName.join(',');
+  for (const fallbackStage of fallbackStages) {
+    const sortedFallbacks = [...fallbackStage.models].sort((a, b) => {
+      const aRoute = parseFallbackModel(a);
+      const bRoute = parseFallbackModel(b);
 
-      // Skip if model is in fail pool (open state)
-      if (!healthStore.isAvailable(fallbackProvider, model)) {
-        req.log.warn(`Fallback model ${fallbackModel} unavailable (fail pool), skipping`);
+      if (!aRoute || !bRoute) {
+        return !aRoute && !bRoute ? 0 : !aRoute ? 1 : -1;
+      }
+
+      return healthStore.getPriority(aRoute.provider, aRoute.model) - healthStore.getPriority(bRoute.provider, bRoute.model);
+    });
+
+    req.log.info(`Trying ${fallbackStage.name} fallback stage with ${sortedFallbacks.length} models`);
+
+    // Try each fallback model in sequence, skipping open (fail pool) models
+    for (const fallbackModel of sortedFallbacks) {
+      const fallbackRoute = parseFallbackModel(fallbackModel);
+      if (!fallbackRoute) {
+        req.log.warn(`Fallback model '${fallbackModel}' is invalid, skipping`);
         continue;
       }
 
-      req.log.info(`Trying fallback model: ${fallbackModel}`);
-
-      // Update request with fallback model
-      const newBody = { ...(req.body as any) };
-      newBody.model = model;
-
-      // Create new request object with updated provider and body
-      const newReq = {
-        ...req,
-        provider: fallbackProvider,
-        body: newBody,
-      };
-
-      const provider = fastify.providerService.getProvider(fallbackProvider);
-      if (!provider) {
-        req.log.warn(`Fallback provider '${fallbackProvider}' not found, skipping`);
+      if (attemptedFallbacks.has(fallbackRoute.key)) {
         continue;
       }
+      attemptedFallbacks.add(fallbackRoute.key);
 
-      // Process request transformer chain
-      const { requestBody, config, bypass } = await processRequestTransformers(
-        newBody,
-        provider,
-        transformer,
-        req.headers,
-        { req: newReq }
-      );
+      const fallbackProvider = fallbackRoute.provider;
+      const model = fallbackRoute.model;
 
-      // Send request to LLM provider
-      const response = await sendRequestToProvider(
-        requestBody,
-        config,
-        provider,
-        fastify,
-        bypass,
-        transformer,
-        { req: newReq }
-      );
+      try {
+        // Skip if model is in fail pool (open state)
+        if (!healthStore.isAvailable(fallbackProvider, model)) {
+          req.log.warn(`Fallback model ${fallbackModel} unavailable (fail pool), skipping`);
+          continue;
+        }
 
-      // Process response transformer chain
-      const finalResponse = await processResponseTransformers(
-        requestBody,
-        response,
-        provider,
-        transformer,
-        bypass,
-        { req: newReq }
-      );
+        req.log.info(`Trying fallback model: ${fallbackModel}`);
 
-      req.log.info(`Fallback model ${fallbackModel} succeeded`);
+        // Update request with fallback model
+        const newBody = { ...(req.body as any) };
+        newBody.model = model;
 
-      // Record success for the fallback model
-      healthStore.recordSuccess(fallbackProvider, model);
+        // Create new request object with updated provider and body
+        const newReq = {
+          ...req,
+          provider: fallbackProvider,
+          body: newBody,
+        };
 
-      // Format and return response
-      return formatResponse(finalResponse, reply, newBody);
-    } catch (fallbackError: any) {
-      const [fallbackProvider, ...fallbackModelParts] = fallbackModel.split(',');
-      const model = fallbackModelParts.join(',');
-      healthStore.recordFailure(fallbackProvider, model, fallbackError.message);
-      req.log.warn(`Fallback model ${fallbackModel} failed: ${fallbackError.message}`);
-      continue;
+        const provider = fastify.providerService.getProvider(fallbackProvider);
+        if (!provider) {
+          req.log.warn(`Fallback provider '${fallbackProvider}' not found, skipping`);
+          continue;
+        }
+
+        // Process request transformer chain
+        const { requestBody, config, bypass } = await processRequestTransformers(
+          newBody,
+          provider,
+          transformer,
+          req.headers,
+          { req: newReq }
+        );
+
+        // Send request to LLM provider
+        const response = await sendRequestToProvider(
+          requestBody,
+          config,
+          provider,
+          fastify,
+          bypass,
+          transformer,
+          { req: newReq }
+        );
+
+        // Capture rate limit headers from upstream response
+        try {
+          if (provider?.baseUrl && response?.headers) {
+            captureRateLimitHeaders(fallbackProvider, provider.baseUrl, response.headers);
+          }
+        } catch {}
+
+        // Process response transformer chain
+        const finalResponse = await processResponseTransformers(
+          requestBody,
+          response,
+          provider,
+          transformer,
+          bypass,
+          { req: newReq }
+        );
+
+        req.log.info(`Fallback model ${fallbackModel} succeeded`);
+
+        // Record success for the fallback model
+        healthStore.recordSuccess(fallbackProvider, model);
+
+        // Format and return response
+        return formatResponse(finalResponse, reply, newBody);
+      } catch (fallbackError: any) {
+        healthStore.recordFailure(fallbackProvider, model, fallbackError.message);
+        req.log.warn(`Fallback model ${fallbackRoute.key} failed: ${fallbackError.message}`);
+        continue;
+      }
     }
   }
 

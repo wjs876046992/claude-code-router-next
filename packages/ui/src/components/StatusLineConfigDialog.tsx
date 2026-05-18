@@ -14,7 +14,9 @@ import { Label } from "@/components/ui/label";
 import { Combobox } from "@/components/ui/combobox";
 import { ColorPicker } from "@/components/ui/color-picker";
 import { Badge } from "@/components/ui/badge";
+import { Toast } from "@/components/ui/toast";
 import { useConfig } from "./ConfigProvider";
+import { api } from "@/lib/api";
 import {
   validateStatusLineConfig,
   formatValidationError,
@@ -311,6 +313,17 @@ function replaceVariables(
   });
 }
 
+function getContextUsageColor(contextPercent: string): string {
+  const percent = parseInt(contextPercent || "0", 10);
+  if (percent > 75) {
+    return "#ef4444";
+  }
+  if (percent > 50) {
+    return "#eab308";
+  }
+  return "#22c55e";
+}
+
 // 渲染单个模块预览
 function renderModulePreview(
   module: StatusLineModuleConfig,
@@ -323,11 +336,18 @@ function renderModulePreview(
     model: "Claude Sonnet 4",
     inputTokens: "1.2k",
     outputTokens: "2.5k",
-    contextPercent: "42",
+    contextPercent: "62",
+    contextUsedTokens: "124k",
+    contextWindowSize: "200k",
+    contextUsage: "124k/200k",
   };
 
   const text = replaceVariables(module.text, variables);
   const icon = module.icon || "";
+  const tooltip = module.type === "contextCircle" ? variables.contextUsage : undefined;
+  const effectiveColor = module.type === "contextCircle"
+    ? getContextUsageColor(variables.contextPercent)
+    : module.color;
 
   // 如果text为空且不是usage类型，则跳过该模块
   if (!text && module.type !== "usage") {
@@ -357,11 +377,11 @@ function renderModulePreview(
     // 处理文字颜色 - 支持ANSI颜色和十六进制颜色
     let textColorStyle = {};
     let textColorClass = "";
-    if (module.color) {
-      if (isHexColor(module.color)) {
-        textColorStyle = { color: module.color };
+    if (effectiveColor) {
+      if (isHexColor(effectiveColor)) {
+        textColorStyle = { color: effectiveColor };
       } else {
-        textColorClass = ANSI_COLORS[module.color] || "text-white";
+        textColorClass = ANSI_COLORS[effectiveColor] || "text-white";
       }
     } else {
       textColorClass = "text-white";
@@ -371,6 +391,7 @@ function renderModulePreview(
       <div
         className={`powerline-module px-4 ${bgColorClass} ${textColorClass}`}
         style={{ ...bgColorStyle, ...textColorStyle }}
+        title={tooltip}
       >
         <div className="powerline-module-content">
           {icon && <span>{icon}</span>}
@@ -387,16 +408,16 @@ function renderModulePreview(
   // 处理默认样式下的颜色
   let textStyle = {};
   let textClass = "";
-  if (module.color) {
-    if (isHexColor(module.color)) {
-      textStyle = { color: module.color };
+  if (effectiveColor) {
+    if (isHexColor(effectiveColor)) {
+      textStyle = { color: effectiveColor };
     } else {
-      textClass = ANSI_COLORS[module.color] || "";
+      textClass = ANSI_COLORS[effectiveColor] || "";
     }
   }
 
   return (
-    <>
+    <span title={tooltip} className="inline-flex gap-1">
       {icon && (
         <span style={textStyle} className={textClass}>
           {icon}
@@ -405,7 +426,7 @@ function renderModulePreview(
       <span style={textStyle} className={textClass}>
         {text}
       </span>
-    </>
+    </span>
   );
 }
 
@@ -424,6 +445,24 @@ export function StatusLineConfigDialog({
   const [statusLineConfig, setStatusLineConfig] = useState<StatusLineConfig>(
     config?.StatusLine || createDefaultStatusLineConfig()
   );
+
+  // Sync local state when config changes (e.g. after server reload)
+  useEffect(() => {
+    if (config?.StatusLine) {
+      setStatusLineConfig(config.StatusLine);
+      setFontFamily(config.StatusLine.fontFamily || "Hack Nerd Font Mono");
+    }
+  }, [config?.StatusLine]);
+
+  // Reset local state when dialog opens to reflect latest saved config
+  useEffect(() => {
+    if (isOpen && config?.StatusLine) {
+      setStatusLineConfig(config.StatusLine);
+      setFontFamily(config.StatusLine.fontFamily || "Hack Nerd Font Mono");
+      setSelectedModuleIndex(null);
+      setValidationErrors([]);
+    }
+  }, [isOpen]);
 
   // 字体状态
   const [fontFamily, setFontFamily] = useState<string>(
@@ -594,13 +633,15 @@ export function StatusLineConfigDialog({
   };
 
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
+  const [isSaving, setIsSaving] = useState(false);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
-  const handleSave = () => {
-    // 验证配置
+  const handleSave = async () => {
+    // Validate configuration
     const validationResult = validateStatusLineConfig(statusLineConfig);
 
     if (!validationResult.isValid) {
-      // 格式化错误信息
+      // Format error messages
       const errorMessages = validationResult.errors.map((error) =>
         formatValidationError(error, t)
       );
@@ -608,18 +649,36 @@ export function StatusLineConfigDialog({
       return;
     }
 
-    // 清除之前的错误
+    // Clear previous errors
     setValidationErrors([]);
+    setIsSaving(true);
 
     if (config) {
-      setConfig({
+      const newConfig = {
         ...config,
         StatusLine: {
           ...statusLineConfig,
           fontFamily,
         },
-      });
-      onOpenChange(false);
+      };
+
+      // Update local state first
+      setConfig(newConfig);
+
+      // Persist to server
+      try {
+        const response = await api.updateConfig(newConfig);
+        if (response.success) {
+          setToast({ message: t('app.config_saved_success'), type: 'success' });
+          onOpenChange(false);
+        } else {
+          setToast({ message: response.message || t('app.config_saved_failed'), type: 'error' });
+        }
+      } catch (error) {
+        setToast({ message: t('app.config_saved_failed') + ': ' + (error as Error).message, type: 'error' });
+      } finally {
+        setIsSaving(false);
+      }
     }
   };
 
@@ -952,7 +1011,7 @@ export function StatusLineConfigDialog({
                         newModule = {
                           type: "contextCircle",
                           icon: "○",
-                          text: "{{contextPercent}}%",
+                          text: "{{contextPercent}}% {{contextUsage}}",
                           color: "#22c55e",
                         };
                         break;
@@ -1167,6 +1226,30 @@ export function StatusLineConfigDialog({
                           >
                             {"{{outputTokens}}"}
                           </Badge>
+                          <Badge
+                            variant="secondary"
+                            className="text-xs py-0.5 px-1.5"
+                          >
+                            {"{{contextPercent}}"}
+                          </Badge>
+                          <Badge
+                            variant="secondary"
+                            className="text-xs py-0.5 px-1.5"
+                          >
+                            {"{{contextUsage}}"}
+                          </Badge>
+                          <Badge
+                            variant="secondary"
+                            className="text-xs py-0.5 px-1.5"
+                          >
+                            {"{{contextUsedTokens}}"}
+                          </Badge>
+                          <Badge
+                            variant="secondary"
+                            className="text-xs py-0.5 px-1.5"
+                          >
+                            {"{{contextWindowSize}}"}
+                          </Badge>
                         </div>
                       </div>
                     </div>
@@ -1254,19 +1337,29 @@ export function StatusLineConfigDialog({
           <Button
             variant="outline"
             onClick={() => onOpenChange(false)}
+            disabled={isSaving}
             className="transition-all hover:scale-105"
           >
             {t("app.cancel")}
           </Button>
           <Button
             onClick={handleSave}
+            disabled={isSaving}
             data-testid="save-statusline-config"
             className="transition-all hover:scale-105"
           >
-            {t("app.save")}
+            {isSaving ? t('json_editor.saving') : t("app.save")}
           </Button>
         </DialogFooter>
       </DialogContent>
+
+      {toast && (
+        <Toast
+          message={toast.message}
+          type={toast.type}
+          onClose={() => setToast(null)}
+        />
+      )}
     </Dialog>
   );
 }

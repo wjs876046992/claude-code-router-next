@@ -9,6 +9,10 @@ export interface Provider {
   api_key: string;
   models: string[];
   transformer?: ProviderTransformer;
+  // Optional quota configuration for rate limiting display
+  quota?: ProviderQuotaConfig;
+  // Allow for additional custom fields
+  [key: string]: any;
 }
 
 export const MODEL_FAMILIES = ["opus", "sonnet", "haiku"] as const;
@@ -128,5 +132,33 @@ export interface ProviderHealthState {
 
 export interface ProviderHealthResponse {
   states: ProviderHealthState[];
+  timestamp: string;
+}
+
+// Provider quota configuration (optional)
+export interface ProviderQuotaConfig {
+  // Token limit for last 5 hours window
+  limit5h?: number;
+  // Token limit for last 7 days window
+  limit7d?: number;
+}
+
+// Provider quota usage response from server
+export interface ProviderQuotaUsage {
+  provider: string;
+  // Tokens used in last 5 hours (input + output)
+  used5h: number;
+  // Tokens used in last 7 days (input + output)
+  used7d: number;
+  // Configured limits (may be undefined)
+  limit5h?: number;
+  limit7d?: number;
+  // Reset timestamps (approximate, based on window end)
+  reset5h?: string;
+  reset7d?: string;
+}
+
+export interface ProviderQuotaResponse {
+  quotas: ProviderQuotaUsage[];
   timestamp: string;
 }

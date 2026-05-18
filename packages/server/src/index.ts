@@ -534,7 +534,7 @@ async function getServer(options: RunOptions = {}) {
         modelFamily: req.modelFamily || "",
         scenarioType: req.scenarioType || "default",
         stream: req.body?.stream ?? false,
-        inputTokens: req.tokenCount || 0,
+        inputTokens: usage?.input_tokens || req.tokenCount || 0,
         outputTokens: usage?.output_tokens || 0,
         cacheReadInputTokens: usage?.cache_read_input_tokens || 0,
         cacheCreationInputTokens: usage?.cache_creation_input_tokens || 0,

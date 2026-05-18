@@ -1,10 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
-import Editor from '@monaco-editor/react';
 import { Button } from '@/components/ui/button';
 import { api } from '@/lib/api';
 import { useTranslation } from 'react-i18next';
-import { X, RefreshCw, Download, Trash2, ArrowLeft, File, Layers, Bug } from 'lucide-react';
+import { X, RefreshCw, Download, Trash2, ArrowLeft, File, Layers } from 'lucide-react';
 
 interface LogViewerProps {
   open: boolean;
@@ -52,7 +50,6 @@ interface GroupedLogsResponse {
 
 export function LogViewer({ open, onOpenChange, showToast }: LogViewerProps) {
   const { t } = useTranslation();
-  const navigate = useNavigate();
   const [logs, setLogs] = useState<string[]>([]);
   const [logFiles, setLogFiles] = useState<LogFile[]>([]);
   const [selectedFile, setSelectedFile] = useState<LogFile | null>(null);
@@ -63,10 +60,10 @@ export function LogViewer({ open, onOpenChange, showToast }: LogViewerProps) {
   const [groupByReqId, setGroupByReqId] = useState(false);
   const [groupedLogs, setGroupedLogs] = useState<GroupedLogsResponse | null>(null);
   const [selectedReqId, setSelectedReqId] = useState<string | null>(null);
+  const [expandedLogIndex, setExpandedLogIndex] = useState<number | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const refreshInterval = useRef<NodeJS.Timeout | null>(null);
   const workerRef = useRef<Worker | null>(null);
-  const editorRef = useRef<any>(null);
 
   useEffect(() => {
     if (open) {
@@ -367,35 +364,23 @@ export function LogViewer({ open, onOpenChange, showToast }: LogViewerProps) {
   };
 
 
-  const getDisplayLogs = () => {
+  const getDisplayLogs = (): string[] => {
     if (groupByReqId && groupedLogs) {
       if (selectedReqId && groupedLogs.groups[selectedReqId]) {
-        return groupedLogs.groups[selectedReqId];
+        return groupedLogs.groups[selectedReqId].map(log =>
+          typeof log === 'string' ? log : JSON.stringify(log)
+        );
       }
-      // 当在分组模式但没有选中具体请求时，显示原始日志字符串数组
-      return logs.map(logLine => ({
-        timestamp: new Date().toISOString(),
-        level: 'info',
-        message: logLine,
-        source: undefined,
-        reqId: undefined
-      }));
+      return logs;
     }
-    // 当不在分组模式时，显示原始日志字符串数组
-    return logs.map(logLine => ({
-      timestamp: new Date().toISOString(),
-      level: 'info',
-      message: logLine,
-      source: undefined,
-      reqId: undefined
-    }));
+    return logs;
   };
 
   const downloadLogs = () => {
     if (!selectedFile || logs.length === 0) return;
 
-    // 直接下载原始日志字符串，每行一个日志
-    const logText = logs.join('\n');
+    // Download the currently formatted log output.
+    const logText = formatLogsForEditor();
 
     const blob = new Blob([logText], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
@@ -508,183 +493,6 @@ export function LogViewer({ open, onOpenChange, showToast }: LogViewerProps) {
 
     // 其他情况，直接显示原始日志字符串数组，每行一个
     return logs.join('\n');
-  };
-
-  // 解析日志行，获取final request的行号
-  const getFinalRequestLines = () => {
-    const lines: number[] = [];
-
-    if (groupByReqId && groupedLogs && selectedReqId && groupedLogs.groups[selectedReqId]) {
-      // 分组模式下，检查选中的请求日志
-      const requestLogs = groupedLogs.groups[selectedReqId];
-      requestLogs.forEach((log, index) => {
-        try {
-          // @ts-ignore
-          log = JSON.parse(log)
-          // 检查日志的msg字段是否等于"final request"
-          if (log.msg === "final request") {
-            lines.push(index + 1); // 行号从1开始
-          }
-        } catch (e) {
-          // 解析失败，跳过
-        }
-      });
-    } else {
-      // 非分组模式下，检查原始日志
-      logs.forEach((logLine, index) => {
-        try {
-          const log = JSON.parse(logLine);
-          // 检查日志的msg字段是否等于"final request"
-          if (log.msg === "final request") {
-            lines.push(index + 1); // 行号从1开始
-          }
-        } catch (e) {
-          // 解析失败，跳过
-        }
-      });
-    }
-
-    return lines;
-  };
-
-  // 处理调试按钮点击
-  const handleDebugClick = (lineNumber: number) => {
-    console.log('handleDebugClick called with lineNumber:', lineNumber);
-    console.log('Current state:', { groupByReqId, selectedReqId, logsLength: logs.length });
-
-    let logData = null;
-
-    if (groupByReqId && groupedLogs && selectedReqId && groupedLogs.groups[selectedReqId]) {
-      // 分组模式下获取日志数据
-      const requestLogs = groupedLogs.groups[selectedReqId];
-      console.log('Group mode - requestLogs length:', requestLogs.length);
-      logData = requestLogs[lineNumber - 1]; // 行号转换为数组索引
-      console.log('Group mode - logData:', logData);
-    } else {
-      // 非分组模式下获取日志数据
-      console.log('Non-group mode - logs length:', logs.length);
-      try {
-        const logLine = logs[lineNumber - 1];
-        console.log('Log line:', logLine);
-        logData = JSON.parse(logLine);
-        console.log('Parsed logData:', logData);
-      } catch (e) {
-        console.error('Failed to parse log data:', e);
-      }
-    }
-
-    if (logData) {
-      console.log('Navigating to debug page with logData:', logData);
-      // 导航到调试页面，并传递日志数据作为URL参数
-      const logDataParam = encodeURIComponent(JSON.stringify(logData));
-      console.log('Encoded logDataParam length:', logDataParam.length);
-      navigate(`/debug?logData=${logDataParam}`);
-    } else {
-      console.error('No log data found for line:', lineNumber);
-    }
-  };
-
-  // 配置Monaco Editor
-  const configureEditor = (editor: any) => {
-    editorRef.current = editor;
-
-    // 启用glyph margin
-    editor.updateOptions({
-      glyphMargin: true,
-    });
-
-    // 存储当前的装饰ID
-    let currentDecorations: string[] = [];
-
-    // 添加glyph margin装饰
-    const updateDecorations = () => {
-      const finalRequestLines = getFinalRequestLines();
-      const decorations = finalRequestLines.map(lineNumber => ({
-        range: {
-          startLineNumber: lineNumber,
-          startColumn: 1,
-          endLineNumber: lineNumber,
-          endColumn: 1
-        },
-        options: {
-          glyphMarginClassName: 'debug-button-glyph',
-          glyphMarginHoverMessage: { value: '点击调试此请求' }
-        }
-      }));
-
-      // 使用deltaDecorations正确更新装饰，清理旧的装饰
-      currentDecorations = editor.deltaDecorations(currentDecorations, decorations);
-    };
-
-    // 初始更新装饰
-    updateDecorations();
-
-    // 监听glyph margin点击 - 使用正确的事件监听方式
-    editor.onMouseDown((e: any) => {
-      console.log('Mouse down event:', e.target);
-      console.log('Event details:', {
-        type: e.target.type,
-        hasDetail: !!e.target.detail,
-        glyphMarginLane: e.target.detail?.glyphMarginLane,
-        offsetX: e.target.detail?.offsetX,
-        glyphMarginLeft: e.target.detail?.glyphMarginLeft,
-        glyphMarginWidth: e.target.detail?.glyphMarginWidth
-      });
-
-      // 检查是否点击在glyph margin区域
-      const isGlyphMarginClick = e.target.detail &&
-        e.target.detail.glyphMarginLane !== undefined &&
-        e.target.detail.offsetX !== undefined &&
-        e.target.detail.offsetX <= e.target.detail.glyphMarginLeft + e.target.detail.glyphMarginWidth;
-
-      console.log('Is glyph margin click:', isGlyphMarginClick);
-
-      if (e.target.position && isGlyphMarginClick) {
-        const finalRequestLines = getFinalRequestLines();
-        console.log('Final request lines:', finalRequestLines);
-        console.log('Clicked line number:', e.target.position.lineNumber);
-        if (finalRequestLines.includes(e.target.position.lineNumber)) {
-          console.log('Opening debug page for line:', e.target.position.lineNumber);
-          handleDebugClick(e.target.position.lineNumber);
-        }
-      }
-    });
-
-    // 尝试使用 onGlyphMarginClick 如果可用
-    if (typeof editor.onGlyphMarginClick === 'function') {
-      editor.onGlyphMarginClick((e: any) => {
-        console.log('Glyph margin click event:', e);
-        const finalRequestLines = getFinalRequestLines();
-        if (finalRequestLines.includes(e.target.position.lineNumber)) {
-          console.log('Opening debug page for line (glyph):', e.target.position.lineNumber);
-          handleDebugClick(e.target.position.lineNumber);
-        }
-      });
-    }
-
-    // 添加鼠标移动事件来检测悬停在调试按钮上
-    editor.onMouseMove((e: any) => {
-      if (e.target.position && (e.target.type === 4 || e.target.type === 'glyph-margin')) {
-        const finalRequestLines = getFinalRequestLines();
-        if (finalRequestLines.includes(e.target.position.lineNumber)) {
-          // 可以在这里添加悬停效果
-          editor.updateOptions({
-            glyphMargin: true,
-          });
-        }
-      }
-    });
-
-    // 当日志变化时更新装饰
-    const interval = setInterval(updateDecorations, 1000);
-
-    return () => {
-      clearInterval(interval);
-      // 清理装饰
-      if (editorRef.current) {
-        editorRef.current.deltaDecorations(currentDecorations, []);
-      }
-    };
   };
 
   if (!isVisible && !open) {
@@ -847,27 +655,66 @@ export function LogViewer({ open, onOpenChange, showToast }: LogViewerProps) {
                   </div>
                 </div>
               ) : (
-                // 显示日志内容
-                <div className="relative h-full">
-                  <Editor
-                    height="100%"
-                    defaultLanguage="json"
-                    value={formatLogsForEditor()}
-                    theme="vs"
-                    options={{
-                      minimap: { enabled: true },
-                      fontSize: 14,
-                      scrollBeyondLastLine: false,
-                      automaticLayout: true,
-                      wordWrap: 'on',
-                      readOnly: true,
-                      lineNumbers: 'on',
-                      folding: true,
-                      renderWhitespace: 'all',
-                      glyphMargin: true,
-                    }}
-                    onMount={configureEditor}
-                  />
+                // Structured log table view
+                <div className="flex flex-col h-full">
+                  <div className="flex-1 min-h-0 overflow-y-auto">
+                    <table className="w-full text-xs">
+                      <thead className="sticky top-0 bg-gray-50 border-b z-10">
+                        <tr>
+                          <th className="text-left px-3 py-2 font-medium text-gray-600 w-[140px]">{t('log_viewer.col_time')}</th>
+                          <th className="text-left px-3 py-2 font-medium text-gray-600 w-[70px]">{t('log_viewer.col_level')}</th>
+                          <th className="text-left px-3 py-2 font-medium text-gray-600 w-[80px]">{t('log_viewer.col_request_id')}</th>
+                          <th className="text-left px-3 py-2 font-medium text-gray-600">{t('log_viewer.col_message')}</th>
+                          <th className="text-left px-3 py-2 font-medium text-gray-600 w-[150px]">{t('log_viewer.col_model')}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {getDisplayLogs().map((logStr, index) => {
+                          try {
+                            const log = JSON.parse(logStr);
+                            const isExpanded = expandedLogIndex === index;
+                            const level = typeof log.level === 'number' ? log.level : 30;
+                            const levelLabel = level <= 10 ? 'trace' : level <= 20 ? 'debug' : level <= 30 ? 'info' : level <= 40 ? 'warn' : 'error';
+                            const levelColor = level <= 10 ? 'bg-gray-100 text-gray-700' : level <= 20 ? 'bg-blue-100 text-blue-700' : level <= 30 ? 'bg-green-100 text-green-700' : level <= 40 ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700';
+                            const timeStr = log.time ? new Date(log.time).toLocaleTimeString() : '-';
+                            const msg = log.msg || '';
+                            const reqId = log.reqId || '';
+                            const model = log.data?.model || log.model || '';
+
+                            return (
+                              <React.Fragment key={index}>
+                                <tr
+                                  className={`border-b cursor-pointer hover:bg-gray-50 ${isExpanded ? 'bg-blue-50' : ''}`}
+                                  onClick={() => setExpandedLogIndex(isExpanded ? null : index)}
+                                >
+                                  <td className="px-3 py-1.5 text-gray-600 font-mono whitespace-nowrap">{timeStr}</td>
+                                  <td className="px-3 py-1.5"><span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${levelColor}`}>{levelLabel}</span></td>
+                                  <td className="px-3 py-1.5 text-gray-500 font-mono truncate max-w-[80px]" title={reqId}>{reqId || '-'}</td>
+                                  <td className="px-3 py-1.5 text-gray-800 truncate max-w-[400px]" title={msg}>{msg}</td>
+                                  <td className="px-3 py-1.5 text-gray-500 truncate max-w-[150px]" title={model}>{model || '-'}</td>
+                                </tr>
+                                {isExpanded && (
+                                  <tr>
+                                    <td colSpan={5} className="bg-gray-50 px-4 py-3">
+                                      <pre className="text-xs font-mono whitespace-pre-wrap break-all max-h-[300px] overflow-y-auto">
+                                        {JSON.stringify(log, null, 2)}
+                                      </pre>
+                                    </td>
+                                  </tr>
+                                )}
+                              </React.Fragment>
+                            );
+                          } catch {
+                            return (
+                              <tr key={index} className="border-b">
+                                <td colSpan={5} className="px-3 py-1.5 text-gray-400 italic">{logStr.substring(0, 200)}</td>
+                              </tr>
+                            );
+                          }
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               )}
             </>

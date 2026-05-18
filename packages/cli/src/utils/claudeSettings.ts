@@ -142,8 +142,8 @@ export function injectModelFamilies(config: any): void {
     }
   }
 
-  // Set main model to sonnet (official default), fallback to first configured family
-  const defaultFamily = families["sonnet"] ? "sonnet" : primaryFamily;
+  // Set main model to opus, fallback to first configured family
+  const defaultFamily = families["opus"] ? "opus" : primaryFamily;
   if (defaultFamily) {
     const defaultConfig = families[defaultFamily];
     const extendedSuffix = hasExtendedContext(defaultConfig) ? "[1m]" : "";

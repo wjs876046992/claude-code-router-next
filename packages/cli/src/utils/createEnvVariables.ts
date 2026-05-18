@@ -41,8 +41,8 @@ function getModelEnvVars(config: any): Record<string, string | undefined> {
   }
 
   if (primaryFamily) {
-    // Default to sonnet (Claude Code official default), fallback to first configured family
-    const defaultFamily = families["sonnet"] ? "sonnet" : primaryFamily;
+    // Default to opus, fallback to first configured family
+    const defaultFamily = families["opus"] ? "opus" : primaryFamily;
     const defaultConfig = families[defaultFamily];
     const extendedSuffix = hasExtendedContext(defaultConfig) ? "[1m]" : "";
     env.ANTHROPIC_MODEL = `ccr-${defaultFamily}${extendedSuffix}`;

@@ -1,4 +1,4 @@
-import Server, { calculateTokenCount, TokenizerService } from "@wengine-ai/llms";
+import Server, { calculateTokenCount, TokenizerService, getAllRateLimitInfo, getAllQuotaResults } from "@wengine-ai/llms";
 import { readConfigFile, writeConfigFile, backupConfigFile } from "./utils";
 import { join } from "path";
 import fastifyStatic from "@fastify/static";
@@ -25,6 +25,78 @@ import {
 import fastifyMultipart from "@fastify/multipart";
 import AdmZip from "adm-zip";
 import { query as queryUsage, querySummary as queryUsageSummary, clear as clearUsage } from "./services/usage-store";
+
+interface ProviderQuotaUsage {
+  provider: string;
+  used5h: number;
+  used7d: number;
+  limit5h?: number;
+  limit7d?: number;
+  reset5h?: string;
+  reset7d?: string;
+}
+
+/**
+ * Compute provider quota usage for 5-hour and 7-day windows
+ */
+function computeProviderQuota(providers: any[]): ProviderQuotaUsage[] {
+  const now = new Date();
+  const nowIso = now.toISOString();
+
+  // 5 hours window
+  const start5h = new Date(now.getTime() - 5 * 60 * 60 * 1000).toISOString();
+
+  // 7 days window
+  const start7d = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
+
+  // Query summaries per provider
+  const summary5h = queryUsageSummary(start5h, nowIso);
+  const summary7d = queryUsageSummary(start7d, nowIso);
+
+  // Build result array
+  const result: ProviderQuotaUsage[] = [];
+
+  // Collect unique provider names from config and usage
+  const providerNames = new Set<string>();
+  for (const p of providers || []) {
+    if (p && p.name) providerNames.add(p.name);
+  }
+  for (const name of Object.keys(summary5h.byProvider || {})) providerNames.add(name);
+  for (const name of Object.keys(summary7d.byProvider || {})) providerNames.add(name);
+
+  for (const name of providerNames) {
+    const provider5h = summary5h.byProvider[name] || { inputTokens: 0, outputTokens: 0 };
+    const provider7d = summary7d.byProvider[name] || { inputTokens: 0, outputTokens: 0 };
+
+    const used5h = (provider5h.inputTokens || 0) + (provider5h.outputTokens || 0);
+    const used7d = (provider7d.inputTokens || 0) + (provider7d.outputTokens || 0);
+
+    // Get limits from provider config if present
+    let limit5h: number | undefined;
+    let limit7d: number | undefined;
+    const providerConfig = (providers || []).find((p: any) => p && p.name === name);
+    if (providerConfig && providerConfig.quota) {
+      limit5h = providerConfig.quota.limit5h;
+      limit7d = providerConfig.quota.limit7d;
+    }
+
+    // Compute approximate reset times (window end)
+    const reset5hDate = new Date(now.getTime() + 5 * 60 * 60 * 1000);
+    const reset7dDate = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+
+    result.push({
+      provider: name,
+      used5h,
+      used7d,
+      limit5h,
+      limit7d,
+      reset5h: reset5hDate.toISOString(),
+      reset7d: reset7dDate.toISOString(),
+    });
+  }
+
+  return result;
+}
 
 export const createServer = async (config: any): Promise<any> => {
   const server = new Server(config);
@@ -256,6 +328,87 @@ export const createServer = async (config: any): Promise<any> => {
     } catch (error) {
       console.error("Failed to clear usage:", error);
       reply.status(500).send({ error: "Failed to clear usage data" });
+    }
+  });
+
+  // ========== Provider Quota API ==========
+
+  // Get provider quota usage (5h and 7d windows)
+  app.get("/api/providers/quota", async (req: any, reply: any) => {
+    try {
+      const config = await readConfigFile();
+      const providers = config.Providers || [];
+      const quotas = computeProviderQuota(providers);
+      const quotaMap = new Map<string, ProviderQuotaUsage>(
+        quotas.map(quota => [quota.provider, quota])
+      );
+
+      // Merge rate limit info from upstream response headers (e.g. Kimi/Moonshot, Groq).
+      const rateLimits = getAllRateLimitInfo();
+      for (const quota of quotas) {
+        const rl = rateLimits.find(r => r.provider === quota.provider);
+        if (rl && rl.limit != null) {
+          quota.limit5h = rl.limit;
+          quota.used5h = rl.limit - (rl.remaining ?? 0);
+          if (rl.reset) {
+            quota.reset5h = new Date(rl.reset * 1000).toISOString();
+          }
+        }
+      }
+
+      // Merge active quota adapter results while preserving the UI response shape.
+      const activeQuotaResults = getAllQuotaResults();
+      for (const stored of activeQuotaResults) {
+        let quota = quotaMap.get(stored.provider);
+        if (!quota) {
+          quota = {
+            provider: stored.provider,
+            used5h: 0,
+            used7d: 0,
+          };
+          quotas.push(quota);
+          quotaMap.set(stored.provider, quota);
+        }
+
+        if (typeof stored.totalBalance === 'number') {
+          quota.limit7d = stored.totalBalance;
+        }
+
+        if (typeof stored.usedBalance === 'number') {
+          quota.used7d = stored.usedBalance;
+        } else if (
+          typeof stored.totalBalance === 'number' &&
+          typeof stored.remainingBalance === 'number'
+        ) {
+          quota.used7d = Math.max(0, stored.totalBalance - stored.remainingBalance);
+        }
+
+        if (typeof stored.usedDailyBalance === 'number') {
+          quota.used5h = stored.usedDailyBalance;
+        }
+
+        // limitDaily maps to the 5h slot limit (used by TIME_LIMIT adapters like Zhipu)
+        if (typeof stored.limitDaily === 'number') {
+          quota.limit5h = stored.limitDaily;
+        }
+
+        // resetTime goes to 7d for balance-style adapters, 5h for rate-limit-style adapters
+        if (typeof stored.resetTime === 'string') {
+          if (stored.limitDaily !== undefined) {
+            quota.reset5h = stored.resetTime;
+          } else {
+            quota.reset7d = stored.resetTime;
+          }
+        }
+      }
+
+      return {
+        quotas,
+        timestamp: new Date().toISOString(),
+      };
+    } catch (error) {
+      console.error("Failed to compute provider quota:", error);
+      reply.status(500).send({ error: "Failed to compute provider quota" });
     }
   });
 

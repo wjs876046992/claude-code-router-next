@@ -4,6 +4,7 @@ import { homedir, tmpdir } from "os";
 
 const DATA_DIR = join(homedir(), ".claude-code-router", "data");
 const USAGE_FILE = join(DATA_DIR, "usage.jsonl");
+const MIN_DECODE_DURATION_SECONDS = 1;
 
 export interface UsageRecord {
   id: string;
@@ -73,6 +74,30 @@ function ensureDataDir(): void {
   }
 }
 
+function calculateUsageTokensPerSecond(outputTokens: number, durationMs: number | null, ttft: number | null): number | null {
+  if (outputTokens <= 0 || durationMs == null || !Number.isFinite(durationMs)) return null;
+
+  const timeToFirstToken = ttft != null && Number.isFinite(ttft) ? ttft : 0;
+  const decodeDurationSeconds = Math.max(
+    (durationMs - timeToFirstToken) / 1000,
+    MIN_DECODE_DURATION_SECONDS
+  );
+  return Math.round(outputTokens / decodeDurationSeconds);
+}
+
+function normalizeUsageRecord(record: UsageRecord): UsageRecord {
+  const outputTokens = Number(record.outputTokens) || 0;
+  const rawDurationMs = Number(record.durationMs);
+  const durationMs = Number.isFinite(rawDurationMs) ? rawDurationMs : null;
+  const ttft = parseNumericTokenSpeedValue(record.ttft);
+
+  return {
+    ...record,
+    ttft,
+    tokensPerSecond: calculateUsageTokensPerSecond(outputTokens, durationMs, ttft),
+  };
+}
+
 function readAllRecords(): UsageRecord[] {
   if (!existsSync(USAGE_FILE)) return [];
 
@@ -87,7 +112,7 @@ function readAllRecords(): UsageRecord[] {
     const trimmed = line.trim();
     if (!trimmed) continue;
     try {
-      records.push(JSON.parse(trimmed));
+      records.push(normalizeUsageRecord(JSON.parse(trimmed)));
     } catch {
       // Skip malformed lines
     }
@@ -177,7 +202,7 @@ function aggregateInto(
 
 export function append(record: UsageRecord): void {
   ensureDataDir();
-  appendFileSync(USAGE_FILE, JSON.stringify(record) + "\n", "utf-8");
+  appendFileSync(USAGE_FILE, JSON.stringify(normalizeUsageRecord(record)) + "\n", "utf-8");
   cachedRecords = null; // Invalidate cache
 }
 
@@ -290,8 +315,8 @@ export function readTokenSpeedStats(sessionId: string): {
         const content = readFileSync(latestFile, "utf-8");
         const data = JSON.parse(content);
         return {
-          ttft: data.timeToFirstToken ?? null,
-          tokensPerSecond: data.tokensPerSecond ?? null,
+          ttft: parseNumericTokenSpeedValue(data.timeToFirstToken),
+          tokensPerSecond: parseNumericTokenSpeedValue(data.tokensPerSecond),
         };
       } catch {
         return { ttft: null, tokensPerSecond: null };

@@ -144,6 +144,11 @@ function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
 
 // Get color code
 function getColorCode(colorName: string): string {
+    // Check if it's a named ANSI color from COLORS dictionary
+    if (COLORS[colorName]) {
+        return COLORS[colorName];
+    }
+
     // Check if it's a hexadecimal color
     if (colorName.startsWith('#') || /^[0-9a-fA-F]{6}$/.test(colorName) || /^[0-9a-fA-F]{3}$/.test(colorName)) {
         const rgb = hexToRgb(colorName);
@@ -235,7 +240,7 @@ const DEFAULT_THEME: StatusLineThemeConfig = {
         {
             type: "contextCircle",
             icon: "○",
-            text: "{{contextPercent}}%",
+            text: "{{contextPercent}}% {{contextUsage}}",
             color: "#22c55e"
         },
         {
@@ -286,7 +291,7 @@ const POWERLINE_THEME: StatusLineThemeConfig = {
         {
             type: "contextCircle",
             icon: "○",
-            text: "{{contextPercent}}%",
+            text: "{{contextPercent}}% {{contextUsage}}",
             color: "#22c55e",
             background: "bg_bright_black"
         },
@@ -338,7 +343,7 @@ const SIMPLE_THEME: StatusLineThemeConfig = {
         {
             type: "contextCircle",
             icon: "○",
-            text: "{{contextPercent}}%",
+            text: "{{contextPercent}}% {{contextUsage}}",
             color: "#22c55e"
         },
         {
@@ -380,7 +385,7 @@ const FULL_THEME: StatusLineThemeConfig = {
         {
             type: "contextCircle",
             icon: "○",
-            text: "{{contextPercent}}%",
+            text: "{{contextPercent}}% {{contextUsage}}",
             color: "#22c55e"
         },
         {
@@ -416,10 +421,11 @@ const FULL_THEME: StatusLineThemeConfig = {
     ]
 };
 
-// Format token count with auto unit: k -> m -> b
+// Format token count with auto unit: t -> k -> m -> b (always show unit for consistency)
 function formatTokenCount(count: number): string {
     if (count < 1000) {
-        return `${count}`;
+        // For small counts, show 't' suffix for consistency
+        return `${count}t`;
     }
     if (count < 1_000_000) {
         const val = count / 1000;
@@ -439,15 +445,21 @@ function formatUsage(input_tokens: number, output_tokens: number): string {
 }
 
 // Calculate context window usage percentage
-function calculateContextPercent(context_window: StatusLineInput['context_window']): number {
+function calculateContextTokens(context_window: StatusLineInput['context_window']): number {
     if (!context_window || !context_window.current_usage) {
         return 0;
     }
-    const { current_usage, context_window_size } = context_window;
-    const currentTokens = current_usage.input_tokens +
-                        current_usage.cache_creation_input_tokens +
-                        current_usage.cache_read_input_tokens;
-    return Math.round((currentTokens / context_window_size) * 100);
+    const { current_usage } = context_window;
+    return current_usage.input_tokens +
+        current_usage.cache_creation_input_tokens +
+        current_usage.cache_read_input_tokens;
+}
+
+function calculateContextPercent(context_window: StatusLineInput['context_window']): number {
+    if (!context_window?.context_window_size) {
+        return 0;
+    }
+    return Math.round((calculateContextTokens(context_window) / context_window.context_window_size) * 100);
 }
 
 function getContextUsageColor(contextPercent: string): string {
@@ -812,12 +824,20 @@ export async function parseStatusLineData(input: StatusLineInput, presetName?: s
 
         // Process context window data
         const contextPercent = input.context_window ? calculateContextPercent(input.context_window) : 0;
+        const contextUsedTokens = input.context_window ? calculateContextTokens(input.context_window) : 0;
         // Always use transcript-accumulated values for stable monotonically-increasing totals
         // Fallback to context_window only when transcript has no data
         const totalInputTokens = sessionTotalInputTokens || input.context_window?.total_input_tokens || 0;
         const totalOutputTokens = sessionTotalOutputTokens || input.context_window?.total_output_tokens || 0;
         const totalCacheTokens = sessionTotalCacheCreationTokens + sessionTotalCacheReadTokens;
         const contextWindowSize = input.context_window?.context_window_size || 0;
+
+        // Determine if input_tokens already includes cache tokens
+        // If cache_read > input, the provider reports total input (cache included)
+        // Otherwise, input_tokens is net input (cache separate), need to add cache
+        const inputIncludesCache = sessionTotalCacheReadTokens > sessionTotalInputTokens;
+        const effectiveTotalInput = inputIncludesCache ? totalInputTokens : totalInputTokens + totalCacheTokens;
+        const effectiveTotalTokens = effectiveTotalInput + totalOutputTokens;
 
         // Process cost data
         const totalCost = input.cost?.total_cost_usd || 0;
@@ -838,11 +858,13 @@ export async function parseStatusLineData(input: StatusLineInput, presetName?: s
             isStreaming: isStreaming ? 'streaming' : '',
             timeToFirstToken: formattedTimeToFirstToken,
             contextPercent: contextPercent.toString(),
+            contextUsedTokens: formatTokenCount(contextUsedTokens),
+            contextUsage: contextWindowSize ? `${formatTokenCount(contextUsedTokens)}/${formatTokenCount(contextWindowSize)}` : '',
             streamingIndicator,
             contextWindowSize: formatTokenCount(contextWindowSize),
             totalInputTokens: formatTokenCount(totalInputTokens),
             totalOutputTokens: formatTokenCount(totalOutputTokens),
-            totalTokens: formatTokenCount(totalInputTokens + totalOutputTokens + totalCacheTokens),
+            totalTokens: formatTokenCount(effectiveTotalTokens),
             cost: formattedCost || '',
             duration: formattedDuration || '',
             linesAdded: linesAdded.toString(),
@@ -907,11 +929,8 @@ async function renderDefaultStyle(
             continue;
         }
 
-        // Build module string
-        let part = `${background}${color}`;
-        part += `${displayText}${COLORS.reset}`;
-
-        parts.push(part);
+        // Build module string (plain text, Claude Code statusline does not support ANSI)
+        parts.push(displayText);
     }
 
     // Join all parts with spaces
@@ -1014,42 +1033,11 @@ function color256ToRgb(index: number): { r: number; g: number; b: number } | nul
 
 // Generate a seamless segment: text displayed on bgN, separator transitions from bgN to nextBgN
 function segment(text: string, textFg: string, bgColor: string, nextBgColor: string | null): string {
-    const bgRgb = getTrueColorRgb(bgColor);
-    if (!bgRgb) {
-        // If unable to get RGB, use default blue background
-        const defaultBlueRgb = { r: 33, g: 150, b: 243 };
-        const curBg = `\x1b[48;2;${defaultBlueRgb.r};${defaultBlueRgb.g};${defaultBlueRgb.b}m`;
-        const fgColor = `\x1b[38;2;255;255;255m`;
-        const body = `${curBg}${fgColor} ${text} \x1b[0m`;
-        return body;
-    }
-
-    const curBg = `\x1b[48;2;${bgRgb.r};${bgRgb.g};${bgRgb.b}m`;
-
-    // Get foreground color RGB
-    let fgRgb = { r: 255, g: 255, b: 255 }; // Default foreground color is white
-    const textFgRgb = getTrueColorRgb(textFg);
-    if (textFgRgb) {
-        fgRgb = textFgRgb;
-    }
-
-    const fgColor = `\x1b[38;2;${fgRgb.r};${fgRgb.g};${fgRgb.b}m`;
-    const body = `${curBg}${fgColor} ${text} \x1b[0m`;
+    // Plain text output (Claude Code statusline does not support ANSI)
+    const body = ` ${text} `;
 
     if (nextBgColor != null) {
-        const nextBgRgb = getTrueColorRgb(nextBgColor);
-        if (nextBgRgb) {
-            // Separator: foreground color is current segment's background color, background color is next segment's background color
-            const sepCurFg = `\x1b[38;2;${bgRgb.r};${bgRgb.g};${bgRgb.b}m`;
-            const sepNextBg = `\x1b[48;2;${nextBgRgb.r};${nextBgRgb.g};${nextBgRgb.b}m`;
-            const sep = `${sepCurFg}${sepNextBg}${SEP_RIGHT}\x1b[0m`;
-            return body + sep;
-        }
-        // If no next background color, assume terminal background is black and render black arrow
-        const sepCurFg = `\x1b[38;2;${bgRgb.r};${bgRgb.g};${bgRgb.b}m`;
-        const sepNextBg = `\x1b[48;2;0;0;0m`; // Black background
-        const sep = `${sepCurFg}${sepNextBg}${SEP_RIGHT}\x1b[0m`;
-        return body + sep;
+        return body + ` ${SEP_RIGHT} `;
     }
 
     return body;

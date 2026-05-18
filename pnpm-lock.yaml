@@ -66,13 +66,37 @@ importers:
 
   packages/cli:
     dependencies:
+      '@wengine-ai/llms':
+        specifier: ^2.0.53
+        version: 2.0.53(ws@8.18.3)
       lru-cache:
         specifier: ^11.2.2
         version: 11.2.2
+      node:
+        specifier: '>=18.0.0'
+        version: 22.22.3
     devDependencies:
+      '@inquirer/checkbox':
+        specifier: ^2.3.0
+        version: 2.5.0
+      '@inquirer/confirm':
+        specifier: ^3.1.4
+        version: 3.2.0
+      '@inquirer/editor':
+        specifier: ^2.1.4
+        version: 2.2.0
+      '@inquirer/input':
+        specifier: ^2.1.4
+        version: 2.3.0
+      '@inquirer/password':
+        specifier: ^2.1.4
+        version: 2.2.0
       '@inquirer/prompts':
         specifier: ^5.0.0
         version: 5.5.0
+      '@inquirer/select':
+        specifier: ^2.3.0
+        version: 2.5.0
       '@types/archiver':
         specifier: ^7.0.0
         version: 7.0.0
@@ -97,6 +121,9 @@ importers:
       find-process:
         specifier: ^2.0.0
         version: 2.0.0
+      json5:
+        specifier: ^2.2.3
+        version: 2.2.3
       minimist:
         specifier: ^1.2.8
         version: 1.2.8
@@ -3299,6 +3326,9 @@ packages:
   '@webassemblyjs/wast-printer@1.14.1':
     resolution: {integrity: sha512-kPSSXE6De1XOR820C90RIo2ogvZG+c3KiHzqUoO/F34Y2shGzesfqv7o57xrxovZJH/MetF5UjroJ/R/3isoiw==}
 
+  '@wengine-ai/llms@2.0.53':
+    resolution: {integrity: sha512-IxieqgLhjuR65ShrWkyei5G3D1ppncxWh7NB9BOCMHiY4XpGMt/lWNoqM8uTk0DS0nrS5UK5kIctFc74pkf5lQ==}
+
   '@xtuc/ieee754@1.2.0':
     resolution: {integrity: sha512-DX8nKgqcGwsc0eJSqYt5lwP4DH5FlHnmuWWBRy7X0NcaGR0ZtuyeESgMwTYVEtxmsNGY+qit4QYT/MIYTOTPeA==}
 
@@ -5753,6 +5783,9 @@ packages:
   no-case@3.0.4:
     resolution: {integrity: sha512-fgAN3jGAh+RoxUGZHTSOLJIqUc2wmoBwGR4tbpNAKmmovFoWq0OdRkb0VkldReO2a2iBT/OEulG9XSUc10r3zg==}
 
+  node-bin-setup@1.1.4:
+    resolution: {integrity: sha512-vWNHOne0ZUavArqPP5LJta50+S8R261Fr5SvGul37HbEDcowvLjwdvd0ZeSr0r2lTSrPxl6okq9QUw8BFGiAxA==}
+
   node-domexception@1.0.0:
     resolution: {integrity: sha512-/jKZoMpw0F8GRwl4/eLROPA3cfcXtLApP0QzLmUT/HuPCZWyB7IY9ZrMeKw2O/nFIqPQB3PVM9aYm0F312AXDQ==}
     engines: {node: '>=10.5.0'}
@@ -5781,6 +5814,11 @@ packages:
 
   node-releases@2.0.27:
     resolution: {integrity: sha512-nmh3lCkYZ3grZvqcCH+fjmQ7X+H0OeZgP40OierEaAptX4XofMh5kwNbWh7lBduUzCcV/8kZ+NDLCwm2iorIlA==}
+
+  node@22.22.3:
+    resolution: {integrity: sha512-KVPJ8f/BUnbMgSIAn0gr6dYyN/02jKtZNGxjZjZbm8pYdHRE1OiMzFctuxO3WVYmIaWqOGmHiTIkbc8EIT6okA==}
+    engines: {npm: '>=5.0.0'}
+    hasBin: true
 
   normalize-path@3.0.0:
     resolution: {integrity: sha512-6eZs5Ls3WtCisHWp9S2GUy8dqkpGi4BVSz3GaqiE6ezub0512ESztXUwUB6C6IKbQkY2Pnb/mD4WYojCRwcwLA==}
@@ -9623,7 +9661,7 @@ snapshots:
 
   '@docusaurus/react-loadable@6.0.0(react@18.3.1)':
     dependencies:
-      '@types/react': 18.3.27
+      '@types/react': 19.2.14
       react: 18.3.1
 
   '@docusaurus/theme-classic@3.9.2(@types/react@18.3.27)(esbuild@0.25.10)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(typescript@5.9.3)':
@@ -11501,6 +11539,32 @@ snapshots:
     dependencies:
       '@webassemblyjs/ast': 1.14.1
       '@xtuc/long': 4.2.2
+
+  '@wengine-ai/llms@2.0.53(ws@8.18.3)':
+    dependencies:
+      '@anthropic-ai/sdk': 0.54.0
+      '@fastify/cors': 11.1.0
+      '@google/genai': 1.24.0
+      '@huggingface/tokenizers': 0.0.6
+      dotenv: 16.6.1
+      fastify: 5.6.1
+      fastify-plugin: 5.1.0
+      google-auth-library: 10.4.0
+      json5: 2.2.3
+      jsonrepair: 3.13.1
+      lru-cache: 11.2.2
+      openai: 5.23.2(ws@8.18.3)
+      tiktoken: 1.0.22
+      undici: 7.16.0
+      uuid: 11.1.0
+    transitivePeerDependencies:
+      - '@modelcontextprotocol/sdk'
+      - bufferutil
+      - encoding
+      - supports-color
+      - utf-8-validate
+      - ws
+      - zod
 
   '@xtuc/ieee754@1.2.0': {}
 
@@ -14420,6 +14484,8 @@ snapshots:
       lower-case: 2.0.2
       tslib: 2.8.1
 
+  node-bin-setup@1.1.4: {}
+
   node-domexception@1.0.0: {}
 
   node-emoji@2.2.0:
@@ -14442,6 +14508,10 @@ snapshots:
   node-forge@1.3.3: {}
 
   node-releases@2.0.27: {}
+
+  node@22.22.3:
+    dependencies:
+      node-bin-setup: 1.1.4
 
   normalize-path@3.0.0: {}
 

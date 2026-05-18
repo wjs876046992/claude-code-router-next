@@ -119,8 +119,14 @@
     "api_key_required": "API 密钥为必填项",
     "name_required": "名称为必填项",
     "name_duplicate": "已存在同名供应商",
-    "search": "搜索供应商..."
-
+    "search": "搜索供应商...",
+    "quota_5h": "5小时",
+    "quota_7d": "7天",
+    "quota_reset": "重置：{{time}}",
+    "quota_token": "限额查询 Token",
+    "quota_token_placeholder": "可选，填入后可自动查询5小时/7天限额",
+    "quota_token_desc": "部分供应商（如智谱）需要额外的 Token 来查询限额。",
+    "quota_token_tooltip": "用于查询智谱 Coding Plan 的 5 小时和 7 天限额使用情况。获取方式：登录 open.bigmodel.cn 控制台，打开浏览器开发者工具（F12），在 Network 面板中找到任意请求的 Authorization 请求头，复制 Bearer 后面的 JWT Token 粘贴到此处。"
   },
   "router": {
     "title": "路由",
@@ -150,8 +156,9 @@
   "settings": {
     "tabs": {
       "general": "通用",
-      "router": "路由",
-      "tools": "工具"
+      "router": "路由高级配置",
+      "tools": "工具",
+      "usage": "用量统计"
     },
     "language": "语言",
     "token_speed": "Token 速度与 TTFT 追踪",
@@ -206,6 +213,7 @@
     "model": "模型",
     "usage": "使用情况",
     "speed": "速度",
+    "contextCircle": "上下文用量",
     "totalTokens": "总Token",
     "script": "脚本",
     "background_none": "无",
@@ -287,7 +295,13 @@
     "worker_error": "Worker错误",
     "worker_init_failed": "Worker初始化失败",
     "grouping_not_supported": "服务器不支持日志分组",
-    "back": "返回"
+    "back": "返回",
+    "col_time": "时间",
+    "col_level": "级别",
+    "col_request_id": "请求ID",
+    "col_message": "消息",
+    "col_model": "模型",
+    "detail_title": "日志详情"
   },
   "presets": {
     "title": "预设",

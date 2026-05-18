@@ -1,4 +1,4 @@
-import type { Config, Provider, Transformer } from '@/types';
+import type { Config, Provider, Transformer, ProviderQuotaResponse } from '@/types';
 
 // 日志聚合响应类型
 interface GroupedLogsResponse {
@@ -372,6 +372,11 @@ class ApiClient {
     timestamp: string;
   }> {
     return this.get('/providers/health');
+  }
+
+  // Get provider quota usage (5h and 7d windows)
+  async getProviderQuota(): Promise<ProviderQuotaResponse> {
+    return this.get<ProviderQuotaResponse>('/providers/quota');
   }
 }
 

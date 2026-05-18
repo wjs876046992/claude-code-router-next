@@ -33,6 +33,7 @@ import { TransformerService } from "./services/transformer";
 import { TokenizerService } from "./services/tokenizer";
 import { router, calculateTokenCount, searchProjectBySession } from "./utils/router";
 import { sessionUsageCache } from "./utils/cache";
+import { getActiveProbeService, startActiveProbe, stopActiveProbe, resetActiveProbeService, ActiveProbeService, ActiveProbeConfig } from "./services/active-probe";
 
 // Extend FastifyRequest to include custom properties
 declare module "fastify" {
@@ -72,6 +73,7 @@ class Server {
   providerService!: ProviderService;
   transformerService: TransformerService;
   tokenizerService: TokenizerService;
+  private activeProbeService?: ActiveProbeService;
 
   constructor(options: ServerOptions = {}) {
     const { initialConfig, ...fastifyOptions } = options;
@@ -246,8 +248,32 @@ class Server {
 
       this.app.log.info(`🚀 LLMs API server listening on ${address}`);
 
+      // Start active probe service after providers are initialized
+      try {
+        const probeConfig: ActiveProbeConfig = {
+          enabled: this.configService.get('ACTIVE_PROBE_ENABLED') ?? true,
+          quotaProbeIntervalMinutes: this.configService.get('QUOTA_PROBE_INTERVAL_MINUTES') ?? 10,
+          probeTimeoutMs: this.configService.get('PROBE_TIMEOUT_MS') ?? 15000,
+          initialDelayMs: this.configService.get('PROBE_INITIAL_DELAY_MS') ?? 5000,
+          excludeProviders: this.configService.get('EXCLUDE_PROBE_PROVIDERS') ?? [],
+        };
+
+        this.activeProbeService = startActiveProbe(
+          () => this.providerService.getProviders(),
+          probeConfig,
+          () => this.configService.getHttpsProxy(),
+          this.app.log
+        );
+      } catch (probeError: any) {
+        this.app.log.warn?.(`Failed to start active probe service: ${probeError.message}`);
+      }
+
       const shutdown = async (signal: string) => {
         this.app.log.info(`Received ${signal}, shutting down gracefully...`);
+        // Stop active probe service
+        try {
+          stopActiveProbe();
+        } catch {}
         await this.app.close();
         process.exit(0);
       };
@@ -275,3 +301,9 @@ export { TokenizerService } from "./services/tokenizer";
 export { pluginManager, tokenSpeedPlugin, getTokenSpeedStats, getGlobalTokenSpeedStats, CCRPlugin, CCRPluginOptions, PluginMetadata } from "./plugins";
 export { SSEParserTransform, SSESerializerTransform, rewriteStream } from "./utils/sse";
 export { getHealthStore, ProviderHealthStore, ProviderHealthState, HealthPoolConfig } from "./services/provider-health";
+export { getAllRateLimitInfo, getRateLimitInfo, RateLimitInfo } from "./services/rate-limit";
+export { getQuotaAdapter } from "./services/quota-adapters";
+export type { QuotaAdapter, ProviderQuotaResult } from "./services/quota-adapters";
+export { getAllQuotaResults, getQuotaResult, storeQuotaResult } from "./services/quota-store";
+export type { StoredQuotaResult } from "./services/quota-store";
+export { getActiveProbeService, startActiveProbe, stopActiveProbe, resetActiveProbeService, ActiveProbeService, ActiveProbeConfig } from "./services/active-probe";

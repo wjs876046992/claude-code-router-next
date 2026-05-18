@@ -202,6 +202,8 @@ export interface LLMProvider {
   baseUrl: string;
   apiKey: string;
   models: string[];
+  /** Optional token for quota/billing APIs that require separate authentication (e.g. Zhipu web console JWT) */
+  quotaToken?: string;
   transformer?: {
     [key: string]: {
       use?: Transformer[];
@@ -230,6 +232,8 @@ export interface ConfigProvider {
   api_base_url: string;
   api_key: string;
   models: string[];
+  /** Optional token for quota/billing APIs that require separate authentication */
+  quota_token?: string;
   transformer: {
     use?: string[] | Array<any>[];
   } & {

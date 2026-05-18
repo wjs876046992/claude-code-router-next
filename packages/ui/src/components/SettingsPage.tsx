@@ -9,9 +9,11 @@ import { Combobox } from "@/components/ui/combobox";
 import { MultiCombobox } from "@/components/ui/multi-combobox";
 import { useConfig } from "./ConfigProvider";
 import { StatusLineConfigDialog } from "./StatusLineConfigDialog";
+import { UsageStats } from "./UsageStats";
 import { useState, useMemo } from "react";
+import { LogViewer } from '@/components/LogViewer';
 import type { StatusLineConfig, FallbackConfig } from "@/types";
-import { FileJson, FileText, BarChart3, CircleArrowUp, FileCog, ArrowLeft, Save, RefreshCw, Trash2 } from "lucide-react";
+import { FileJson, FileText, CircleArrowUp, FileCog, ArrowLeft, Save, RefreshCw, Trash2 } from "lucide-react";
 import { Toast } from "@/components/ui/toast";
 import { api } from "@/lib/api";
 import { MODEL_FAMILIES } from "@/types";
@@ -27,6 +29,8 @@ export function SettingsPage() {
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isRestarting, setIsRestarting] = useState(false);
+  const [isLogViewerOpen, setIsLogViewerOpen] = useState(false);
+  const [expandedFamily, setExpandedFamily] = useState<string | null>(null);
 
   const providers = useMemo(
     () => (Array.isArray(config?.Providers) ? config.Providers : []),
@@ -87,11 +91,19 @@ export function SettingsPage() {
   const handleAddFamily = (familyName: string) => {
     const currentRouter = config.Router || {};
     const families = currentRouter.families || {};
-    if (families[familyName]) return;
-    setConfig({
-      ...config,
-      Router: { ...currentRouter, families: { ...families, [familyName]: { default: "" } } },
-    });
+    // Toggle expanded state: if already expanded, collapse; otherwise expand
+    if (expandedFamily === familyName) {
+      setExpandedFamily(null);
+    } else {
+      // If family doesn't exist, create it first
+      if (!families[familyName]) {
+        setConfig({
+          ...config,
+          Router: { ...currentRouter, families: { ...families, [familyName]: { default: "" } } },
+        });
+      }
+      setExpandedFamily(familyName);
+    }
   };
 
   const handleRemoveFamily = (familyName: string) => {
@@ -168,10 +180,10 @@ export function SettingsPage() {
     }
   };
 
-  const tools = [
+  const tools: Array<{ icon: any; label: string; desc: string; href?: string; onClick?: () => void }> = [
     { icon: FileJson, label: t("settings.tools.json_editor"), desc: t("settings.tools.json_editor_desc"), href: "/debug" },
-    { icon: FileText, label: t("settings.tools.log_viewer"), desc: t("settings.tools.log_viewer_desc"), href: "/debug" },
-    { icon: BarChart3, label: t("settings.tools.usage_stats"), desc: t("settings.tools.usage_stats_desc"), href: "/usage" },
+    // LogViewer opens via overlay
+    { icon: FileText, label: t("settings.tools.log_viewer"), desc: t("settings.tools.log_viewer_desc"), onClick: () => setIsLogViewerOpen(true) },
     { icon: FileCog, label: t("settings.tools.presets"), desc: t("settings.tools.presets_desc"), href: "/presets" },
   ];
 
@@ -198,11 +210,12 @@ export function SettingsPage() {
       </header>
 
       <main className="h-[calc(100vh-4rem)] overflow-auto p-6">
-        <div className="max-w-4xl mx-auto">
+        <div className="w-full">
           <Tabs defaultValue="general" className="w-full">
             <TabsList className="w-full justify-start mb-4">
               <TabsTrigger value="general">{t("settings.tabs.general")}</TabsTrigger>
               <TabsTrigger value="router">{t("settings.tabs.router")}</TabsTrigger>
+              <TabsTrigger value="usage">{t("settings.tabs.usage")}</TabsTrigger>
               <TabsTrigger value="tools">{t("settings.tabs.tools")}</TabsTrigger>
             </TabsList>
 
@@ -507,136 +520,150 @@ export function SettingsPage() {
                 <div className="flex gap-2 mb-3">
                   {MODEL_FAMILIES.map((family) => {
                     const isConfigured = config.Router?.families?.[family];
+                    const isExpanded = expandedFamily === family;
                     return (
                       <Button
                         key={family}
-                        variant={isConfigured ? "default" : "outline"}
+                        variant={isExpanded ? "default" : (isConfigured ? "secondary" : "outline")}
                         size="sm"
                         onClick={() => handleAddFamily(family)}
-                        className="capitalize"
+                        className={`capitalize ${isExpanded ? "ring-2 ring-blue-400 shadow-sm" : ""}`}
                       >
                         {family}
-                        {!isConfigured && " +"}
+                        {!isConfigured && !isExpanded && " +"}
                       </Button>
                     );
                   })}
                 </div>
-                {/* Configured families */}
-                {Object.entries(config.Router?.families || {}).filter(([name]) => MODEL_FAMILIES.includes(name as any)).map(([familyName, familyCfg]) => (
-                  <div key={familyName} className="border rounded-lg p-4 mt-3">
+                {/* Expanded family configuration */}
+                {expandedFamily && (
+                  <div className="border rounded-lg p-4 mt-3 bg-blue-50/30">
                     <div className="flex items-center justify-between mb-3">
                       <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium text-blue-600 capitalize">{familyName}</span>
+                        <span className="text-sm font-medium text-blue-600 capitalize">{expandedFamily}</span>
                       </div>
-                      <Button variant="ghost" size="sm" className="h-6 text-xs text-red-400 hover:text-red-600" onClick={() => handleRemoveFamily(familyName)}>
-                        {t("router.remove_family")}
-                      </Button>
-                    </div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="space-y-1.5">
-                        <Label>{t("router.default")}</Label>
-                        <Combobox
-                          options={modelOptions}
-                          value={(familyCfg as any).default || ""}
-                          onChange={(v) => handleFamilyChange(familyName, "default", v)}
-                          placeholder={t("router.selectModel")}
-                          searchPlaceholder={t("router.searchModel")}
-                          emptyPlaceholder={t("router.noModelFound")}
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label>{t("router.longContext")}</Label>
-                        <Combobox
-                          options={modelOptions}
-                          value={(familyCfg as any).longContext || ""}
-                          onChange={(v) => handleFamilyChange(familyName, "longContext", v)}
-                          placeholder={t("router.selectModel")}
-                          searchPlaceholder={t("router.searchModel")}
-                          emptyPlaceholder={t("router.noModelFound")}
-                        />
-                      </div>
-                      <div className="space-y-1.5 flex items-center gap-2">
-                        <Switch
-                          id={`${familyName}-enableExtendedContext`}
-                          checked={(familyCfg as any).enableExtendedContext ?? false}
-                          onCheckedChange={(checked) => handleFamilyChange(familyName, "enableExtendedContext", checked)}
-                        />
-                        <div className="flex flex-col">
-                          <Label htmlFor={`${familyName}-enableExtendedContext`} className="text-sm">
-                            {t("router.enableExtendedContext")}
-                          </Label>
-                          <span className="text-xs text-gray-500">
-                            {t("router.enableExtendedContextDesc")}
-                          </span>
-                        </div>
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label>{t("router.extendedContext")}</Label>
-                        <Combobox
-                          options={modelOptions}
-                          value={(familyCfg as any).extendedContext || ""}
-                          onChange={(v) => handleFamilyChange(familyName, "extendedContext", v)}
-                          placeholder={t("router.selectModel")}
-                          searchPlaceholder={t("router.searchModel")}
-                          emptyPlaceholder={t("router.noModelFound")}
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label>{t("router.think")}</Label>
-                        <Combobox
-                          options={modelOptions}
-                          value={(familyCfg as any).think || ""}
-                          onChange={(v) => handleFamilyChange(familyName, "think", v)}
-                          placeholder={t("router.selectModel")}
-                          searchPlaceholder={t("router.searchModel")}
-                          emptyPlaceholder={t("router.noModelFound")}
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label>{t("router.webSearch")}</Label>
-                        <Combobox
-                          options={modelOptions}
-                          value={(familyCfg as any).webSearch || ""}
-                          onChange={(v) => handleFamilyChange(familyName, "webSearch", v)}
-                          placeholder={t("router.selectModel")}
-                          searchPlaceholder={t("router.searchModel")}
-                          emptyPlaceholder={t("router.noModelFound")}
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label>{t("router.image")}</Label>
-                        <Combobox
-                          options={modelOptions}
-                          value={(familyCfg as any).image || ""}
-                          onChange={(v) => handleFamilyChange(familyName, "image", v)}
-                          placeholder={t("router.selectModel")}
-                          searchPlaceholder={t("router.searchModel")}
-                          emptyPlaceholder={t("router.noModelFound")}
-                        />
+                      <div className="flex items-center gap-2">
+                        {config.Router?.families?.[expandedFamily] && (
+                          <Button variant="ghost" size="sm" className="h-6 text-xs text-red-400 hover:text-red-600" onClick={() => { handleRemoveFamily(expandedFamily); setExpandedFamily(null); }}>
+                            {t("router.remove_family")}
+                          </Button>
+                        )}
                       </div>
                     </div>
-                    {/* Family Fallback */}
-                    <div className="border-t mt-3 pt-3">
-                      <h4 className="text-xs font-medium text-gray-500 mb-2">{t("router.family_fallback_title")}</h4>
-                      <div className="grid grid-cols-2 gap-3">
-                        {FALLBACK_SCENARIOS.map((scenario) => (
-                          <div key={`${familyName}-${scenario}`} className="space-y-1">
-                            <Label className="text-xs">{t(`router.${scenario}`)}</Label>
-                            <MultiCombobox
+                    {(config.Router?.families?.[expandedFamily] as any) && (
+                      <>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="space-y-1.5">
+                            <Label>{t("router.default")}</Label>
+                            <Combobox
                               options={modelOptions}
-                              value={(familyCfg as any).fallback?.[scenario] || []}
-                              onChange={(value) => handleFamilyFallbackChange(familyName, scenario, value)}
+                              value={(config.Router?.families?.[expandedFamily] as any)?.default || ""}
+                              onChange={(v) => handleFamilyChange(expandedFamily, "default", v)}
                               placeholder={t("router.selectModel")}
                               searchPlaceholder={t("router.searchModel")}
                               emptyPlaceholder={t("router.noModelFound")}
                             />
                           </div>
-                        ))}
-                      </div>
-                    </div>
+                          <div className="space-y-1.5">
+                            <Label>{t("router.longContext")}</Label>
+                            <Combobox
+                              options={modelOptions}
+                              value={(config.Router?.families?.[expandedFamily] as any)?.longContext || ""}
+                              onChange={(v) => handleFamilyChange(expandedFamily, "longContext", v)}
+                              placeholder={t("router.selectModel")}
+                              searchPlaceholder={t("router.searchModel")}
+                              emptyPlaceholder={t("router.noModelFound")}
+                            />
+                          </div>
+                          <div className="space-y-1.5 flex items-center gap-2">
+                            <Switch
+                              id={`${expandedFamily}-enableExtendedContext`}
+                              checked={(config.Router?.families?.[expandedFamily] as any)?.enableExtendedContext ?? false}
+                              onCheckedChange={(checked) => handleFamilyChange(expandedFamily, "enableExtendedContext", checked)}
+                            />
+                            <div className="flex flex-col">
+                              <Label htmlFor={`${expandedFamily}-enableExtendedContext`} className="text-sm">
+                                {t("router.enableExtendedContext")}
+                              </Label>
+                              <span className="text-xs text-gray-500">
+                                {t("router.enableExtendedContextDesc")}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label>{t("router.extendedContext")}</Label>
+                            <Combobox
+                              options={modelOptions}
+                              value={(config.Router?.families?.[expandedFamily] as any)?.extendedContext || ""}
+                              onChange={(v) => handleFamilyChange(expandedFamily, "extendedContext", v)}
+                              placeholder={t("router.selectModel")}
+                              searchPlaceholder={t("router.searchModel")}
+                              emptyPlaceholder={t("router.noModelFound")}
+                            />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label>{t("router.think")}</Label>
+                            <Combobox
+                              options={modelOptions}
+                              value={(config.Router?.families?.[expandedFamily] as any)?.think || ""}
+                              onChange={(v) => handleFamilyChange(expandedFamily, "think", v)}
+                              placeholder={t("router.selectModel")}
+                              searchPlaceholder={t("router.searchModel")}
+                              emptyPlaceholder={t("router.noModelFound")}
+                            />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label>{t("router.webSearch")}</Label>
+                            <Combobox
+                              options={modelOptions}
+                              value={(config.Router?.families?.[expandedFamily] as any)?.webSearch || ""}
+                              onChange={(v) => handleFamilyChange(expandedFamily, "webSearch", v)}
+                              placeholder={t("router.selectModel")}
+                              searchPlaceholder={t("router.searchModel")}
+                              emptyPlaceholder={t("router.noModelFound")}
+                            />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label>{t("router.image")}</Label>
+                            <Combobox
+                              options={modelOptions}
+                              value={(config.Router?.families?.[expandedFamily] as any)?.image || ""}
+                              onChange={(v) => handleFamilyChange(expandedFamily, "image", v)}
+                              placeholder={t("router.selectModel")}
+                              searchPlaceholder={t("router.searchModel")}
+                              emptyPlaceholder={t("router.noModelFound")}
+                            />
+                          </div>
+                        </div>
+                        {/* Family Fallback */}
+                        <div className="border-t mt-3 pt-3">
+                          <h4 className="text-xs font-medium text-gray-500 mb-2">{t("router.family_fallback_title")}</h4>
+                          <div className="grid grid-cols-2 gap-3">
+                            {FALLBACK_SCENARIOS.map((scenario) => (
+                              <div key={`${expandedFamily}-${scenario}`} className="space-y-1">
+                                <Label className="text-xs">{t(`router.${scenario}`)}</Label>
+                                <MultiCombobox
+                                  options={modelOptions}
+                                  value={(config.Router?.families?.[expandedFamily] as any)?.fallback?.[scenario] || []}
+                                  onChange={(value) => handleFamilyFallbackChange(expandedFamily, scenario, value)}
+                                  placeholder={t("router.selectModel")}
+                                  searchPlaceholder={t("router.searchModel")}
+                                  emptyPlaceholder={t("router.noModelFound")}
+                                />
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </>
+                    )}
                   </div>
-                ))}
+                )}
               </div>
+            </TabsContent>
+
+            {/* Usage Tab */}
+            <TabsContent value="usage" className="h-[calc(100vh-10rem)]">
+              <UsageStats />
             </TabsContent>
 
             {/* Tools Tab */}
@@ -645,7 +672,7 @@ export function SettingsPage() {
                 <button
                   key={tool.label}
                   className="w-full flex items-center gap-3 rounded-lg border p-4 text-left hover:bg-gray-50 transition-colors"
-                  onClick={() => navigate(tool.href)}
+                  onClick={() => tool.onClick ? tool.onClick() : navigate(tool.href || '/')}
                 >
                   <tool.icon className="h-5 w-5 text-gray-500 shrink-0" />
                   <div className="flex-1 min-w-0">
@@ -672,6 +699,14 @@ export function SettingsPage() {
           onClose={() => setToast(null)}
         />
       )}
+    <LogViewer
+      open={isLogViewerOpen}
+      onOpenChange={setIsLogViewerOpen}
+    />
+    <LogViewer
+      open={isLogViewerOpen}
+      onOpenChange={setIsLogViewerOpen}
+    />
     </div>
   );
 }

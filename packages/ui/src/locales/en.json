@@ -119,8 +119,14 @@
     "api_key_required": "API Key is required",
     "name_required": "Name is required",
     "name_duplicate": "A provider with this name already exists",
-    "search": "Search providers..."
-
+    "search": "Search providers...",
+    "quota_5h": "5-hour",
+    "quota_7d": "7-day",
+    "quota_reset": "Reset: {{time}}",
+    "quota_token": "Quota Query Token",
+    "quota_token_placeholder": "Optional, enables automatic 5h/7d quota querying",
+    "quota_token_desc": "Some providers require a separate token to query quotas.",
+    "quota_token_tooltip": "Used to query Zhipu Coding Plan 5-hour and 7-day quota usage. How to get: Login to open.bigmodel.cn, open browser DevTools (F12), find any request's Authorization header in the Network tab, and copy the JWT after 'Bearer'."
   },
   "router": {
     "title": "Router",
@@ -150,8 +156,9 @@
   "settings": {
     "tabs": {
       "general": "General",
-      "router": "Router",
-      "tools": "Tools"
+      "router": "Advanced Router",
+      "tools": "Tools",
+      "usage": "Usage"
     },
     "language": "Language",
     "token_speed": "Token Speed & TTFT Tracking",
@@ -206,6 +213,7 @@
     "model": "Model",
     "usage": "Usage",
     "speed": "Speed",
+    "contextCircle": "Context Usage",
     "totalTokens": "Total Tokens",
     "script": "Script",
     "background_none": "None",
@@ -287,7 +295,13 @@
     "worker_error": "Worker error",
     "worker_init_failed": "Failed to initialize worker",
     "grouping_not_supported": "Log grouping not supported by server",
-    "back": "Back"
+    "back": "Back",
+    "col_time": "Time",
+    "col_level": "Level",
+    "col_request_id": "Request ID",
+    "col_message": "Message",
+    "col_model": "Model",
+    "detail_title": "Log Detail"
   },
   "presets": {
     "title": "Presets",
@@ -313,7 +327,6 @@
     "install_dialog_title": "Install Preset",
     "install_dialog_description": "Install a preset from a GitHub repository",
     "from_url": "From GitHub",
-    "github_repository": "GitHub Repository",
     "preset_url": "Repository URL",
     "preset_url_placeholder": "https://github.com/owner/repo",
     "preset_name": "Preset Name (Optional)",

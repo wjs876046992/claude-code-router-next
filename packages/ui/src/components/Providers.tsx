@@ -14,12 +14,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { X, Trash2, Plus, Eye, EyeOff, Search, XCircle } from "lucide-react";
+import { X, Trash2, Plus, Eye, EyeOff, Search, XCircle, HelpCircle } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Badge } from "@/components/ui/badge";
 import { Combobox } from "@/components/ui/combobox";
 import { ComboInput } from "@/components/ui/combo-input";
 import { api } from "@/lib/api";
-import type { Provider, ProviderHealthState } from "@/types";
+import type { Provider, ProviderHealthState, ProviderQuotaUsage } from "@/types";
 
 interface ProviderType extends Provider {}
 
@@ -40,6 +41,7 @@ export function Providers() {
   const [nameError, setNameError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState<string>("");
   const [healthStates, setHealthStates] = useState<ProviderHealthState[]>([]);
+  const [quotaUsages, setQuotaUsages] = useState<ProviderQuotaUsage[]>([]);
   const comboInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -87,6 +89,22 @@ export function Providers() {
 
     fetchHealth();
     const interval = setInterval(fetchHealth, 30000); // Refresh every 30 seconds
+    return () => clearInterval(interval);
+  }, []);
+
+  // Fetch provider quota usage periodically
+  useEffect(() => {
+    const fetchQuota = async () => {
+      try {
+        const response = await api.getProviderQuota();
+        setQuotaUsages(response.quotas || []);
+      } catch (error) {
+        console.error('Failed to fetch provider quota:', error);
+      }
+    };
+
+    fetchQuota();
+    const interval = setInterval(fetchQuota, 30000); // Refresh every 30 seconds
     return () => clearInterval(interval);
   }, []);
 
@@ -567,6 +585,7 @@ export function Providers() {
         <ProviderList
           providers={filteredProviders}
           healthStates={healthStates}
+          quotaUsages={quotaUsages}
           onEdit={handleEditProvider}
           onRemove={handleSetDeletingProviderIndex}
         />
@@ -621,11 +640,11 @@ export function Providers() {
               <div className="space-y-2">
                 <Label htmlFor="api_key">{t("providers.api_key")}</Label>
                 <div className="relative">
-                  <Input 
-                    id="api_key" 
-                    type={showApiKey[editingProviderIndex || 0] ? "text" : "password"} 
-                    value={editingProvider.api_key || ''} 
-                    onChange={(e) => handleProviderChange(editingProviderIndex, 'api_key', e.target.value)} 
+                  <Input
+                    id="api_key"
+                    type={showApiKey[editingProviderIndex || 0] ? "text" : "password"}
+                    value={editingProvider.api_key || ''}
+                    onChange={(e) => handleProviderChange(editingProviderIndex, 'api_key', e.target.value)}
                     className={apiKeyError ? "border-red-500" : ""}
                   />
                   <Button
@@ -652,6 +671,30 @@ export function Providers() {
                   <p className="text-sm text-red-500">{apiKeyError}</p>
                 )}
               </div>
+              {editingProvider.api_base_url && /bigmodel\.cn/i.test(editingProvider.api_base_url) && (
+              <div className="space-y-2">
+                <div className="flex items-center gap-1">
+                  <Label htmlFor="quota_token">{t("providers.quota_token")}</Label>
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <HelpCircle className="h-3.5 w-3.5 text-gray-400 cursor-help" />
+                      </TooltipTrigger>
+                      <TooltipContent side="top" className="max-w-xs text-xs">
+                        {t("providers.quota_token_tooltip")}
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                </div>
+                <Input
+                  id="quota_token"
+                  type="password"
+                  placeholder={t("providers.quota_token_placeholder")}
+                  value={editingProvider.quota_token || ''}
+                  onChange={(e) => handleProviderChange(editingProviderIndex, 'quota_token', e.target.value)}
+                />
+              </div>
+              )}
               <div className="space-y-2">
                 <Label htmlFor="models">{t("providers.models")}</Label>
                 <div className="space-y-2">

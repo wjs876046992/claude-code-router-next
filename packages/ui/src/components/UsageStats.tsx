@@ -11,7 +11,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Trash2, RefreshCw } from "lucide-react";
+import { BarChart3, Trash2, RefreshCw } from "lucide-react";
 import {
   Tooltip,
   TooltipContent,
@@ -30,6 +30,8 @@ interface UsageRecord {
   scenarioType: string;
   stream: boolean;
   inputTokens: number;
+  cacheReadInputTokens?: number | null;
+  cacheCreationInputTokens?: number | null;
   outputTokens: number;
   ttft: number | null;
   tokensPerSecond: number | null;
@@ -88,6 +90,13 @@ function formatTime(ts: string): string {
     minute: "2-digit",
     second: "2-digit",
   });
+}
+
+function formatDateInput(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 export function UsageStats() {
@@ -165,58 +174,125 @@ export function UsageStats() {
   const maxDailyTokens = Math.max(1, ...dailyData.map(([, d]) => d.inputTokens + d.outputTokens));
 
   return (
-    <Card className="h-full flex flex-col">
-      <div className="flex items-center justify-end gap-1 pb-2 flex-shrink-0 px-6 pt-6">
-        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={loadData} disabled={loading}>
-          <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
-        </Button>
-        <Button variant="ghost" size="icon" className="h-7 w-7 text-red-400 hover:text-red-600" onClick={handleClear}>
-          <Trash2 className="h-3.5 w-3.5" />
-        </Button>
-      </div>
-
-      <CardContent className="flex-1 overflow-auto pt-0">
-          {/* Time range presets */}
-          <div className="flex gap-2 mb-3">
+    <TooltipProvider>
+    <Card className="h-full flex flex-col overflow-hidden">
+      {/* Top Toolbar: time range + filters + actions (all conditions apply to summary, chart, and table) */}
+      <div className="border-b bg-gradient-to-r from-slate-50/80 via-white to-blue-50/40 px-5 py-3 flex-shrink-0">
+        <div className="flex items-center gap-2.5 flex-wrap">
+          {/* Quick time range presets */}
+          <div className="flex items-center gap-0.5 rounded-md bg-white border border-gray-200 p-0.5 shadow-sm">
             {[24, 168, 720].map((hours) => {
               const label = hours === 24 ? "24h" : hours === 168 ? "7d" : "30d";
-              const isActive = startDate && !endDate && (() => {
-                const d = new Date(startDate);
-                const now = new Date();
-                const diff = (now.getTime() - d.getTime()) / (1000 * 60 * 60);
-                return Math.abs(diff - hours) < 1;
-              })();
+              const isActive = activeRange === hours;
               return (
-                <Button
+                <button
                   key={hours}
-                  variant={isActive ? "default" : "outline"}
-                  size="sm"
-                  className="h-8 text-sm px-4"
+                  type="button"
+                  aria-pressed={isActive}
+                  className={`h-7 px-3 text-xs font-medium rounded transition-colors ${
+                    isActive
+                      ? "bg-blue-600 text-white shadow-sm ring-2 ring-blue-200 hover:bg-blue-700"
+                      : "text-gray-600 hover:bg-gray-50"
+                  }`}
                   onClick={() => {
                     const now = new Date();
                     const start = new Date(now.getTime() - hours * 60 * 60 * 1000);
-                    setStartDate(start.toISOString().slice(0, 10));
-                    setEndDate("");
+                    setStartDate(formatDateInput(start));
+                    setEndDate(formatDateInput(now));
+                    setActiveRange(hours);
                     setPage(1);
                   }}
                 >
                   {label}
-                </Button>
+                </button>
               );
             })}
-            <Button
-              variant={!startDate && !endDate ? "default" : "outline"}
-              size="sm"
-              className="h-8 text-sm px-4"
-              onClick={() => { setStartDate(""); setEndDate(""); setPage(1); }}
+            <button
+              type="button"
+              className={`h-7 px-3 text-xs font-medium rounded transition-colors ${
+                !startDate && !endDate
+                  ? "bg-blue-500 text-white shadow-sm"
+                  : "text-gray-600 hover:bg-gray-50"
+              }`}
+              onClick={() => { setStartDate(""); setEndDate(""); setActiveRange(null); setPage(1); }}
             >
               {t("usage.all")}
-            </Button>
+            </button>
           </div>
 
+          {/* Custom date range */}
+          <div className="flex items-center gap-1.5 px-2 h-8 rounded-md bg-white border border-gray-200 shadow-sm">
+            <Input
+              type="date"
+              className="h-6 text-xs w-[120px] border-0 px-1 focus-visible:ring-0 focus-visible:ring-offset-0"
+              value={startDate}
+              onChange={(e) => { setStartDate(e.target.value); setActiveRange(null); setPage(1); }}
+              placeholder={t("usage.start_date")}
+            />
+            <span className="text-xs text-gray-400 select-none">→</span>
+            <Input
+              type="date"
+              className="h-6 text-xs w-[120px] border-0 px-1 focus-visible:ring-0 focus-visible:ring-offset-0"
+              value={endDate}
+              onChange={(e) => { setEndDate(e.target.value); setActiveRange(null); setPage(1); }}
+              placeholder={t("usage.end_date")}
+            />
+          </div>
+
+          {/* Filter dropdowns */}
+          <Select value={filterProvider || "__all__"} onValueChange={(v) => { setFilterProvider(v === "__all__" ? "" : v); setPage(1); }}>
+            <SelectTrigger className="h-8 text-xs w-[120px] bg-white shadow-sm">
+              <SelectValue placeholder={t("usage.provider")} />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all__">{t("usage.provider")}: {t("usage.all")}</SelectItem>
+              {providers.map((p) => <SelectItem key={p} value={p}>{p}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <Select value={filterModel || "__all__"} onValueChange={(v) => { setFilterModel(v === "__all__" ? "" : v); setPage(1); }}>
+            <SelectTrigger className="h-8 text-xs w-[150px] bg-white shadow-sm">
+              <SelectValue placeholder={t("usage.model")} />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all__">{t("usage.model")}: {t("usage.all")}</SelectItem>
+              {models.map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <Select value={filterScenario || "__all__"} onValueChange={(v) => { setFilterScenario(v === "__all__" ? "" : v); setPage(1); }}>
+            <SelectTrigger className="h-8 text-xs w-[120px] bg-white shadow-sm">
+              <SelectValue placeholder={t("usage.scenario")} />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all__">{t("usage.scenario")}: {t("usage.all")}</SelectItem>
+              {scenarios.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+            </SelectContent>
+          </Select>
+
+          {/* Action buttons */}
+          <div className="ml-auto flex items-center gap-1">
+            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={loadData} disabled={loading} title="Refresh">
+              <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+            </Button>
+            <Button variant="ghost" size="icon" className="h-8 w-8 text-red-400 hover:text-red-600 hover:bg-red-50" onClick={handleClear} title="Clear">
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      <CardContent className="flex-1 overflow-auto pt-4">
           {/* Summary Cards */}
-          {summary && (
-            <div className="grid grid-cols-4 gap-2 mb-3">
+          {summary && (() => {
+            // Determine if input_tokens already includes cache tokens
+            // If cache_read > input, provider reports total input (cache included)
+            // Otherwise, input_tokens is net input, need to add cache
+            const inputIncludesCache = (summary.totalCacheReadInputTokens || 0) > summary.totalInputTokens;
+            const totalCacheTokens = (summary.totalCacheReadInputTokens || 0) + (summary.totalCacheCreationInputTokens || 0);
+            const effectiveTotalTokens = inputIncludesCache
+              ? summary.totalInputTokens + summary.totalOutputTokens
+              : summary.totalInputTokens + summary.totalOutputTokens + totalCacheTokens;
+            return (
+              <div className="grid grid-cols-4 gap-2 mb-3">
               <div className="rounded-lg border bg-blue-50 p-2 text-center">
                 <div className="text-lg font-bold text-blue-600">{summary.totalRequests}</div>
                 <div className="text-xs text-gray-500">{t("usage.total_requests")}</div>
@@ -231,7 +307,7 @@ export function UsageStats() {
                 <div className="text-xs text-gray-500">{t("usage.total_output_tokens")}</div>
               </div>
               <div className="rounded-lg border bg-indigo-50 p-2 text-center">
-                <div className="text-lg font-bold text-indigo-600">{formatTokens(summary.totalInputTokens + summary.totalOutputTokens)}</div>
+                <div className="text-lg font-bold text-indigo-600">{formatTokens(effectiveTotalTokens)}</div>
                 <div className="text-xs text-gray-500">{t("usage.total_tokens")}</div>
               </div>
               <div className="rounded-lg border bg-gray-50 p-2 text-center">
@@ -253,71 +329,46 @@ export function UsageStats() {
                 <div className="text-xs text-gray-500">{t("usage.avg_ttft")}</div>
               </div>
             </div>
-          )}
+            );
+          })()}
 
           {/* Daily Chart */}
           {dailyData.length > 0 && (
             <div className="mb-3">
-              <div className="text-xs text-gray-500 mb-1">{t("usage.daily_chart")}</div>
-              <div className="flex items-end gap-1 h-16">
+              <div className="flex items-center gap-1 text-xs text-gray-500 mb-1">
+                <BarChart3 className="h-3 w-3" aria-hidden="true" />
+                <span>{t("usage.daily_chart")}</span>
+              </div>
+              <div className="flex items-end gap-1 h-14">
                 {dailyData.map(([day, data]) => {
                   const totalTokens = data.inputTokens + data.outputTokens;
                   const height = Math.max(4, (totalTokens / maxDailyTokens) * 100);
                   return (
-                    <div key={day} className="flex-1 flex flex-col items-center" title={`${day}: ${formatTokens(totalTokens)}`}>
-                      <div className="w-full bg-blue-400 rounded-t" style={{ height: `${height}%` }} />
-                      <div className="text-[8px] text-gray-400 mt-0.5">{day.slice(5)}</div>
-                    </div>
+                    <Tooltip key={day}>
+                      <TooltipTrigger asChild>
+                        <div className="flex-1 h-full flex items-end cursor-pointer">
+                          <div className="w-full min-h-1 bg-blue-400 rounded-t hover:bg-blue-500 transition-colors" style={{ height: `${height}%` }} />
+                        </div>
+                      </TooltipTrigger>
+                      <TooltipContent side="top" className="text-xs">
+                        <div className="font-medium mb-1">{day}</div>
+                        <div>{t("usage.input_tokens")}: {formatTokens(data.inputTokens)}</div>
+                        <div>{t("usage.output_tokens")}: {formatTokens(data.outputTokens)}</div>
+                        <div className="font-medium border-t mt-1 pt-1">{t("usage.total_tokens")}: {formatTokens(totalTokens)}</div>
+                      </TooltipContent>
+                    </Tooltip>
                   );
                 })}
               </div>
+              <div className="flex gap-1 mt-0.5">
+                {dailyData.map(([day]) => (
+                  <div key={day} className="flex-1 text-center text-[8px] text-gray-400">
+                    {day.slice(5)}
+                  </div>
+                ))}
+              </div>
             </div>
           )}
-
-          {/* Filters */}
-          <div className="flex gap-2 mb-3 flex-wrap">
-            <Input
-              type="date"
-              className="h-7 text-xs w-[120px]"
-              value={startDate}
-              onChange={(e) => { setStartDate(e.target.value); setPage(1); }}
-              placeholder={t("usage.start_date")}
-            />
-            <Input
-              type="date"
-              className="h-7 text-xs w-[120px]"
-              value={endDate}
-              onChange={(e) => { setEndDate(e.target.value); setPage(1); }}
-              placeholder={t("usage.end_date")}
-            />
-            <Select value={filterProvider} onValueChange={(v) => { setFilterProvider(v === "__all__" ? "" : v); setPage(1); }}>
-              <SelectTrigger className="h-7 text-xs w-[100px]">
-                <SelectValue placeholder={t("usage.provider")} />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__all__">{t("usage.all")}</SelectItem>
-                {providers.map((p) => <SelectItem key={p} value={p}>{p}</SelectItem>)}
-              </SelectContent>
-            </Select>
-            <Select value={filterModel} onValueChange={(v) => { setFilterModel(v === "__all__" ? "" : v); setPage(1); }}>
-              <SelectTrigger className="h-7 text-xs w-[130px]">
-                <SelectValue placeholder={t("usage.model")} />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__all__">{t("usage.all")}</SelectItem>
-                {models.map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}
-              </SelectContent>
-            </Select>
-            <Select value={filterScenario} onValueChange={(v) => { setFilterScenario(v === "__all__" ? "" : v); setPage(1); }}>
-              <SelectTrigger className="h-7 text-xs w-[100px]">
-                <SelectValue placeholder={t("usage.scenario")} />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__all__">{t("usage.all")}</SelectItem>
-                {scenarios.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          </div>
 
           {/* Table */}
           <div className="overflow-auto border rounded text-xs">
@@ -330,6 +381,8 @@ export function UsageStats() {
                   <th className="text-left p-1.5">{t("usage.route")}</th>
                   <th className="text-right p-1.5">{t("usage.input_tokens")}</th>
                   <th className="text-right p-1.5">{t("usage.output_tokens")}</th>
+                  <th className="text-right p-1.5">{t("usage.cache_read")}</th>
+                  <th className="text-right p-1.5">{t("usage.cache_creation")}</th>
                   <th className="text-right p-1.5">{t("usage.ttft")}</th>
                   <th className="text-right p-1.5">{t("usage.speed")}</th>
                   <th className="text-right p-1.5">{t("usage.duration")}</th>
@@ -338,7 +391,7 @@ export function UsageStats() {
               </thead>
               <tbody>
                 {records.length === 0 ? (
-                  <tr><td colSpan={10} className="text-center p-4 text-gray-400">{t("usage.no_data")}</td></tr>
+                  <tr><td colSpan={12} className="text-center p-4 text-gray-400">{t("usage.no_data")}</td></tr>
                 ) : records.map((r) => {
                   // Show model mapping: original → routed
                   const modelDisplay = r.originalModel && r.originalModel !== r.model
@@ -352,6 +405,8 @@ export function UsageStats() {
                     <td className="p-1.5">{r.modelFamily ? `${r.modelFamily}/${r.scenarioType}` : r.scenarioType}</td>
                     <td className="text-right p-1.5">{formatTokens(r.inputTokens)}</td>
                     <td className="text-right p-1.5">{formatTokens(r.outputTokens)}</td>
+                    <td className="text-right p-1.5">{formatTokens(r.cacheReadInputTokens ?? 0)}</td>
+                    <td className="text-right p-1.5">{formatTokens(r.cacheCreationInputTokens ?? 0)}</td>
                     <td className="text-right p-1.5">{formatMs(r.ttft)}</td>
                     <td className="text-right p-1.5">{formatSpeed(r.tokensPerSecond)}</td>
                     <td className="text-right p-1.5">{formatDuration(r.durationMs)}</td>
@@ -401,5 +456,6 @@ export function UsageStats() {
           )}
         </CardContent>
     </Card>
+    </TooltipProvider>
   );
 }
