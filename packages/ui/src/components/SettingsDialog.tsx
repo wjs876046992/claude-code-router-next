@@ -29,7 +29,7 @@ interface SettingsDialogProps {
   onUpdateAvailable?: boolean;
 }
 
-const FALLBACK_SCENARIOS = ["default", "background", "think", "longContext", "webSearch", "image"] as const;
+const FALLBACK_SCENARIOS = ["default", "think", "longContext", "webSearch", "image"] as const;
 
 export function SettingsDialog({
   isOpen,
@@ -70,7 +70,6 @@ export function SettingsDialog({
 
   const routerConfig = config.Router || {
     default: "",
-    background: "",
     think: "",
     longContext: "",
     longContextThreshold: 60000,
@@ -309,17 +308,6 @@ export function SettingsDialog({
                     options={modelOptions}
                     value={routerConfig.default || ""}
                     onChange={(v) => handleRouterChange("default", v)}
-                    placeholder={t("router.selectModel")}
-                    searchPlaceholder={t("router.searchModel")}
-                    emptyPlaceholder={t("router.noModelFound")}
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>{t("router.background")}</Label>
-                  <Combobox
-                    options={modelOptions}
-                    value={routerConfig.background || ""}
-                    onChange={(v) => handleRouterChange("background", v)}
                     placeholder={t("router.selectModel")}
                     searchPlaceholder={t("router.searchModel")}
                     emptyPlaceholder={t("router.noModelFound")}
