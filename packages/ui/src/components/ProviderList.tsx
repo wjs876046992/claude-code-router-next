@@ -80,17 +80,6 @@ function HealthIndicator({ status }: { status: 'closed' | 'open' | 'half-open' |
   );
 }
 
-// Format tokens to human readable (K, M)
-function formatTokens(tokens: number): string {
-  if (tokens >= 1_000_000) {
-    return `${(tokens / 1_000_000).toFixed(1)}M`;
-  }
-  if (tokens >= 1_000) {
-    return `${(tokens / 1_000).toFixed(1)}K`;
-  }
-  return String(tokens);
-}
-
 // Quota progress bar component
 function QuotaProgressBar({
   label,
@@ -105,23 +94,19 @@ function QuotaProgressBar({
   resetTime?: string;
   t: (key: string, options?: Record<string, unknown>) => string;
 }) {
-  // Only show if there's usage data or a configured limit
-  if (used === 0 && !limit) {
+  if (!limit) {
     return null;
   }
 
-  const percentage = limit ? Math.min(100, (used / limit) * 100) : undefined;
-  const usedText = formatTokens(used);
-  const barWidth = percentage !== undefined ? Math.max(2, percentage) : 100;
+  const percentage = Math.min(100, (used / limit) * 100);
+  const barWidth = Math.max(2, percentage);
 
   // Determine bar and text color based on percentage
-  let barColor = percentage === undefined ? 'bg-blue-300' : 'bg-emerald-400';
-  let textColor = percentage === undefined ? 'text-blue-600' : 'text-emerald-600';
-  if (percentage !== undefined) {
-    if (percentage >= 90) { barColor = 'bg-red-500'; textColor = 'text-red-600'; }
-    else if (percentage >= 70) { barColor = 'bg-amber-400'; textColor = 'text-amber-600'; }
-    else if (percentage >= 40) { barColor = 'bg-blue-400'; textColor = 'text-blue-600'; }
-  }
+  let barColor = 'bg-emerald-400';
+  let textColor = 'text-emerald-600';
+  if (percentage >= 90) { barColor = 'bg-red-500'; textColor = 'text-red-600'; }
+  else if (percentage >= 70) { barColor = 'bg-amber-400'; textColor = 'text-amber-600'; }
+  else if (percentage >= 40) { barColor = 'bg-blue-400'; textColor = 'text-blue-600'; }
 
   return (
     <div className="flex items-center gap-2 text-xs text-gray-600">
@@ -133,7 +118,7 @@ function QuotaProgressBar({
         />
       </div>
       <span className={`w-14 shrink-0 text-right tabular-nums font-medium ${textColor}`}>
-        {percentage !== undefined ? `${percentage.toFixed(1)}%` : usedText}
+        {`${percentage.toFixed(1)}%`}
       </span>
       {resetTime && (
         <span className="w-24 shrink-0 text-right text-gray-400">
@@ -209,17 +194,17 @@ export function ProviderList({ providers, healthStates, quotaUsages, onEdit, onR
                   Error: {health.lastError}
                 </p>
               )}
-              {quota && (quota.used5h > 0 || quota.used7d > 0 || quota.limit5h || quota.limit7d) && (
+              {quota && (quota.limit5h || quota.limit7d) && (
                 <div className="space-y-1 pt-1">
                   <QuotaProgressBar
-                    label={t("providers.quota_5h")}
+                    label={quota.type5h === 'balance' ? t("providers.quota_balance") : t("providers.quota_5h")}
                     used={quota.used5h}
                     limit={quota.limit5h}
                     resetTime={quota.limit5h ? quota.reset5h : undefined}
                     t={t}
                   />
                   <QuotaProgressBar
-                    label={t("providers.quota_7d")}
+                    label={quota.type7d === 'balance' ? t("providers.quota_balance") : t("providers.quota_7d")}
                     used={quota.used7d}
                     limit={quota.limit7d}
                     resetTime={quota.limit7d ? quota.reset7d : undefined}

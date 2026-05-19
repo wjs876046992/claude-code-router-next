@@ -41,6 +41,14 @@ interface UsageRecord {
   responseBody?: string;
 }
 
+interface ModelDayData {
+  count: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadInputTokens?: number;
+  cacheCreationInputTokens?: number;
+}
+
 interface UsageSummary {
   totalRequests: number;
   successCount: number;
@@ -51,11 +59,42 @@ interface UsageSummary {
   totalCacheCreationInputTokens: number;
   avgTtft: number | null;
   avgTokensPerSecond: number | null;
-  byModel: Record<string, { count: number; inputTokens: number; outputTokens: number }>;
-  byProvider: Record<string, { count: number; inputTokens: number; outputTokens: number }>;
-  byScenario: Record<string, { count: number; inputTokens: number; outputTokens: number }>;
-  byFamily: Record<string, { count: number; inputTokens: number; outputTokens: number }>;
-  byDay: Record<string, { count: number; inputTokens: number; outputTokens: number }>;
+  byModel: Record<string, ModelDayData>;
+  byProvider: Record<string, ModelDayData>;
+  byScenario: Record<string, ModelDayData>;
+  byFamily: Record<string, ModelDayData>;
+  byDay: Record<string, ModelDayData>;
+}
+
+/**
+ * Compute effective input tokens based on provider format.
+ * - Inclusive format: inputTokens is already total (cache hit/creation already included).
+ *   Detected by inputTokens being approximately equal to cacheRead + cacheCreation.
+ * - Separated format: inputTokens is non-cache input only.
+ *   Effective input = inputTokens + cacheRead + cacheCreation.
+ */
+function computeEffectiveInputTokens(
+  inputTokens: number,
+  cacheReadInputTokens?: number | null,
+  cacheCreationInputTokens?: number | null
+): number {
+  const cacheRead = cacheReadInputTokens ?? 0;
+  const cacheCreation = cacheCreationInputTokens ?? 0;
+  const cacheTotal = cacheRead + cacheCreation;
+
+  if (cacheTotal <= 0) {
+    return inputTokens;
+  }
+
+  // Some providers round inputTokens and cache tokens separately, so exact
+  // equality is unreliable. Use a tolerance: 2% of input or 500 tokens.
+  const tolerance = Math.max(500, inputTokens * 0.02);
+  if (Math.abs(inputTokens - cacheTotal) <= tolerance) {
+    return inputTokens; // inclusive format
+  }
+
+  // separated format
+  return inputTokens + cacheTotal;
 }
 
 function formatTokens(n: number): string {
@@ -174,7 +213,9 @@ export function UsageStats() {
   const dailyData = summary?.byDay ? Object.entries(summary.byDay)
     .sort(([a], [b]) => a.localeCompare(b))
     .slice(-14) : [];
-  const maxDailyTokens = Math.max(1, ...dailyData.map(([, d]) => d.inputTokens + d.outputTokens));
+  const maxDailyTokens = Math.max(1, ...dailyData.map(([, d]) =>
+    computeEffectiveInputTokens(d.inputTokens, d.cacheReadInputTokens, d.cacheCreationInputTokens) + d.outputTokens
+  ));
 
   return (
     <TooltipProvider>
@@ -296,14 +337,12 @@ export function UsageStats() {
       <CardContent className="flex-1 overflow-auto pt-4">
           {/* Summary Cards */}
           {summary && (() => {
-            // Determine if input_tokens already includes cache tokens
-            // If cache_read > input, provider reports total input (cache included)
-            // Otherwise, input_tokens is net input, need to add cache
-            const inputIncludesCache = (summary.totalCacheReadInputTokens || 0) > summary.totalInputTokens;
-            const totalCacheTokens = (summary.totalCacheReadInputTokens || 0) + (summary.totalCacheCreationInputTokens || 0);
-            const effectiveTotalTokens = inputIncludesCache
-              ? summary.totalInputTokens + summary.totalOutputTokens
-              : summary.totalInputTokens + summary.totalOutputTokens + totalCacheTokens;
+            const effectiveInputTokens = computeEffectiveInputTokens(
+              summary.totalInputTokens,
+              summary.totalCacheReadInputTokens,
+              summary.totalCacheCreationInputTokens
+            );
+            const effectiveTotalTokens = effectiveInputTokens + summary.totalOutputTokens;
             return (
               <div className="grid grid-cols-4 gap-2 mb-3">
               <div className="rounded-lg border bg-blue-50 p-2 text-center">
@@ -312,7 +351,7 @@ export function UsageStats() {
                 <div className="text-xs text-green-500">{summary.successCount} ok / <span className="text-red-500">{summary.errorCount} err</span></div>
               </div>
               <div className="rounded-lg border bg-green-50 p-2 text-center">
-                <div className="text-lg font-bold text-green-600">{formatTokens(summary.totalInputTokens)}</div>
+                <div className="text-lg font-bold text-green-600">{formatTokens(effectiveInputTokens)}</div>
                 <div className="text-xs text-gray-500">{t("usage.total_input_tokens")}</div>
               </div>
               <div className="rounded-lg border bg-yellow-50 p-2 text-center">
@@ -354,7 +393,10 @@ export function UsageStats() {
               </div>
               <div className="flex items-end gap-1 h-14">
                 {dailyData.map(([day, data]) => {
-                  const totalTokens = data.inputTokens + data.outputTokens;
+                  const effectiveInput = computeEffectiveInputTokens(
+                    data.inputTokens, data.cacheReadInputTokens, data.cacheCreationInputTokens
+                  );
+                  const totalTokens = effectiveInput + data.outputTokens;
                   const height = Math.max(4, (totalTokens / maxDailyTokens) * 100);
                   return (
                     <Tooltip key={day}>
@@ -365,7 +407,7 @@ export function UsageStats() {
                       </TooltipTrigger>
                       <TooltipContent side="top" className="text-xs">
                         <div className="font-medium mb-1">{day}</div>
-                        <div>{t("usage.input_tokens")}: {formatTokens(data.inputTokens)}</div>
+                        <div>{t("usage.input_tokens")}: {formatTokens(effectiveInput)}</div>
                         <div>{t("usage.output_tokens")}: {formatTokens(data.outputTokens)}</div>
                         <div className="font-medium border-t mt-1 pt-1">{t("usage.total_tokens")}: {formatTokens(totalTokens)}</div>
                       </TooltipContent>
@@ -503,19 +545,24 @@ export function UsageStats() {
             <div>
               {(() => {
                 const modelData = Object.entries(summary.byModel)
-                  .map(([model, data]) => ({
-                    model,
-                    count: data.count,
-                    totalTokens: data.inputTokens + data.outputTokens,
-                    inputTokens: data.inputTokens,
-                    outputTokens: data.outputTokens,
-                  }))
+                  .map(([model, data]) => {
+                    const effectiveInput = computeEffectiveInputTokens(
+                      data.inputTokens, data.cacheReadInputTokens, data.cacheCreationInputTokens
+                    );
+                    return {
+                      model,
+                      count: data.count,
+                      effectiveInput,
+                      totalTokens: effectiveInput + data.outputTokens,
+                      outputTokens: data.outputTokens,
+                    };
+                  })
                   .sort((a, b) => b.totalTokens - a.totalTokens)
                   .slice(0, 10);
                 const maxModelTokens = Math.max(1, ...modelData.map(p => p.totalTokens));
                 return (
                   <div className="space-y-2">
-                    {modelData.map(({ model, count, totalTokens, inputTokens, outputTokens }) => {
+                    {modelData.map(({ model, count, totalTokens, effectiveInput, outputTokens }) => {
                       const width = Math.max(8, (totalTokens / maxModelTokens) * 100);
                       const displayModel = model.length > 30 ? model.slice(0, 30) + '...' : model;
                       return (
@@ -539,7 +586,7 @@ export function UsageStats() {
                           <TooltipContent side="top" className="text-xs">
                             <div className="font-medium mb-1">{model}</div>
                             <div>{t("usage.requests")}: {count}</div>
-                            <div>{t("usage.input_tokens")}: {formatTokens(inputTokens)}</div>
+                            <div>{t("usage.input_tokens")}: {formatTokens(effectiveInput)}</div>
                             <div>{t("usage.output_tokens")}: {formatTokens(outputTokens)}</div>
                             <div className="font-medium border-t mt-1 pt-1">{t("usage.total_tokens")}: {formatTokens(totalTokens)}</div>
                           </TooltipContent>

@@ -241,6 +241,17 @@ async function getServer(options: RunOptions = {}) {
     }
   });
 
+  // Clear stale usage from previous requests in the same session AFTER router runs
+  // Router reads lastMessageUsage for longContext threshold, so clearing must happen AFTER that
+  // This ensures any usage recorded in onResponse belongs to THIS request, not leaked from previous ones
+  serverInstance.addHook("preHandler", async (req: any, reply: any) => {
+    const url = new URL(`http://127.0.0.1${req.url}`);
+    if (url.pathname.endsWith("/v1/messages")) {
+      const usageSessionId = getUsageSessionId(req);
+      sessionUsageCache.put(usageSessionId, { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 });
+    }
+  });
+
   // Add async preHandler hook for authentication
   serverInstance.addHook("preHandler", async (req: any, reply: any) => {
     return new Promise<void>((resolve, reject) => {
@@ -443,8 +454,10 @@ async function getServer(options: RunOptions = {}) {
               // Capture usage from message_delta, message_start, or any event with usage
               if (data?.usage) {
                 const existingUsage = sessionUsageCache.get(usageSessionId) || {};
-                // Merge usage data, preserving all fields
-                const mergedUsage = { ...existingUsage, ...data.usage };
+                // Reset cache on message_start to avoid stale fields from previous requests
+                // (e.g. cache_creation_input_tokens carried over from a different model)
+                const base = event === 'message_start' ? {} : existingUsage;
+                const mergedUsage = { ...base, ...data.usage };
                 // Debug log for cache tokens
                 if (data.usage.cache_read_input_tokens || data.usage.cache_creation_input_tokens) {
                   console.log('[Usage] Cache tokens:', {

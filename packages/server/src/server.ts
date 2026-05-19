@@ -34,6 +34,10 @@ interface ProviderQuotaUsage {
   limit7d?: number;
   reset5h?: string;
   reset7d?: string;
+  /** Display type for the 5h slot: 'rateLimit' (限额) or 'balance' (余额) */
+  type5h?: 'rateLimit' | 'balance';
+  /** Display type for the 7d slot: 'rateLimit' (限额) or 'balance' (余额) */
+  type7d?: 'rateLimit' | 'balance';
 }
 
 /**
@@ -373,6 +377,7 @@ export const createServer = async (config: any): Promise<any> => {
 
         if (typeof stored.totalBalance === 'number') {
           quota.limit7d = stored.totalBalance;
+          quota.type7d = 'balance';
         }
 
         if (typeof stored.usedBalance === 'number') {
@@ -386,14 +391,15 @@ export const createServer = async (config: any): Promise<any> => {
 
         if (typeof stored.usedDailyBalance === 'number') {
           quota.used5h = stored.usedDailyBalance;
+          quota.type5h = 'rateLimit';
         }
 
-        // limitDaily maps to the 5h slot limit (used by TIME_LIMIT adapters like Zhipu)
+        // limitDaily maps to the 5h slot limit (used by TIME_LIMIT/TOKENS_LIMIT adapters)
         if (typeof stored.limitDaily === 'number') {
           quota.limit5h = stored.limitDaily;
+          quota.type5h = 'rateLimit';
         }
 
-        // resetTime goes to 7d for balance-style adapters, 5h for rate-limit-style adapters
         if (typeof stored.resetTime === 'string') {
           if (stored.limitDaily !== undefined) {
             quota.reset5h = stored.resetTime;

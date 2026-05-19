@@ -68,6 +68,8 @@ export class ProviderHealthStore {
     if (state.status === 'half-open') {
       if (state.successCount >= this.config.halfOpenSuccessThreshold) {
         // Transition to closed (fully healthy)
+        // Clear any fallback promotions that were created because this primary failed
+        this.clearPromotionsForPrimary(provider, model);
         this.states.delete(key);
       }
     } else if (state.status === 'open') {
@@ -75,6 +77,21 @@ export class ProviderHealthStore {
       state.status = 'half-open';
       state.successCount = 1;
       state.failureCount = 0;
+    }
+  }
+
+  /**
+   * Clear fallback promotions when a primary model recovers to healthy state
+   * Uses dynamic import to avoid circular dependency
+   */
+  private clearPromotionsForPrimary(provider: string, model: string): void {
+    try {
+      // Dynamic require to avoid circular dependency at module load time
+      // fallback-promotion.ts imports from this file
+      const { getFallbackPromotionStore } = require('../utils/fallback-promotion');
+      getFallbackPromotionStore().clearByPrimary(provider, model);
+    } catch {
+      // Ignore if promotion store not available
     }
   }
 

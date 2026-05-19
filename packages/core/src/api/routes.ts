@@ -14,6 +14,7 @@ import { TransformerService } from "@/services/transformer";
 import { Transformer } from "@/types/transformer";
 import { getHealthStore } from "@/services/provider-health";
 import { captureRateLimitHeaders } from "@/services/rate-limit";
+import { getFallbackPromotionStore } from "@/utils/fallback-promotion";
 
 // Extend FastifyInstance to include custom services
 declare module "fastify" {
@@ -264,6 +265,24 @@ async function handleFallback(
 
         // Record success for the fallback model
         healthStore.recordSuccess(fallbackProvider, model);
+
+        // Promote the fallback model globally for this primary + scenario
+        // This ensures all clients skip the failing primary until TTL expires
+        if (originalProvider && originalModel) {
+          const fallbackPromotion = getFallbackPromotionStore();
+          fallbackPromotion.promote(
+            originalProvider,
+            originalModel,
+            scenarioType,
+            fallbackProvider,
+            model
+          );
+          req.log.info(`Promoted fallback model ${fallbackProvider},${model} for ${originalProvider},${originalModel}:${scenarioType}`);
+        }
+
+        // Write back to original req so onResponse hook records correct provider/model
+        req.provider = fallbackProvider;
+        req.body = newBody;
 
         // Format and return response
         return formatResponse(finalResponse, reply, newBody);

@@ -26,7 +26,6 @@ export function Router() {
   // Handle case where config.Router is null or undefined
   const routerConfig = config.Router || {
     default: "",
-    background: "",
     think: "",
     longContext: "",
     longContextThreshold: 60000,
@@ -76,17 +75,6 @@ export function Router() {
             options={modelOptions}
             value={routerConfig.default || ""}
             onChange={(value) => handleRouterChange("default", value)}
-            placeholder={t("router.selectModel")}
-            searchPlaceholder={t("router.searchModel")}
-            emptyPlaceholder={t("router.noModelFound")}
-          />
-        </div>
-        <div className="space-y-2">
-          <Label>{t("router.background")}</Label>
-          <Combobox
-            options={modelOptions}
-            value={routerConfig.background || ""}
-            onChange={(value) => handleRouterChange("background", value)}
             placeholder={t("router.selectModel")}
             searchPlaceholder={t("router.searchModel")}
             emptyPlaceholder={t("router.noModelFound")}

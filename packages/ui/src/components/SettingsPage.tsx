@@ -19,7 +19,7 @@ import { api } from "@/lib/api";
 import { MODEL_FAMILIES } from "@/types";
 import type { ModelFamilyConfig } from "@/types";
 
-const FALLBACK_SCENARIOS = ["default", "background", "think", "longContext", "extendedContext", "webSearch", "image"] as const;
+const FALLBACK_SCENARIOS = ["default", "think", "longContext", "extendedContext", "webSearch", "image"] as const;
 
 export function SettingsPage() {
   const { t, i18n } = useTranslation();
@@ -91,7 +91,6 @@ export function SettingsPage() {
 
   const routerConfig = config.Router || {
     default: "",
-    background: "",
     think: "",
     longContext: "",
     longContextThreshold: 60000,
@@ -99,7 +98,7 @@ export function SettingsPage() {
     image: "",
   };
 
-  const handleRouterChange = (field: string, value: string | number) => {
+  const handleRouterChange = (field: string, value: string | number | boolean) => {
     const currentRouter = config.Router || {};
     setConfig({ ...config, Router: { ...currentRouter, [field]: value } });
   };
@@ -412,17 +411,6 @@ export function SettingsPage() {
                     />
                   </div>
                   <div className="space-y-1.5">
-                    <Label>{t("router.background")}</Label>
-                    <Combobox
-                      options={modelOptions}
-                      value={routerConfig.background || ""}
-                      onChange={(v) => handleRouterChange("background", v)}
-                      placeholder={t("router.selectModel")}
-                      searchPlaceholder={t("router.searchModel")}
-                      emptyPlaceholder={t("router.noModelFound")}
-                    />
-                  </div>
-                  <div className="space-y-1.5">
                     <Label>{t("router.think")}</Label>
                     <Combobox
                       options={modelOptions}
@@ -468,27 +456,44 @@ export function SettingsPage() {
                     </div>
                   </div>
                   <div className="space-y-1.5 col-span-2">
-                    <div className="flex items-end gap-4">
-                      <div className="flex-1">
-                        <Label>{t("router.extendedContext")}</Label>
-                        <Combobox
-                          options={modelOptions}
-                          value={routerConfig.extendedContext || ""}
-                          onChange={(v) => handleRouterChange("extendedContext", v)}
-                          placeholder={t("router.selectModel")}
-                          searchPlaceholder={t("router.searchModel")}
-                          emptyPlaceholder={t("router.noModelFound")}
-                        />
-                      </div>
-                      <div className="w-32">
-                        <Label>{t("router.extendedContextThreshold")}</Label>
-                        <Input
-                          type="number"
-                          value={routerConfig.extendedContextThreshold || 200000}
-                          onChange={(e) => handleRouterChange("extendedContextThreshold", parseInt(e.target.value) || 200000)}
-                        />
+                    <div className="flex items-center gap-2 mb-2">
+                      <Switch
+                        id="enable-extended-context"
+                        checked={routerConfig.enableExtendedContext ?? false}
+                        onCheckedChange={(checked) => handleRouterChange("enableExtendedContext", checked)}
+                      />
+                      <div className="flex flex-col">
+                        <Label htmlFor="enable-extended-context" className="text-sm">
+                          {t("router.enableExtendedContext")}
+                        </Label>
+                        <span className="text-xs text-gray-500">
+                          {t("router.enableExtendedContextDesc")}
+                        </span>
                       </div>
                     </div>
+                    {routerConfig.enableExtendedContext && (
+                      <div className="flex items-end gap-4 ml-6">
+                        <div className="flex-1">
+                          <Label>{t("router.extendedContext")}</Label>
+                          <Combobox
+                            options={modelOptions}
+                            value={routerConfig.extendedContext || ""}
+                            onChange={(v) => handleRouterChange("extendedContext", v)}
+                            placeholder={t("router.selectModel")}
+                            searchPlaceholder={t("router.searchModel")}
+                            emptyPlaceholder={t("router.noModelFound")}
+                          />
+                        </div>
+                        <div className="w-32">
+                          <Label>{t("router.extendedContextThreshold")}</Label>
+                          <Input
+                            type="number"
+                            value={routerConfig.extendedContextThreshold || 200000}
+                            onChange={(e) => handleRouterChange("extendedContextThreshold", parseInt(e.target.value) || 200000)}
+                          />
+                        </div>
+                      </div>
+                    )}
                   </div>
                   <div className="space-y-1.5 col-span-2">
                     <div className="flex items-end gap-4">

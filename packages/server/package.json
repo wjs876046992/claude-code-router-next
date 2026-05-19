@@ -19,7 +19,7 @@
   "dependencies": {
     "@fastify/multipart": "^9.0.0",
     "@fastify/static": "^8.2.0",
-    "@wengine-ai/llms": "workspace:*",
+    "@wengine-ai/llms": "^2.0.70",
     "adm-zip": "^0.5.16",
     "dotenv": "^16.4.7",
     "json5": "^2.2.3",

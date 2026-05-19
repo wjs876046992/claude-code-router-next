@@ -146,16 +146,16 @@ export interface ProviderQuotaConfig {
 // Provider quota usage response from server
 export interface ProviderQuotaUsage {
   provider: string;
-  // Tokens used in last 5 hours (input + output)
   used5h: number;
-  // Tokens used in last 7 days (input + output)
   used7d: number;
-  // Configured limits (may be undefined)
   limit5h?: number;
   limit7d?: number;
-  // Reset timestamps (approximate, based on window end)
   reset5h?: string;
   reset7d?: string;
+  /** Display type for the 5h slot */
+  type5h?: 'rateLimit' | 'balance';
+  /** Display type for the 7d slot */
+  type7d?: 'rateLimit' | 'balance';
 }
 
 export interface ProviderQuotaResponse {

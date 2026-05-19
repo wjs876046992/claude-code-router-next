@@ -122,6 +122,7 @@
     "search": "Search providers...",
     "quota_5h": "5-hour",
     "quota_7d": "7-day",
+    "quota_balance": "Balance",
     "quota_reset": "Reset: {{time}}",
     "quota_token": "Quota Query Token",
     "quota_token_placeholder": "Optional, enables automatic 5h/7d quota querying",

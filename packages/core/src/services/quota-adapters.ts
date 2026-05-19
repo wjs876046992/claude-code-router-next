@@ -223,6 +223,24 @@ class ZhipuQuotaAdapter extends BaseQuotaAdapter {
           if (limit.nextResetTime) {
             result.resetTime = new Date(limit.nextResetTime).toISOString();
           }
+        } else if (limit.type === "TOKENS_LIMIT") {
+          // TOKENS_LIMIT is also a short-window limit (same 5h plan).
+          // Map to usedDailyBalance/limitDaily so it lands in the 5h UI slot.
+          const usage = parseOptionalNumber(limit.usage);
+          const current = parseOptionalNumber(limit.currentValue);
+          const remaining = parseOptionalNumber(limit.remaining);
+
+          if (usage !== undefined) {
+            result.usedDailyBalance = usage;
+          }
+          if (current !== undefined && remaining !== undefined) {
+            result.limitDaily = current + remaining;
+          } else if (usage !== undefined && remaining !== undefined) {
+            result.limitDaily = usage + remaining;
+          }
+          if (limit.nextResetTime) {
+            result.resetTime = new Date(limit.nextResetTime).toISOString();
+          }
         }
       }
 
