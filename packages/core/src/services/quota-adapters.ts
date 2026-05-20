@@ -205,41 +205,47 @@ class ZhipuQuotaAdapter extends BaseQuotaAdapter {
       const result: ProviderQuotaResult = {};
 
       for (const limit of limits) {
-        if (limit.type === "TIME_LIMIT") {
-          // TIME_LIMIT is the rolling rate-limit window (typically 5-hour).
-          // Map to usedDailyBalance so it lands in the 5h UI slot.
-          const usage = parseOptionalNumber(limit.usage);
+        if (limit.type === "TOKENS_LIMIT") {
+          // TOKENS_LIMIT is the model token quota (5-hour window).
+          // May have: percentage, nextResetTime, and optionally usage/currentValue/remaining
           const current = parseOptionalNumber(limit.currentValue);
+          const usage = parseOptionalNumber(limit.usage);
           const remaining = parseOptionalNumber(limit.remaining);
+          const percentage = parseOptionalNumber(limit.percentage);
 
-          if (usage !== undefined) {
-            result.usedDailyBalance = usage;
+          if (current !== undefined) {
+            result.usedDailyBalance = current;
+          } else if (percentage !== undefined) {
+            // API sometimes only returns percentage without detailed values
+            result.usedDailyBalance = percentage;
+            result.limitDaily = 100;
           }
-          if (current !== undefined && remaining !== undefined) {
+          if (usage !== undefined) {
+            result.limitDaily = usage;
+          } else if (current !== undefined && remaining !== undefined) {
             result.limitDaily = current + remaining;
-          } else if (usage !== undefined && remaining !== undefined) {
-            result.limitDaily = usage + remaining;
           }
           if (limit.nextResetTime) {
             result.resetTime = new Date(limit.nextResetTime).toISOString();
           }
-        } else if (limit.type === "TOKENS_LIMIT") {
-          // TOKENS_LIMIT is also a short-window limit (same 5h plan).
-          // Map to usedDailyBalance/limitDaily so it lands in the 5h UI slot.
-          const usage = parseOptionalNumber(limit.usage);
-          const current = parseOptionalNumber(limit.currentValue);
-          const remaining = parseOptionalNumber(limit.remaining);
-
-          if (usage !== undefined) {
-            result.usedDailyBalance = usage;
+        } else if (limit.type === "TIME_LIMIT") {
+          // TIME_LIMIT is MCP tool usage, not model token quota.
+          // Only used as fallback if TOKENS_LIMIT provided no data.
+          if (result.usedDailyBalance === undefined) {
+            const current = parseOptionalNumber(limit.currentValue);
+            if (current !== undefined) {
+              result.usedDailyBalance = current;
+            }
           }
-          if (current !== undefined && remaining !== undefined) {
-            result.limitDaily = current + remaining;
-          } else if (usage !== undefined && remaining !== undefined) {
-            result.limitDaily = usage + remaining;
-          }
-          if (limit.nextResetTime) {
-            result.resetTime = new Date(limit.nextResetTime).toISOString();
+          if (result.limitDaily === undefined) {
+            const usage = parseOptionalNumber(limit.usage);
+            const current = parseOptionalNumber(limit.currentValue);
+            const remaining = parseOptionalNumber(limit.remaining);
+            if (usage !== undefined) {
+              result.limitDaily = usage;
+            } else if (current !== undefined && remaining !== undefined) {
+              result.limitDaily = current + remaining;
+            }
           }
         }
       }

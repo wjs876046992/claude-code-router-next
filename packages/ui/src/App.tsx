@@ -9,9 +9,10 @@ import { LogViewer } from "@/components/LogViewer";
 import { Button } from "@/components/ui/button";
 import { useConfig } from "@/components/ConfigProvider";
 import { api } from "@/lib/api";
-import { Settings, Save, RefreshCw } from "lucide-react";
+import { Settings, Save, RefreshCw, LayoutDashboard } from "lucide-react";
 import { Toast } from "@/components/ui/toast";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { Background } from "@/components/ui/Background";
 import {
   Dialog,
   DialogContent,
@@ -166,124 +167,157 @@ function App() {
 
   if (isCheckingAuth) {
     return (
-      <div className="h-screen bg-gray-50 font-sans flex items-center justify-center">
-        <div className="text-gray-500">Loading application...</div>
+      <div className="h-screen bg-background flex items-center justify-center">
+        <Background />
+        <div className="flex flex-col items-center gap-4">
+          <div className="h-10 w-10 animate-spin rounded-full border-4 border-primary border-t-transparent"></div>
+          <div className="text-muted-foreground animate-pulse">{t('app.loading')}</div>
+        </div>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="h-screen bg-gray-50 font-sans flex items-center justify-center">
-        <div className="text-red-500">Error: {error.message}</div>
+      <div className="h-screen bg-background flex items-center justify-center">
+        <Background />
+        <div className="glass-card p-8 text-destructive text-center max-w-md">
+          <h2 className="text-2xl font-bold mb-2">System Error</h2>
+          <p>{error.message}</p>
+        </div>
       </div>
     );
   }
 
   if (!config) {
     return (
-      <div className="h-screen bg-gray-50 font-sans flex items-center justify-center">
-        <div className="text-gray-500">Loading configuration...</div>
+      <div className="h-screen bg-background flex items-center justify-center">
+        <Background />
+        <div className="text-muted-foreground animate-pulse">{t('app.loading_config')}</div>
       </div>
     );
   }
 
   return (
     <TooltipProvider>
-      <div className="h-screen bg-gray-50 font-sans">
-      <header className="flex h-16 items-center justify-between border-b bg-white px-6">
-        <h1 className="text-xl font-semibold text-gray-800">{t('app.title')}</h1>
-        <div className="flex items-center gap-2">
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button variant="ghost" size="icon" onClick={() => navigate('/settings')}>
-                <Settings className="h-5 w-5" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>
-              <p>{t('app.settings')}</p>
-            </TooltipContent>
-          </Tooltip>
-          <Button onClick={saveConfig} variant="outline">
-            <Save className="mr-2 h-4 w-4" />
-            {t('app.save')}
-          </Button>
-          <Button onClick={saveConfigAndRestart}>
-            <RefreshCw className="mr-2 h-4 w-4" />
-            {t('app.save_and_restart')}
-          </Button>
-        </div>
-      </header>
-      <main className="flex flex-col h-[calc(100vh-4rem)] gap-4 p-4 overflow-hidden">
-        <div className="flex gap-4 flex-1 min-h-0">
-          <div className="w-3/5">
-            <Providers />
-          </div>
-          <div className="flex w-2/5 flex-col gap-4">
-            <div className="h-3/5">
-              <Router />
+      <div className="h-screen bg-background overflow-hidden flex flex-col">
+        <Background />
+        
+        {/* Header */}
+        <header className="flex h-16 items-center justify-between border-b border-white/10 bg-white/5 backdrop-blur-md px-8 z-10">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-primary/10 rounded-xl">
+              <LayoutDashboard className="h-6 w-6 text-primary" />
             </div>
-            <div className="flex-1 overflow-hidden">
-              <Transformers />
-            </div>
+            <h1 className="text-2xl font-bold tracking-tight bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
+              {t('app.title')}
+            </h1>
           </div>
-        </div>
-      </main>
-      <JsonEditor
-        open={isJsonEditorOpen}
-        onOpenChange={setIsJsonEditorOpen}
-        showToast={(message, type) => setToast({ message, type })}
-      />
-      <LogViewer
-        open={isLogViewerOpen}
-        onOpenChange={setIsLogViewerOpen}
-        showToast={(message, type) => setToast({ message, type })}
-      />
-      {/* Update dialog */}
-      <Dialog open={isUpdateDialogOpen} onOpenChange={setIsUpdateDialogOpen}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>
-              {t('app.new_version_available')}
-              {newVersionInfo && (
-                <span className="ml-2 text-sm font-normal text-muted-foreground">
-                  v{newVersionInfo.version}
-                </span>
-              )}
-            </DialogTitle>
-            <DialogDescription>
-              {t('app.update_description')}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="max-h-96 overflow-y-auto py-4">
-            {newVersionInfo?.changelog ? (
-              <div className="whitespace-pre-wrap text-sm">
-                {newVersionInfo.changelog}
-              </div>
-            ) : (
-              <div className="text-muted-foreground">
-                {t('app.no_changelog_available')}
-              </div>
-            )}
+          
+          <div className="flex items-center gap-3">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button variant="ghost" size="icon" onClick={() => navigate('/settings')} className="rounded-xl hover:bg-white/10">
+                  <Settings className="h-5 w-5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>{t('app.settings')}</p>
+              </TooltipContent>
+            </Tooltip>
+            
+            <div className="h-8 w-[1px] bg-white/10 mx-2" />
+            
+            <Button onClick={saveConfig} variant="outline" className="rounded-xl border-white/10 bg-white/5 hover:bg-white/10">
+              <Save className="mr-2 h-4 w-4" />
+              {t('app.save')}
+            </Button>
+            
+            <Button onClick={saveConfigAndRestart} className="rounded-xl shadow-lg shadow-primary/20 bg-primary hover:bg-primary/90">
+              <RefreshCw className="mr-2 h-4 w-4" />
+              {t('app.save_and_restart')}
+            </Button>
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsUpdateDialogOpen(false)}>
-              {t('app.later')}
-            </Button>
-            <Button onClick={performUpdate}>
-              {t('app.update_now')}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-      {toast && (
-        <Toast
-          message={toast.message}
-          type={toast.type}
-          onClose={() => setToast(null)}
+        </header>
+
+        {/* Main Content */}
+        <main className="flex-1 p-6 overflow-hidden animate-in">
+          <div className="flex gap-6 h-full">
+            <section className="w-[60%] flex flex-col gap-6">
+              <div className="flex-1 overflow-hidden glass-card rounded-2xl">
+                <Providers />
+              </div>
+            </section>
+            
+            <section className="w-[40%] flex flex-col gap-6">
+              <div className="h-[55%] glass-card rounded-2xl overflow-hidden">
+                <Router />
+              </div>
+              <div className="flex-1 glass-card rounded-2xl overflow-hidden">
+                <Transformers />
+              </div>
+            </section>
+          </div>
+        </main>
+
+        {/* Overlays */}
+        <JsonEditor
+          open={isJsonEditorOpen}
+          onOpenChange={setIsJsonEditorOpen}
+          showToast={(message, type) => setToast({ message, type })}
         />
-      )}
-    </div>
+        <LogViewer
+          open={isLogViewerOpen}
+          onOpenChange={setIsLogViewerOpen}
+          showToast={(message, type) => setToast({ message, type })}
+        />
+        
+        {/* Update dialog */}
+        <Dialog open={isUpdateDialogOpen} onOpenChange={setIsUpdateDialogOpen}>
+          <DialogContent className="max-w-2xl glass border-white/10">
+            <DialogHeader>
+              <DialogTitle className="text-2xl font-bold flex items-center gap-2">
+                {t('app.new_version_available')}
+                {newVersionInfo && (
+                  <span className="px-2 py-1 bg-primary/10 text-primary text-xs rounded-full">
+                    v{newVersionInfo.version}
+                  </span>
+                )}
+              </DialogTitle>
+              <DialogDescription className="text-muted-foreground/80">
+                {t('app.update_description')}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="max-h-96 overflow-y-auto py-4 px-2 custom-scrollbar">
+              {newVersionInfo?.changelog ? (
+                <div className="whitespace-pre-wrap text-sm leading-relaxed">
+                  {newVersionInfo.changelog}
+                </div>
+              ) : (
+                <div className="text-muted-foreground italic">
+                  {t('app.no_changelog_available')}
+                </div>
+              )}
+            </div>
+            <DialogFooter className="gap-2">
+              <Button variant="outline" onClick={() => setIsUpdateDialogOpen(false)} className="rounded-xl">
+                {t('app.later')}
+              </Button>
+              <Button onClick={performUpdate} className="rounded-xl bg-primary hover:bg-primary/90">
+                {t('app.update_now')}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {toast && (
+          <Toast
+            message={toast.message}
+            type={toast.type}
+            onClose={() => setToast(null)}
+          />
+        )}
+      </div>
     </TooltipProvider>
   );
 }

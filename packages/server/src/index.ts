@@ -227,6 +227,36 @@ async function getServer(options: RunOptions = {}) {
     logger: loggerConfig,
   });
 
+  // Set up usage recording callback for fallback failures in core
+  serverInstance.recordUsage = (data: any) => {
+    try {
+      appendUsage({
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        timestamp: new Date().toISOString(),
+        sessionId: data.sessionId || "",
+        provider: data.provider || "",
+        originalModel: data.originalModel || "",
+        model: data.model || "",
+        modelFamily: data.modelFamily || "",
+        scenarioType: data.scenarioType || "default",
+        stream: data.stream ?? false,
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadInputTokens: 0,
+        cacheCreationInputTokens: 0,
+        ttft: null,
+        tokensPerSecond: null,
+        durationMs: 0,
+        status: "error",
+        errorMessage: data.errorMessage,
+        responseBody: undefined,
+      });
+    } catch (e) {
+      // Usage tracking must not affect the response
+      console.error("Fallback usage tracking error:", e);
+    }
+  };
+
   await Promise.allSettled(
       presets.map(async preset => await serverInstance.registerNamespace(`/preset/${preset.name}`, preset.config))
   )

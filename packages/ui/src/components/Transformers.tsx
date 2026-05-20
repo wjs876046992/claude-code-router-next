@@ -101,12 +101,20 @@ export function Transformers() {
   };
 
   return (
-    <Card className="flex h-full flex-col rounded-lg border shadow-sm">
-      <CardHeader className="flex flex-row items-center justify-between border-b p-4">
-        <CardTitle className="text-lg">{t("transformers.title")} <span className="text-sm font-normal text-gray-500">({validTransformers.length})</span></CardTitle>
-        <Button onClick={handleAddTransformer}>{t("transformers.add")}</Button>
+    <Card className="flex h-full flex-col glass-card border-white/10 shadow-xl overflow-hidden">
+      <CardHeader className="flex flex-row items-center justify-between border-b border-white/10 bg-white/5 p-5">
+        <CardTitle className="text-xl font-bold tracking-tight text-foreground flex items-center gap-2">
+          {t("transformers.title")} 
+          <span className="text-xs bg-primary/20 text-primary px-2 py-1 rounded-full font-bold ml-1">
+            {validTransformers.length}
+          </span>
+        </CardTitle>
+        <Button onClick={handleAddTransformer} size="sm" className="h-9 px-4 rounded-xl">
+          <Plus className="h-4 w-4 mr-1" />
+          {t("transformers.add")}
+        </Button>
       </CardHeader>
-      <CardContent className="flex-grow overflow-y-auto p-4">
+      <CardContent className="flex-grow overflow-y-auto p-6 custom-scrollbar">
         <TransformerList
           transformers={validTransformers}
           onEdit={setEditingTransformerIndex}

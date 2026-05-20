@@ -156,6 +156,8 @@ export interface ProviderQuotaUsage {
   type5h?: 'rateLimit' | 'balance';
   /** Display type for the 7d slot */
   type7d?: 'rateLimit' | 'balance';
+  /** Currency for balance display (e.g. "CNY", "USD") */
+  currency?: string;
 }
 
 export interface ProviderQuotaResponse {

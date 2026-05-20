@@ -22,6 +22,7 @@ declare module "fastify" {
     configService: ConfigService;
     providerService: ProviderService;
     transformerService: TransformerService;
+    recordUsage?: (data: any) => void;
   }
 
   interface FastifyRequest {
@@ -278,6 +279,11 @@ async function handleFallback(
             model
           );
           req.log.info(`Promoted fallback model ${fallbackProvider},${model} for ${originalProvider},${originalModel}:${scenarioType}`);
+
+          // Immediately mark the original model as unavailable so routing skips it
+          // even when promotion TTL expires or is cleared
+          healthStore.forceOpen(originalProvider, originalModel, error?.message);
+          req.log.info(`Marked original model ${originalProvider},${originalModel} as unavailable`);
         }
 
         // Write back to original req so onResponse hook records correct provider/model
@@ -289,6 +295,19 @@ async function handleFallback(
       } catch (fallbackError: any) {
         healthStore.recordFailure(fallbackProvider, model, fallbackError.message);
         req.log.warn(`Fallback model ${fallbackRoute.key} failed: ${fallbackError.message}`);
+
+        // Record failed fallback attempt in usage stats
+        fastify.recordUsage?.({
+          provider: fallbackProvider,
+          model,
+          originalModel: (req.body as any).model,
+          scenarioType,
+          modelFamily: (req as any).modelFamily,
+          errorMessage: fallbackError.message,
+          sessionId: (req as any).usageSessionId || req.id,
+          stream: (req.body as any).stream,
+        });
+
         continue;
       }
     }

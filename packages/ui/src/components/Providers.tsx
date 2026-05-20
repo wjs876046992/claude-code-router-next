@@ -572,20 +572,28 @@ export function Providers() {
   });
 
   return (
-    <Card className="flex h-full flex-col rounded-lg border shadow-sm">
-      <CardHeader className="flex flex-col border-b p-4 gap-3">
+    <Card className="flex h-full flex-col glass-card border-white/10 shadow-xl overflow-hidden">
+      <CardHeader className="flex flex-col border-b border-white/10 bg-white/5 p-5 gap-4">
         <div className="flex flex-row items-center justify-between">
-          <CardTitle className="text-lg">{t("providers.title")} <span className="text-sm font-normal text-gray-500">({filteredProviders.length}/{validProviders.length})</span></CardTitle>
-          <Button onClick={handleAddProvider}>{t("providers.add")}</Button>
+          <CardTitle className="text-xl font-bold tracking-tight text-foreground flex items-center gap-2">
+            {t("providers.title")} 
+            <span className="text-xs bg-primary/20 text-primary px-2 py-1 rounded-full font-bold ml-1">
+              {filteredProviders.length}/{validProviders.length}
+            </span>
+          </CardTitle>
+          <Button onClick={handleAddProvider} size="sm" className="h-9 px-4 rounded-xl">
+            <Plus className="h-4 w-4 mr-1" />
+            {t("providers.add")}
+          </Button>
         </div>
         <div className="flex items-center gap-2">
-          <div className="relative flex-1">
-            <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-500" />
+          <div className="relative flex-1 group">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground/60 group-focus-within:text-primary transition-colors" />
             <Input
               placeholder={t("providers.search")}
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="pl-8"
+              className="pl-9 bg-white/5 border-white/10 focus:bg-white/10 transition-all rounded-xl h-10"
             />
           </div>
           {searchTerm && (
@@ -593,13 +601,14 @@ export function Providers() {
               variant="ghost" 
               size="icon"
               onClick={() => setSearchTerm("")}
+              className="h-10 w-10 rounded-xl hover:bg-white/10"
             >
               <XCircle className="h-4 w-4" />
             </Button>
           )}
         </div>
       </CardHeader>
-      <CardContent className="flex-grow overflow-y-auto p-4">
+      <CardContent className="flex-grow overflow-y-auto p-6 custom-scrollbar">
         <ProviderList
           providers={filteredProviders}
           healthStates={healthStates}

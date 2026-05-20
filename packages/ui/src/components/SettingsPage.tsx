@@ -218,21 +218,21 @@ export function SettingsPage() {
   ];
 
   return (
-    <div className="h-screen bg-gray-50">
-      <header className="flex h-16 items-center justify-between border-b bg-white px-6">
-        <div className="flex items-center gap-4">
-          <Button variant="ghost" size="sm" onClick={() => navigate('/dashboard')}>
+    <div className="h-screen bg-transparent">
+      <header className="flex h-20 items-center justify-between border-b border-white/10 bg-white/5 backdrop-blur-md px-8">
+        <div className="flex items-center gap-6">
+          <Button variant="ghost" size="sm" onClick={() => navigate('/dashboard')} className="rounded-xl hover:bg-white/10">
             <ArrowLeft className="mr-2 h-4 w-4" />
             {t('advanced_router.back')}
           </Button>
-          <h1 className="text-xl font-semibold text-gray-800">{t('toplevel.title')}</h1>
+          <h1 className="text-2xl font-bold tracking-tight text-foreground">{t('toplevel.title')}</h1>
         </div>
-        <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={saveConfig} disabled={isSaving || isRestarting}>
+        <div className="flex items-center gap-3">
+          <Button variant="outline" onClick={saveConfig} disabled={isSaving || isRestarting} className="rounded-xl border-white/10 bg-white/5 hover:bg-white/10 h-10 px-6">
             <Save className="mr-2 h-4 w-4" />
             {t('app.save')}
           </Button>
-          <Button onClick={saveAndRestart} disabled={isSaving || isRestarting}>
+          <Button onClick={saveAndRestart} disabled={isSaving || isRestarting} className="rounded-xl h-10 px-6 shadow-lg shadow-primary/20">
             <RefreshCw className="mr-2 h-4 w-4" />
             {t('app.save_and_restart')}
           </Button>
@@ -410,28 +410,6 @@ export function SettingsPage() {
                       emptyPlaceholder={t("router.noModelFound")}
                     />
                   </div>
-                  <div className="space-y-1.5">
-                    <Label>{t("router.think")}</Label>
-                    <Combobox
-                      options={modelOptions}
-                      value={routerConfig.think || ""}
-                      onChange={(v) => handleRouterChange("think", v)}
-                      placeholder={t("router.selectModel")}
-                      searchPlaceholder={t("router.searchModel")}
-                      emptyPlaceholder={t("router.noModelFound")}
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>{t("router.webSearch")}</Label>
-                    <Combobox
-                      options={modelOptions}
-                      value={routerConfig.webSearch || ""}
-                      onChange={(v) => handleRouterChange("webSearch", v)}
-                      placeholder={t("router.selectModel")}
-                      searchPlaceholder={t("router.searchModel")}
-                      emptyPlaceholder={t("router.noModelFound")}
-                    />
-                  </div>
                   <div className="space-y-1.5 col-span-2">
                     <div className="flex items-end gap-4">
                       <div className="flex-1">
@@ -494,6 +472,28 @@ export function SettingsPage() {
                         </div>
                       </div>
                     )}
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>{t("router.think")}</Label>
+                    <Combobox
+                      options={modelOptions}
+                      value={routerConfig.think || ""}
+                      onChange={(v) => handleRouterChange("think", v)}
+                      placeholder={t("router.selectModel")}
+                      searchPlaceholder={t("router.searchModel")}
+                      emptyPlaceholder={t("router.noModelFound")}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>{t("router.webSearch")}</Label>
+                    <Combobox
+                      options={modelOptions}
+                      value={routerConfig.webSearch || ""}
+                      onChange={(v) => handleRouterChange("webSearch", v)}
+                      placeholder={t("router.selectModel")}
+                      searchPlaceholder={t("router.searchModel")}
+                      emptyPlaceholder={t("router.noModelFound")}
+                    />
                   </div>
                   <div className="space-y-1.5 col-span-2">
                     <div className="flex items-end gap-4">

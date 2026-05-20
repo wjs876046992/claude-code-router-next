@@ -38,6 +38,8 @@ interface ProviderQuotaUsage {
   type5h?: 'rateLimit' | 'balance';
   /** Display type for the 7d slot: 'rateLimit' (限额) or 'balance' (余额) */
   type7d?: 'rateLimit' | 'balance';
+  /** Currency for balance display (e.g. "CNY", "USD") */
+  currency?: string;
 }
 
 /**
@@ -378,15 +380,22 @@ export const createServer = async (config: any): Promise<any> => {
         if (typeof stored.totalBalance === 'number') {
           quota.limit7d = stored.totalBalance;
           quota.type7d = 'balance';
-        }
-
-        if (typeof stored.usedBalance === 'number') {
+          if (stored.currency) {
+            quota.currency = stored.currency;
+          }
+          // For balance type, used7d represents spending from the balance
+          // If no usedBalance/remainingBalance breakdown, set to 0 (all balance available)
+          if (typeof stored.usedBalance === 'number') {
+            quota.used7d = stored.usedBalance;
+          } else if (typeof stored.remainingBalance === 'number') {
+            quota.used7d = Math.max(0, stored.totalBalance - stored.remainingBalance);
+          } else {
+            // Only total balance known — treat it as remaining balance
+            quota.used7d = 0;
+            quota.limit7d = stored.totalBalance;
+          }
+        } else if (typeof stored.usedBalance === 'number') {
           quota.used7d = stored.usedBalance;
-        } else if (
-          typeof stored.totalBalance === 'number' &&
-          typeof stored.remainingBalance === 'number'
-        ) {
-          quota.used7d = Math.max(0, stored.totalBalance - stored.remainingBalance);
         }
 
         if (typeof stored.usedDailyBalance === 'number') {

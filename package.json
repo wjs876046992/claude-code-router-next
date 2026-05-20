@@ -1,5 +1,5 @@
 {
-  "name": "@wengine-ai/claude-code-router",
+  "name": "claude-code-router-workspace",
   "version": "2.0.33",
   "description": "Use Claude Code without an Anthropics account and route it to another LLM provider",
   "scripts": {

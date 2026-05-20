@@ -77,7 +77,7 @@ export function SettingsDialog({
     image: "",
   };
 
-  const handleRouterChange = (field: string, value: string | number) => {
+  const handleRouterChange = (field: string, value: string | number | boolean) => {
     const currentRouter = config.Router || {};
     setConfig({ ...config, Router: { ...currentRouter, [field]: value } });
   };
@@ -146,16 +146,16 @@ export function SettingsDialog({
 
   return (
     <Dialog open={isOpen} onOpenChange={onOpenChange}>
-      <DialogContent data-testid="settings-dialog" className="max-w-2xl max-h-[80vh] flex flex-col p-0">
-        <DialogHeader className="p-4 pb-0">
-          <DialogTitle>{t("toplevel.title")}</DialogTitle>
+      <DialogContent data-testid="settings-dialog" className="max-w-2xl max-h-[80vh] flex flex-col p-0 glass-card border-white/10 shadow-2xl overflow-hidden bg-background/80 backdrop-blur-xl">
+        <DialogHeader className="p-6 pb-2">
+          <DialogTitle className="text-xl font-bold tracking-tight text-foreground">{t("toplevel.title")}</DialogTitle>
         </DialogHeader>
 
         <Tabs defaultValue="general" className="flex-1 flex flex-col min-h-0">
-          <TabsList className="mx-4 w-auto justify-start">
-            <TabsTrigger value="general">{t("settings.tabs.general")}</TabsTrigger>
-            <TabsTrigger value="router">{t("settings.tabs.router")}</TabsTrigger>
-            <TabsTrigger value="tools">{t("settings.tabs.tools")}</TabsTrigger>
+          <TabsList className="mx-6 w-auto justify-start bg-white/5 border border-white/10 p-1 rounded-xl">
+            <TabsTrigger value="general" className="rounded-lg data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">{t("settings.tabs.general")}</TabsTrigger>
+            <TabsTrigger value="router" className="rounded-lg data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">{t("settings.tabs.router")}</TabsTrigger>
+            <TabsTrigger value="tools" className="rounded-lg data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">{t("settings.tabs.tools")}</TabsTrigger>
           </TabsList>
 
           {/* General Tab */}
@@ -314,17 +314,6 @@ export function SettingsDialog({
                   />
                 </div>
                 <div className="space-y-1.5">
-                  <Label>{t("router.think")}</Label>
-                  <Combobox
-                    options={modelOptions}
-                    value={routerConfig.think || ""}
-                    onChange={(v) => handleRouterChange("think", v)}
-                    placeholder={t("router.selectModel")}
-                    searchPlaceholder={t("router.searchModel")}
-                    emptyPlaceholder={t("router.noModelFound")}
-                  />
-                </div>
-                <div className="space-y-1.5">
                   <div className="flex items-end gap-3">
                     <div className="flex-1">
                       <Label>{t("router.longContext")}</Label>
@@ -346,6 +335,57 @@ export function SettingsDialog({
                       />
                     </div>
                   </div>
+                </div>
+                <div className="space-y-1.5">
+                  <div className="flex items-center gap-2">
+                    <Switch
+                      id="enable-extended-context"
+                      checked={routerConfig.enableExtendedContext ?? false}
+                      onCheckedChange={(checked) => handleRouterChange("enableExtendedContext", checked)}
+                    />
+                    <div className="flex flex-col">
+                      <Label htmlFor="enable-extended-context" className="text-sm">
+                        {t("router.enableExtendedContext")}
+                      </Label>
+                      <span className="text-xs text-gray-500">
+                        {t("router.enableExtendedContextDesc")}
+                      </span>
+                    </div>
+                  </div>
+                  {routerConfig.enableExtendedContext && (
+                    <div className="flex items-end gap-3 ml-6">
+                      <div className="flex-1">
+                        <Label>{t("router.extendedContext")}</Label>
+                        <Combobox
+                          options={modelOptions}
+                          value={routerConfig.extendedContext || ""}
+                          onChange={(v) => handleRouterChange("extendedContext", v)}
+                          placeholder={t("router.selectModel")}
+                          searchPlaceholder={t("router.searchModel")}
+                          emptyPlaceholder={t("router.noModelFound")}
+                        />
+                      </div>
+                      <div className="w-36">
+                        <Label>{t("router.extendedContextThreshold")}</Label>
+                        <Input
+                          type="number"
+                          value={routerConfig.extendedContextThreshold || 200000}
+                          onChange={(e) => handleRouterChange("extendedContextThreshold", parseInt(e.target.value) || 200000)}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+                <div className="space-y-1.5">
+                  <Label>{t("router.think")}</Label>
+                  <Combobox
+                    options={modelOptions}
+                    value={routerConfig.think || ""}
+                    onChange={(v) => handleRouterChange("think", v)}
+                    placeholder={t("router.selectModel")}
+                    searchPlaceholder={t("router.searchModel")}
+                    emptyPlaceholder={t("router.noModelFound")}
+                  />
                 </div>
                 <div className="space-y-1.5">
                   <Label>{t("router.webSearch")}</Label>

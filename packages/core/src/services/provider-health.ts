@@ -224,6 +224,37 @@ export class ProviderHealthStore {
   }
 
   /**
+   * Immediately mark a provider/model as open (unavailable)
+   * Used when fallback succeeds to prevent further requests to a failing primary
+   */
+  forceOpen(provider: string, model: string, error?: string): void {
+    if (!this.config.enabled) return;
+
+    const key = this.getKey(provider, model);
+    let state = this.states.get(key);
+
+    if (!state) {
+      state = {
+        provider,
+        model,
+        status: 'open',
+        failureCount: this.config.failureThreshold,
+        successCount: 0,
+        lastFailureTime: Date.now(),
+        lastProbeTime: 0,
+        lastError: error,
+      };
+      this.states.set(key, state);
+    } else {
+      state.status = 'open';
+      state.failureCount = Math.max(state.failureCount, this.config.failureThreshold);
+      state.lastFailureTime = Date.now();
+      state.lastError = error;
+      state.lastProbeTime = 0;
+    }
+  }
+
+  /**
    * Check if probe is needed for an open state
    * Returns true if probeInterval has elapsed since last probe
    */

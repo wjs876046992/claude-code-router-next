@@ -74,6 +74,7 @@ class Server {
   transformerService: TransformerService;
   tokenizerService: TokenizerService;
   private activeProbeService?: ActiveProbeService;
+  recordUsage?: (data: any) => void;
 
   constructor(options: ServerOptions = {}) {
     const { initialConfig, ...fastifyOptions } = options;
@@ -142,6 +143,7 @@ class Server {
         fastify.decorate('transformerService', this.transformerService);
         fastify.decorate('providerService', this.providerService);
         fastify.decorate('tokenizerService', this.tokenizerService);
+        fastify.decorate('recordUsage', this.recordUsage || (() => {}));
         // Add router hook for main namespace
         fastify.addHook('preHandler', async (req: any, reply: any) => {
           const url = new URL(`http://127.0.0.1${req.url}`);
@@ -183,6 +185,7 @@ class Server {
       fastify.decorate('transformerService', transformerService);
       fastify.decorate('providerService', providerService);
       fastify.decorate('tokenizerService', tokenizerService);
+      fastify.decorate('recordUsage', this.recordUsage || (() => {}));
       // Add router hook for namespace
       fastify.addHook('preHandler', async (req: any, reply: any) => {
         const url = new URL(`http://127.0.0.1${req.url}`);
