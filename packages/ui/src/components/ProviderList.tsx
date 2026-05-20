@@ -189,13 +189,10 @@ export function ProviderList({ providers, healthStates, quotaUsages, onEdit, onR
         return (
           <div key={index} className="flex items-start justify-between rounded-2xl border border-white/10 bg-white/5 p-5 transition-all hover:bg-white/10 hover:border-primary/30 group animate-in shadow-lg shadow-black/5 glass-card">
             <div className="flex-1 space-y-3">
-              <div className="flex flex-col gap-1">
-                <div className="flex items-center gap-3">
+                <div className="flex flex-col gap-1">
                   <p className="text-lg font-bold tracking-tight text-foreground">{providerName}</p>
-                  <HealthIndicator status={health.status} />
+                  <p className="text-xs font-medium text-muted-foreground/60 truncate max-w-md">{apiBaseUrl}</p>
                 </div>
-                <p className="text-xs font-medium text-muted-foreground/60 truncate max-w-md">{apiBaseUrl}</p>
-              </div>
               
               {health.lastError && (
                 <div className="p-2 px-3 bg-red-500/10 border border-red-500/20 rounded-lg text-[11px] text-red-500 font-medium truncate max-w-md">
@@ -235,13 +232,16 @@ export function ProviderList({ providers, healthStates, quotaUsages, onEdit, onR
               </div>
             </div>
             
-            <div className="ml-4 flex flex-col gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-              <Button variant="ghost" size="icon" onClick={() => onEdit(index)} className="h-9 w-9 rounded-lg hover:bg-primary/20 hover:text-primary">
-                <Pencil className="h-4 w-4" />
-              </Button>
-              <Button variant="destructive" size="icon" onClick={() => onRemove(index)} className="h-9 w-9 rounded-lg opacity-80 hover:opacity-100">
-                <Trash2 className="h-4 w-4" />
-              </Button>
+            <div className="ml-4 flex flex-col items-end gap-4">
+              <HealthIndicator status={health.status} />
+              <div className="flex flex-col gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                <Button variant="ghost" size="icon" onClick={() => onEdit(index)} className="h-9 w-9 rounded-lg hover:bg-primary/20 hover:text-primary">
+                  <Pencil className="h-4 w-4" />
+                </Button>
+                <Button variant="destructive" size="icon" onClick={() => onRemove(index)} className="h-9 w-9 rounded-lg opacity-80 hover:opacity-100">
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </div>
             </div>
           </div>
         );
