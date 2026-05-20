@@ -150,6 +150,8 @@
     "noModelFound": "未找到模型.",
     "family_routing": "模型族路由",
     "family_routing_desc": "将 opus/sonnet/haiku 模型族路由到不同的供应商和模型",
+    "enabled": "已启用",
+    "disabled": "已关闭",
     "add_family": "添加模型族",
     "family_name": "模型族名称",
     "family_name_placeholder": "例如: opus, sonnet, haiku",

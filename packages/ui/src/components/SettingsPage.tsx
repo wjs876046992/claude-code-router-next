@@ -548,12 +548,24 @@ export function SettingsPage() {
 
               {/* Model Family Routing */}
               <div className="border-t pt-4">
-                <div className="mb-1">
-                  <h3 className="text-sm font-medium text-gray-700">{t("router.family_routing")}</h3>
-                  <p className="text-xs text-gray-500">{t("router.family_routing_desc")}</p>
+                <div className="flex items-center justify-between mb-1">
+                  <div>
+                    <h3 className="text-sm font-medium text-gray-700">{t("router.family_routing")}</h3>
+                    <p className="text-xs text-gray-500">{t("router.family_routing_desc")}</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Switch
+                      id="enable-family-routing"
+                      checked={routerConfig.enableFamilyRouting ?? false}
+                      onCheckedChange={(checked) => handleRouterChange("enableFamilyRouting", checked)}
+                    />
+                    <Label htmlFor="enable-family-routing" className="text-xs text-gray-500">
+                      {routerConfig.enableFamilyRouting ? t("router.enabled") : t("router.disabled")}
+                    </Label>
+                  </div>
                 </div>
                 {/* Predefined family buttons */}
-                <div className="flex gap-2 mb-3">
+                <div className={`flex gap-2 mb-3 transition-opacity ${routerConfig.enableFamilyRouting ? "" : "opacity-50 pointer-events-none"}`}>
                   {MODEL_FAMILIES.map((family) => {
                     const isConfigured = config.Router?.families?.[family];
                     const isExpanded = expandedFamily === family;

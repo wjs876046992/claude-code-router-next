@@ -50,6 +50,7 @@ export interface RouterConfig {
     longContextThreshold: number;
     extendedContext?: string;
     extendedContextThreshold?: number;
+    enableFamilyRouting?: boolean;
     webSearch: string;
     image: string;
     models?: Record<string, string>;

@@ -150,6 +150,8 @@
     "noModelFound": "No model found.",
     "family_routing": "Model Family Routing",
     "family_routing_desc": "Route opus/sonnet/haiku model families to different providers and models",
+    "enabled": "Enabled",
+    "disabled": "Disabled",
     "add_family": "Add Family",
     "family_name": "Family Name",
     "family_name_placeholder": "e.g. opus, sonnet, haiku",

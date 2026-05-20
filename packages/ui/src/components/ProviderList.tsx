@@ -129,9 +129,16 @@ function QuotaProgressBar({
             />
           </div>
         </div>
-        <span className={`w-16 shrink-0 text-right tabular-nums font-bold ${textColor}`}>
-          {symbol}{balance.toFixed(2)}
-        </span>
+        <div className="flex flex-col items-end shrink-0 min-w-[70px]">
+          <span className={`text-right tabular-nums font-bold ${textColor}`}>
+            {symbol}{balance.toFixed(2)}
+          </span>
+          {resetTime && (
+            <span className="text-[9px] text-muted-foreground/50 leading-none mt-0.5">
+              {t("providers.quota_reset", { time: resetTime })}
+            </span>
+          )}
+        </div>
       </div>
     );
   }
@@ -155,9 +162,16 @@ function QuotaProgressBar({
           style={{ width: `${barWidth}%` }}
         />
       </div>
-      <span className={`w-14 shrink-0 text-right tabular-nums font-bold ${textColor}`}>
-        {`${percentage.toFixed(1)}%`}
-      </span>
+      <div className="flex flex-col items-end shrink-0 min-w-[70px]">
+        <span className={`text-right tabular-nums font-bold ${textColor}`}>
+          {`${percentage.toFixed(1)}%`}
+        </span>
+        {resetTime && (
+          <span className="text-[9px] text-muted-foreground/50 leading-none mt-0.5">
+            {t("providers.quota_reset", { time: resetTime })}
+          </span>
+        )}
+      </div>
     </div>
   );
 }

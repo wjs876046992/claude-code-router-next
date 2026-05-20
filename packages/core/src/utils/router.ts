@@ -492,7 +492,7 @@ const getUseModel = async (
   // Model family routing: extract opus/sonnet/haiku and use family-specific config
   const { family, extended: modelExtended } = extractModelFamily(req.body.model);
   const familyConfig = Router?.families?.[family || ''] as RouterFamilyConfig | undefined;
-  if (familyConfig) {
+  if (familyConfig && Router?.enableFamilyRouting) {
     req.log.info(`Using model family routing for: ${family}${modelExtended ? ' (1M)' : ''}`);
     req.modelFamily = family;
     req.familyFallback = familyConfig.fallback;
