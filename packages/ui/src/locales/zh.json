@@ -142,6 +142,8 @@
     "enableExtendedContextDesc": "在 Claude Code 模型名后添加 [1m] 以支持 1M 上下文窗口",
     "webSearch": "网络搜索",
     "image": "图像",
+    "threshold": "触发阈值",
+    "forceAgent": "强制代理",
     "forceUseImageAgent": "强制使用图像代理",
     "selectModel": "选择一个模型...",
     "searchModel": "搜索模型...",

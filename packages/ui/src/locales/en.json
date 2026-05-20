@@ -142,6 +142,8 @@
     "enableExtendedContextDesc": "Append [1m] to Claude Code model name for 1M context window support",
     "webSearch": "Web Search",
     "image": "Image",
+    "threshold": "Threshold",
+    "forceAgent": "Force Agent",
     "forceUseImageAgent": "Force Use Image Agent",
     "selectModel": "Select a model...",
     "searchModel": "Search model...",
