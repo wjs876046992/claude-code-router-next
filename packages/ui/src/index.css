@@ -66,9 +66,9 @@
   --destructive: oklch(0.6 0.2 20);
   --destructive-foreground: oklch(0.98 0.01 20);
   
-  --border: oklch(0.85 0.03 260 / 30%);
-  --input: oklch(0.85 0.03 260 / 20%);
-  --ring: oklch(0.55 0.25 260 / 50%);
+  --border: oklch(0.7 0.05 260 / 40%);
+  --input: oklch(0.9 0.03 260 / 50%);
+  --ring: oklch(0.55 0.25 260 / 60%);
 }
 
 .dark {
@@ -94,9 +94,9 @@
   --accent: oklch(0.25 0.06 260);
   --accent-foreground: oklch(0.85 0.05 260);
   
-  --border: oklch(0.4 0.05 260 / 20%);
-  --input: oklch(0.4 0.05 260 / 30%);
-  --ring: oklch(0.65 0.22 260 / 50%);
+  --border: oklch(0.4 0.05 260 / 40%);
+  --input: oklch(0.3 0.05 260 / 40%);
+  --ring: oklch(0.65 0.22 260 / 60%);
 }
 
 @layer base {
