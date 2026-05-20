@@ -189,7 +189,7 @@ export function Router() {
                   id="forceUseImageAgent"
                   value={config.forceUseImageAgent ? "true" : "false"}
                   onChange={(e) => handleForceUseImageAgentChange(e.target.value === "true")}
-                  className="flex h-11 w-full rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-bold transition-all hover:bg-white/10 focus:ring-2 focus:ring-primary/50 outline-none"
+                  className="flex h-11 w-full rounded-xl border border-white/20 bg-white/10 px-4 pr-10 py-2 text-sm font-bold transition-all hover:bg-white/15 hover:border-white/40 focus:ring-2 focus:ring-primary/50 outline-none cursor-pointer"
                 >
                   <option value="false" className="bg-background">{t("common.no")}</option>
                   <option value="true" className="bg-background">{t("common.yes")}</option>
