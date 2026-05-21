@@ -753,11 +753,13 @@ When a primary model fails, Router automatically tries fallback models in the ch
 
 2. **Failure Detection**: After 3 consecutive failures, enters `open` status
 
-3. **Fallback Promotion**: When primary fails and fallback succeeds, the fallback model is temporarily "promoted" (TTL 10 min). Subsequent requests use the promoted model directly, avoiding repeated attempts on the failed primary.
+3. **Drag Ordering**: The UI supports dragging fallback models to adjust priority. Models higher in the list are tried first.
 
-4. **Auto Recovery**: Every 5 minutes, probe failed models. On success → `half-open`, then 2 more successes → `closed`.
+4. **Fallback Promotion**: When primary fails and fallback succeeds, the fallback model is temporarily "promoted" (TTL 10 min). Subsequent requests use the promoted model directly, avoiding repeated attempts on the failed primary.
 
-<!-- Health indicator screenshot placeholder -->
+5. **Auto Recovery**: Every 5 minutes, probe failed models. On success → `half-open`, then 2 more successes → `closed`.
+
+![Provider health status](/blog/images/provider-health-healthy.png)
 
 #### Fallback Configuration Priority
 
@@ -798,7 +800,7 @@ UI displays real-time quota usage for each provider:
 - **7d Quota**: Weekly limit (7-day reset)
 - **Reset Time**: Next quota reset timestamp
 
-<!-- Quota bar screenshot placeholder -->
+![Quota usage bars](/blog/images/provider-quota-usage.png)
 
 Supported providers:
 - Zhipu GLM Coding Plan
