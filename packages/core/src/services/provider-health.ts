@@ -264,6 +264,14 @@ export class ProviderHealthStore {
   }
 
   /**
+   * Recover a provider/model from health fail pool
+   */
+  recover(provider: string, model: string): void {
+    const key = this.getKey(provider, model);
+    this.states.delete(key);
+  }
+
+  /**
    * Get all states for debugging/monitoring
    */
   getAllStates(): ProviderHealthState[] {

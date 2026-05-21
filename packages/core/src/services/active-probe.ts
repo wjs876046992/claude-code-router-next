@@ -276,6 +276,14 @@ export class ActiveProbeService {
                     healthStore.forceOpen(provider.name, m, errorMsg);
                   }
                   this.logger?.warn?.(`${errorMsg} for ${provider.name}, marked as unhealthy`);
+                } else {
+                  for (const m of models) {
+                    const state = healthStore.getState(provider.name, m);
+                    if (state && state.status === 'open' && state.lastError?.includes('Quota exhausted')) {
+                      healthStore.recover(provider.name, m);
+                      this.logger?.info?.(`Quota recovered for ${provider.name} (${m}), marked as healthy`);
+                    }
+                  }
                 }
               }
             }),
@@ -342,10 +350,19 @@ export class ActiveProbeService {
       if (result.status === 'fulfilled') {
         const probeResult = result.value;
         if (probeResult.success) {
+          let recoveredCount = 0;
           for (const m of models) {
+            const state = healthStore.getState(provider.name, m);
+            if (state && state.status === 'open' && state.lastError?.includes('Quota exhausted')) {
+              this.logger?.debug?.(`Skipping health probe recovery for ${provider.name} (${m}) because quota is exhausted`);
+              continue;
+            }
             healthStore.recordSuccess(provider.name, m);
+            recoveredCount++;
           }
-          this.logger?.info?.(`Health probe succeeded for ${provider.name}`);
+          if (recoveredCount > 0) {
+            this.logger?.info?.(`Health probe succeeded for ${provider.name}`);
+          }
         } else {
           for (const m of models) {
             healthStore.recordFailure(provider.name, m, probeResult.error);
