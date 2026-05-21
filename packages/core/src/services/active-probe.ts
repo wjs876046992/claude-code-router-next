@@ -126,8 +126,17 @@ async function probeProvider(
       return { success: true, headers: response.headers };
     }
 
-    // Any HTTP response means the server is reachable
-    // Treat 4xx as success for health (server is up, just rejected the request)
+    if (response.status === 429) {
+      const errorText = await response.text().catch(() => '');
+      return {
+        success: false,
+        error: `HTTP 429: ${errorText.slice(0, 100) || 'Rate limited'}`,
+        headers: response.headers,
+      };
+    }
+
+    // Any non-rate-limit HTTP 4xx response means the server is reachable
+    // and just rejected the request.
     if (response.status >= 400 && response.status < 500) {
       return { success: true, headers: response.headers };
     }
