@@ -425,6 +425,10 @@ export class AnthropicTransformer implements Transformer {
                   tppe: "Original Response",
                 });
                 if (chunk.error) {
+                  // Mark SSE error on request for usage tracking
+                  if (context?.req) {
+                    context.req.sseError = chunk.error;
+                  }
                   const errorMessage = {
                     type: "error",
                     message: {

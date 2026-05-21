@@ -3,7 +3,7 @@ set -e
 
 # Release script
 # - Publish the core package as @wengine-ai/llms
-# - Publish the CLI package as claude-code-router-next
+# - Publish the CLI package as @wengine-ai/claude-code-router-next
 # - Publish the server package as a Docker image
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -71,7 +71,7 @@ publish_core_npm() {
 publish_npm() {
   echo ""
   echo "========================================="
-  echo "发布 npm 包 claude-code-router-next"
+  echo "发布 npm 包 @wengine-ai/claude-code-router-next"
   echo "========================================="
 
   if ! npm whoami &>/dev/null; then
@@ -96,7 +96,7 @@ const pkg = JSON.parse(fs.readFileSync(process.env.CLI_PKG_PATH, 'utf8'));
 const serverPkg = JSON.parse(fs.readFileSync(process.env.SERVER_PKG_PATH, 'utf8'));
 const corePkg = JSON.parse(fs.readFileSync(process.env.CORE_PKG_PATH, 'utf8'));
 
-pkg.name = 'claude-code-router-next';
+pkg.name = '@wengine-ai/claude-code-router-next';
 delete pkg.scripts;
 pkg.files = ['dist/*', 'README.md', 'LICENSE'];
 pkg.dependencies = {
@@ -116,6 +116,13 @@ EOF
   mv "$CLI_DIR/package.json" "$BACKUP_DIR/package.json.original"
   mv "$CLI_DIR/package.publish.json" "$CLI_DIR/package.json"
 
+  restore_cli_package_json() {
+    if [ -f "$BACKUP_DIR/package.json.original" ]; then
+      mv "$BACKUP_DIR/package.json.original" "$CLI_DIR/package.json"
+    fi
+  }
+  trap restore_cli_package_json RETURN
+
   cp "$ROOT_DIR/README.md" "$CLI_DIR/"
   cp "$ROOT_DIR/LICENSE" "$CLI_DIR/" 2>/dev/null || echo "LICENSE 文件不存在，跳过..."
 
@@ -123,11 +130,12 @@ EOF
   echo "执行 npm publish..."
   npm publish --access public
 
-  mv "$BACKUP_DIR/package.json.original" "$CLI_DIR/package.json"
+  restore_cli_package_json
+  trap - RETURN
 
   echo ""
   echo "✅ npm 包发布成功!"
-  echo "   包名: claude-code-router-next@${VERSION}"
+  echo "   包名: @wengine-ai/claude-code-router-next@${VERSION}"
 }
 
 # Publish Docker image

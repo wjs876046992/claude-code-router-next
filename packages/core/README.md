@@ -1,8 +1,8 @@
 ![](blog/images/claude-code-router-img.png)
 
-[![](https://img.shields.io/badge/%F0%9F%87%A8%F0%9F%87%B3-%E4%B8%AD%E6%96%87%E7%89%88-ff0000?style=flat)](README_zh.md)
-[![Discord](https://img.shields.io/badge/Discord-%235865F2.svg?&logo=discord&logoColor=white)](https://discord.gg/rdftVMaUcS)
-[![](https://img.shields.io/github/license/musistudio/claude-code-router)](https://github.com/musistudio/claude-code-router/blob/main/LICENSE)
+**[🇨🇳 中文文档](README_zh.md)**  |  **[🇬🇧 English](README.md)**  |  [![npm version](https://badge.fury.io/js/claude-code-router-next.svg)](https://www.npmjs.com/package/claude-code-router-next)
+
+> **Note**: The original [claude-code-router](https://github.com/musistudio/claude-code-router) repository is no longer actively maintained. This project is a community-driven fork that continues to be actively developed and maintained with bug fixes, new features, and ongoing improvements.
 
 <hr>
 
@@ -67,17 +67,19 @@ If you want to use the latest features and bug fixes directly from the source co
 
 #### 🔄 Migrating from the Official Upstream (@musistudio/claude-code-router)
 
-If you are currently using the upstream community version `@musistudio/claude-code-router` and want to switch to this repository's version (`claude-code-router-next`) for advanced features (e.g. enhanced token-limit UI bars, DeepSeek thinking compatibilities, active health probes):
+If you are currently using the upstream community version `@musistudio/claude-code-router` or the previous version `@wengine-ai/claude-code-router` and want to switch to `claude-code-router-next`:
 
-1. **Uninstall the upstream community version**:
+1. **Uninstall the old version**:
    ```shell
-   npm uninstall -g @musistudio/claude-code-router
+   npm uninstall -g @musistudio/claude-code-router @wengine-ai/claude-code-router
    ```
 
 2. **Install this version**:
    ```shell
    npm install -g claude-code-router-next
    ```
+
+> **Note**: Your existing configuration at `~/.claude-code-router/config.json` is **not affected** by uninstalling the old package. The new version will automatically read your existing configuration.
 
 ### 2. Configuration
 

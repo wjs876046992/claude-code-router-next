@@ -555,9 +555,18 @@ async function getServer(options: RunOptions = {}) {
       // Extract error message if request failed
       let errorMessage: string | undefined;
       let errorResponseBody: string | undefined;
-      if (reply.statusCode >= 400) {
+      // Check for SSE stream error (errors inside HTTP 200 response)
+      const sseError = req.sseError;
+      const hasSseError = sseError && (sseError.type || sseError.code || sseError.message);
+      const hasOutputTokens = usage?.output_tokens && usage.output_tokens > 0;
+      const isFailedRequest = reply.statusCode >= 400 || (hasSseError && !hasOutputTokens);
+      if (isFailedRequest) {
         errorMessage = req.errorMessage || reply.errorMessage || (req.error?.message || req.error?.toString?.() || undefined);
-        errorResponseBody = req.errorResponseBody;
+        if (hasSseError) {
+          errorMessage = errorMessage || JSON.stringify(sseError);
+          errorResponseBody = JSON.stringify(sseError);
+        }
+        errorResponseBody = errorResponseBody || req.errorResponseBody;
         // Record failure to health store
         const model = getRequestModel(req);
         healthStore.recordFailure(req.provider || "", model, errorMessage);
@@ -578,15 +587,15 @@ async function getServer(options: RunOptions = {}) {
         scenarioType: req.scenarioType || "default",
         stream: req.body?.stream ?? false,
         inputTokens: usage?.input_tokens || req.tokenCount || 0,
-        outputTokens: usage?.output_tokens || 0,
+        outputTokens: isFailedRequest ? 0 : (usage?.output_tokens || 0),
         cacheReadInputTokens: usage?.cache_read_input_tokens || 0,
         cacheCreationInputTokens: usage?.cache_creation_input_tokens || 0,
-        ttft: speedStats.ttft,
-        tokensPerSecond: speedStats.tokensPerSecond,
+        ttft: isFailedRequest ? null : speedStats.ttft,
+        tokensPerSecond: isFailedRequest ? null : speedStats.tokensPerSecond,
         durationMs: req.requestStartTime
           ? Math.round(performance.now() - req.requestStartTime)
           : 0,
-        status: reply.statusCode < 400 ? "success" : "error",
+        status: isFailedRequest ? "error" : "success",
         errorMessage,
         responseBody: errorResponseBody,
       });
