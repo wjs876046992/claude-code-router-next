@@ -243,19 +243,9 @@ Here is a comprehensive example:
 
 ### 🔑 API Key / Token Guide
 
-To use the router, you need to acquire API Keys from your preferred LLM providers. Below are guides for some popular providers:
+To use the router, you need to acquire API Keys from your preferred LLM providers. Please refer to each provider's official documentation for API Key acquisition instructions.
 
-#### 1. Zhipu AI (BigModel / GLM CODING PLAN)
-*   **Platform**: Zhipu BigModel Platform (sponsored partner)
-*   **Link**: [Zhipu AI BigModel Platform](https://www.bigmodel.cn/claude-code?ic=RRVJPB5SII) (Use this referral link for a 10% discount on GLM CODING PLAN)
-*   **Acquisition Method**:
-    1. Register and log in using the link above.
-    2. Go to the top-right **Console** -> **API Keys**.
-    3. Copy your API Key.
-
-    GLM CODING PLAN quota information is fetched with this API Key, so you no longer need to configure a web token or `quotaToken`.
-
-#### 2. Alibaba Cloud (DashScope / Bailian / Qwen-Coder)
+#### Alibaba Cloud (DashScope / Bailian / Qwen-Coder)
 *   **Platform**: Alibaba Cloud Bailian (highly capable Qwen-Coder models)
 *   **Link**: [Alibaba Cloud Bailian Console](https://bailian.console.aliyun.com/)
 *   **Acquisition Methods**:

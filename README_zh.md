@@ -220,19 +220,9 @@ npm install -g @wengine-ai/claude-code-router-next
 
 ### 🔑 获取 API Key / Token 引导
 
-为了让 Router 正常代理服务，您需要获取对应服务商的 API Key。以下是常用服务商的 Key 获取方式：
+为了让 Router 正常代理服务，您需要获取对应服务商的 API Key。各服务商的 API Key 获取方式请参考其官方文档。
 
-#### 1. 智谱 AI (Zhipu BigModel / GLM CODING PLAN)
-*   **平台名称**: 智谱大模型开放平台
-*   **获取地址**: [智谱 AI 大模型开放平台](https://www.bigmodel.cn/claude-code?ic=RRVJPB5SII) (使用此链接注册可享 9 折优惠)
-*   **获取方式**:
-    1. 点击链接注册并登录。
-    2. 进入右上角 **控制台** -> **API Keys**。
-    3. 创建或复制你的 API Key。
-
-    GLM CODING PLAN 的用量信息会通过该 API Key 获取，无需再配置网页端 Token 或 `quotaToken`。
-
-#### 2. 阿里云百炼 (Alibaba Cloud DashScope / Qwen-Coder)
+#### 阿里云百炼 (Alibaba Cloud DashScope / Qwen-Coder)
 *   **平台名称**: 阿里云百炼 (包含 Qwen-Coder 系列等强大模型)
 *   **获取地址**: [阿里云百炼控制台](https://bailian.console.aliyun.com/)
 *   **获取方式**:
