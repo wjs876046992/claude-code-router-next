@@ -1,6 +1,6 @@
 ![](blog/images/claude-code-router-img.png)
 
-**[🇨🇳 中文文档](README_zh.md)**  |  **[🇬🇧 English](README.md)**  |  [![npm version](https://badge.fury.io/js/claude-code-router-next.svg)](https://www.npmjs.com/package/claude-code-router-next)
+**[🇨🇳 中文文档](README_zh.md)**  |  **[🇬🇧 English](README.md)**  |  [![npm version](https://badge.fury.io/js/@wengine-ai_claude-code-router-next.svg)](https://www.npmjs.com/package/@wengine-ai/claude-code-router-next)
 
 > **Note**: The original [claude-code-router](https://github.com/musistudio/claude-code-router) repository is no longer actively maintained. This project is a community-driven fork that continues to be actively developed and maintained with bug fixes, new features, and ongoing improvements.
 
@@ -39,7 +39,7 @@ npm install -g @anthropic-ai/claude-code
 Then, install Claude Code Router:
 
 ```shell
-npm install -g claude-code-router-next
+npm install -g @wengine-ai/claude-code-router-next
 ```
 
 #### Option B: Install from GitHub (Latest Development Version)
@@ -48,7 +48,7 @@ If you want to use the latest features and bug fixes directly from the source co
 
 1. **Uninstall the current version first** (to prevent command conflicts):
    ```shell
-   npm uninstall -g claude-code-router-next @musistudio/claude-code-router @wengine-ai/claude-code-router
+   npm uninstall -g @wengine-ai/claude-code-router-next @musistudio/claude-code-router @wengine-ai/claude-code-router
    ```
 
 2. **Clone and link locally** (recommended for developers):
@@ -67,7 +67,7 @@ If you want to use the latest features and bug fixes directly from the source co
 
 #### 🔄 Migrating from the Official Upstream (@musistudio/claude-code-router)
 
-If you are currently using the upstream community version `@musistudio/claude-code-router` or the previous version `@wengine-ai/claude-code-router` and want to switch to `claude-code-router-next`:
+If you are currently using the upstream community version `@musistudio/claude-code-router` or the previous version `@wengine-ai/claude-code-router` and want to switch to `@wengine-ai/claude-code-router-next`:
 
 1. **Uninstall the old version**:
    ```shell
@@ -76,7 +76,7 @@ If you are currently using the upstream community version `@musistudio/claude-co
 
 2. **Install this version**:
    ```shell
-   npm install -g claude-code-router-next
+   npm install -g @wengine-ai/claude-code-router-next
    ```
 
 > **Note**: Your existing configuration at `~/.claude-code-router/config.json` is **not affected** by uninstalling the old package. The new version will automatically read your existing configuration.
@@ -683,7 +683,7 @@ jobs:
 
       - name: Start Claude Code Router
         run: |
-          nohup ~/.bun/bin/bunx claude-code-router-next@latest start &
+          nohup ~/.bun/bin/bunx @wengine-ai/claude-code-router-next@latest start &
         shell: bash
 
       - name: Run Claude Code
