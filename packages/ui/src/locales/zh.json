@@ -126,8 +126,8 @@
     "quota_reset": "重置：{{time}}",
     "quota_token": "限额查询 Token",
     "quota_token_placeholder": "可选，填入后可自动查询5小时/7天限额",
-    "quota_token_desc": "部分供应商（如智谱）需要额外的 Token 来查询限额。",
-    "quota_token_tooltip": "用于查询智谱 Coding Plan 的 5 小时和 7 天限额使用情况。获取方式：登录 open.bigmodel.cn 控制台，打开浏览器开发者工具（F12），在 Network 面板中找到任意请求的 Authorization 请求头，复制 Bearer 后面的 JWT Token 粘贴到此处。"
+    "quota_token_desc": "部分供应商需要额外的 Token/Cookie 来查询限额。",
+    "quota_token_tooltip": "智谱：登录 open.bigmodel.cn，在 Network 中复制 Authorization 请求头的 JWT Token（普通 API Key 也可不填自动复用）。\nKimi / MiniMax：无需填写，系统会自动复用您配置的 API Key 进行额度查询（若想使用不同的 Key 进行额度查询则可在此填入独立的 API Key）。\n阿里云 Coding Plan：登录 bailian.console.aliyun.com，在 Network 复制 Cookie 请求头的完整 Cookie 值。"
   },
   "router": {
     "title": "路由",

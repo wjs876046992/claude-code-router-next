@@ -9,6 +9,9 @@ export class DeepseekTransformer implements Transformer {
       request.max_tokens = 8192; // DeepSeek has a max token limit of 8192
     }
 
+    const isReasoningModel = request.model?.includes("reasoner") || request.model?.includes("v4") || request.model?.includes("pro") || request.model?.includes("think");
+    const hasThinking = request.thinking || request.reasoning?.enabled || request.messages.some(m => m.thinking?.content) || isReasoningModel;
+
     // DeepSeek V4 thinking mode requirement:
     // When assistant messages have thinking content from previous turns,
     // we must pass it back as reasoning_content WITH signature.
@@ -18,18 +21,34 @@ export class DeepseekTransformer implements Transformer {
         const thinkingContent = message.thinking?.content;
         const thinkingSignature = message.thinking?.signature;
 
-        // Case 1: Claude-style thinking block - convert to DeepSeek format
-        if (thinkingContent && typeof thinkingContent === "string" && thinkingContent.trim()) {
-          (message as any).reasoning_content = thinkingContent;
-          // DeepSeek V4 requires signature to be passed back
-          // Use the existing signature or generate a deterministic one
-          if (thinkingSignature) {
-            (message as any).reasoning_content_signature = thinkingSignature;
+        let extractedThinking = "";
+        
+        // Case 1: Extract thinking block from content if Claude Code encoded it as text
+        if (typeof message.content === "string") {
+          const thinkingRegex = /<thinking>([\s\S]*?)<\/thinking>/g;
+          const match = thinkingRegex.exec(message.content);
+          if (match) {
+            extractedThinking = match[1].trim();
+            message.content = message.content.replace(match[0], "").trim();
           }
         }
 
-        // Case 2: Already has reasoning_content from previous DeepSeek response - keep it
-        // Don't modify existing reasoning_content, just ensure thinking field is removed
+        // Case 2: Claude-style thinking block - convert to DeepSeek format
+        if (thinkingContent && typeof thinkingContent === "string" && thinkingContent.trim()) {
+          (message as any).reasoning_content = thinkingContent;
+          // DeepSeek V4 requires signature to be passed back
+          if (thinkingSignature) {
+            (message as any).reasoning_content_signature = thinkingSignature;
+          }
+        } else if (extractedThinking) {
+          (message as any).reasoning_content = extractedThinking;
+        }
+
+        // DeepSeek V4 requires reasoning_content to be present in assistant messages
+        // when thinking mode is enabled, even if there was no thinking content.
+        if (hasThinking && !(message as any).reasoning_content) {
+          (message as any).reasoning_content = " "; // Use a space instead of empty string to avoid empty content validation errors
+        }
 
         // Always clean up thinking field - DeepSeek doesn't recognize it
         if (message.thinking) {

@@ -6,13 +6,6 @@
 
 <hr>
 
-![](blog/images/sponsors/glm-en.jpg)
-> This project is sponsored by Z.ai, supporting us with their GLM CODING PLAN.
-
-> GLM CODING PLAN is a subscription service designed for AI coding, starting at just $10/month. It provides access to their flagship GLM-4.7 & （GLM-5 Only Available  for Pro Users）model across 10+ popular AI coding tools (Claude Code, Cline, Roo Code, etc.), offering developers top-tier, fast, and stable coding experiences.
-
-> Get 10% OFF GLM CODING PLAN：https://z.ai/subscribe?ic=8JVLJQFSKB  
-
 > [Progressive Disclosure of Agent Tools from the Perspective of CLI Tool Style](/blog/en/progressive-disclosure-of-agent-tools-from-the-perspective-of-cli-tool-style.md)
 
 > A powerful tool to route Claude Code requests to different models and customize any request.
@@ -33,6 +26,10 @@
 
 ### 1. Installation
 
+You can install Claude Code Router either from the npm registry or directly from this GitHub repository for the latest development version.
+
+#### Option A: Install from npm registry (Stable)
+
 First, ensure you have [Claude Code](https://docs.anthropic.com/en/docs/claude-code/quickstart) installed:
 
 ```shell
@@ -44,6 +41,43 @@ Then, install Claude Code Router:
 ```shell
 npm install -g @wengine-ai/claude-code-router
 ```
+
+#### Option B: Install from GitHub (Latest Development Version)
+
+If you want to use the latest features and bug fixes directly from the source code:
+
+1. **Uninstall the current version first** (to prevent command conflicts):
+   ```shell
+   npm uninstall -g @wengine-ai/claude-code-router @musistudio/claude-code-router
+   ```
+
+2. **Clone and link locally** (recommended for developers):
+   ```shell
+   git clone https://github.com/xiaoliu10/claude-code-router.git
+   cd claude-code-router
+   pnpm install
+   pnpm build
+   npm link
+   ```
+
+   *Alternatively, install directly from GitHub globally:*
+   ```shell
+   npm install -g github:xiaoliu10/claude-code-router
+   ```
+
+#### 🔄 Migrating from the Official Upstream (@musistudio/claude-code-router)
+
+If you are currently using the upstream community version `@musistudio/claude-code-router` and want to switch to this repository's version (`@wengine-ai/claude-code-router`) for advanced features (e.g. enhanced token-limit UI bars, DeepSeek thinking compatibilities, active health probes):
+
+1. **Uninstall the upstream community version**:
+   ```shell
+   npm uninstall -g @musistudio/claude-code-router
+   ```
+
+2. **Install this version**:
+   ```shell
+   npm install -g @wengine-ai/claude-code-router
+   ```
 
 ### 2. Configuration
 
@@ -204,6 +238,48 @@ Here is a comprehensive example:
   }
 }
 ```
+
+### 🔑 API Key / Token Guide
+
+To use the router, you need to acquire API Keys from your preferred LLM providers. Below are guides for some popular providers:
+
+#### 1. Zhipu AI (BigModel / GLM CODING PLAN)
+*   **Platform**: Zhipu BigModel Platform (sponsored partner)
+*   **Link**: [Zhipu AI BigModel Platform](https://www.bigmodel.cn/claude-code?ic=RRVJPB5SII) (Use this referral link for a 10% discount on GLM CODING PLAN)
+*   **Acquisition Methods**:
+    *   **Method A: Standard Developer API Key (Pay-as-you-go)**
+        1. Register and log in using the link above.
+        2. Go to the top-right **Console** -> **API Keys**.
+        3. Copy your API Key.
+    *   **Method B: GLM CODING PLAN Web Token (Recommended for Subscription Users)**
+        If you are using the AI coding subscription plan (monthly flat-rate), you need to get your browser's session `Authorization` token:
+        1. Log in to the [Zhipu AI BigModel Platform](https://www.bigmodel.cn/claude-code?ic=RRVJPB5SII).
+        2. Open your browser's Developer Tools (F12) and go to the **Network** tab.
+        3. Refresh the page or click on any feature (e.g., check your usage). Look for any XHR/Fetch request (such as `usage`, `interfaceacting.js`, etc.).
+        4. Inspect the **Request Headers** of that request, locate the **`Authorization`** header, and copy its entire value (which starts with `Bearer eyJ...`).
+        5. Paste this copied `Bearer ...` token into your `api_key` configuration.
+
+        ![Zhipu Web Token Acquisition](blog/images/zhipu-auth.png)
+
+#### 2. Alibaba Cloud (DashScope / Bailian / Qwen-Coder)
+*   **Platform**: Alibaba Cloud Bailian (highly capable Qwen-Coder models)
+*   **Link**: [Alibaba Cloud Bailian Console](https://bailian.console.aliyun.com/)
+*   **Acquisition Methods**:
+    *   **Method A: Standard Developer API Key (For Request Routing)**
+        1. Log in to Alibaba Cloud and enable the "Bailian" model service.
+        2. Go to the Bailian Console, click on your **profile icon** in the top-right corner.
+        3. Click on **API-KEY** in the dropdown.
+        4. Click **Create New API-KEY** and copy the generated key.
+    *   **Method B: Aliyun Console Cookie (For Quota Visualization in UI)**
+        If you want the Claude Code Router UI to fetch and display your beautiful monthly **GLM/Qwen Coding Plan** quota progress bars, you need to configure your console session `Cookie` as `quotaToken` in your configuration:
+        1. Log in to the [Alibaba Cloud Bailian Console](https://bailian.console.aliyun.com/).
+        2. Open your browser's Developer Tools (F12) and switch to the **Network** tab.
+        3. Click the **Refresh** (用量刷新) button on the console's usage cards.
+        4. Look for an API request starting with `api.json?action=BroadScope...` in the network log.
+        5. Select the request, find the **`Cookie`** header under **Request Headers**, and copy its entire value.
+        6. Paste this copied cookie string as the **`quotaToken`** property inside the Alibaba Cloud provider block in your `config.json`.
+
+        ![Alibaba Cloud Quota Cookie Acquisition](blog/images/aliyun-quota-auth.png)
 
 ### 3. Running Claude Code with the Router
 

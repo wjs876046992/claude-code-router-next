@@ -6,11 +6,6 @@
 
 <hr>
 
-![](blog/images/sponsors/glm-zh.jpg)
-> 本项目由 Z智谱 提供赞助, 他们通过 GLM CODING PLAN 对本项目提供技术支持。
-> GLM CODING PLAN 是专为AI编码打造的订阅套餐，每月最低仅需20元，即可在十余款主流AI编码工具如 Claude Code、Cline、Roo Code 中畅享智谱旗舰模型GLM-4.7（受限于算力，目前仅限Pro用户开放），为开发者提供顶尖的编码体验。
-> 智谱AI为本产品提供了特别优惠，使用以下链接购买可以享受九折优惠：https://www.bigmodel.cn/claude-code?ic=RRVJPB5SII
-
 > [从CLI工具风格看工具渐进式披露](/blog/zh/从CLI工具风格看工具渐进式披露.md)
 
 > 一款强大的工具，可将 Claude Code 请求路由到不同的模型，并自定义任何请求。
@@ -31,6 +26,10 @@
 
 ### 1. 安装
 
+您可以从 npm 官方仓库安装 Claude Code Router，或者直接从本 GitHub 仓库安装以获取最新的开发版本。
+
+#### 选项 A：从 npm 官方仓库安装（稳定版）
+
 首先，请确保您已安装 [Claude Code](https://docs.anthropic.com/en/docs/claude-code/quickstart)：
 
 ```shell
@@ -42,6 +41,43 @@ npm install -g @anthropic-ai/claude-code
 ```shell
 npm install -g @wengine-ai/claude-code-router
 ```
+
+#### 选项 B：从 GitHub 安装（最新开发版）
+
+如果您想直接使用源码中的最新功能和修复：
+
+1. **先卸载已安装的全局版本**（以避免指令冲突）：
+   ```shell
+   npm uninstall -g @wengine-ai/claude-code-router @musistudio/claude-code-router
+   ```
+
+2. **克隆本仓库并在本地进行 Link**（推荐开发者使用）：
+   ```shell
+   git clone https://github.com/xiaoliu10/claude-code-router.git
+   cd claude-code-router
+   pnpm install
+   pnpm build
+   npm link
+   ```
+
+   *或者直接从 GitHub 进行全局安装：*
+   ```shell
+   npm install -g github:xiaoliu10/claude-code-router
+   ```
+
+#### 🔄 从官方原版社区版迁移 (@musistudio/claude-code-router)
+
+如果您当前正在使用官方原版社区版本 `@musistudio/claude-code-router`，并且希望切换到本仓库提供的增强版本 (`@wengine-ai/claude-code-router`) 以使用高级功能（如：月度额度可视化用量条、DeepSeek 思维链多轮对话兼容性修复、主动健康探测等）：
+
+1. **先卸载官方社区原版本**：
+   ```shell
+   npm uninstall -g @musistudio/claude-code-router
+   ```
+
+2. **安装本仓库增强版本**：
+   ```shell
+   npm install -g @wengine-ai/claude-code-router
+   ```
 
 ### 2. 配置
 
@@ -180,6 +216,48 @@ npm install -g @wengine-ai/claude-code-router
 }
 ```
 
+### 🔑 获取 API Key / Token 引导
+
+为了让 Router 正常代理服务，您需要获取对应服务商的 API Key。以下是常用服务商的 Key 获取方式：
+
+#### 1. 智谱 AI (Zhipu BigModel / GLM CODING PLAN)
+*   **平台名称**: 智谱大模型开放平台
+*   **获取地址**: [智谱 AI 大模型开放平台](https://www.bigmodel.cn/claude-code?ic=RRVJPB5SII) (使用此链接注册可享 9 折优惠)
+*   **获取方式**: 
+    *   **方式 A：标准开发者 API Key（按量付费计费）**
+        1. 点击链接注册并登录。
+        2. 进入右上角 **控制台** -> **API Keys**。
+        3. 创建或复制你的 API Key。
+    *   **方式 B：GLM CODING PLAN 网页端 Token（推荐订阅套餐用户使用）**
+        如果你订阅了官方的 AI 编程订阅套餐（月度包月计费），你可以直接提取浏览器登录状态下的鉴权 Token：
+        1. 登录 [智谱大模型开放平台](https://www.bigmodel.cn/claude-code?ic=RRVJPB5SII)。
+        2. 按键盘 `F12` 打开浏览器开发者工具，并切换到 **Network (网络)** 标签页。
+        3. 刷新页面或在页面上随便触发一次接口请求（例如查看一下用量额度）。
+        4. 在左侧请求列表中找到任意一个接口请求（例如 `usage`、`interfaceacting.js` 等），点击它。
+        5. 在右侧 **Request Headers (请求头)** 中找到 **`Authorization`** 这一项，将其右侧的完整内容（以 `Bearer eyJ...` 开头的一长串字符）复制下来。
+        6. 将这个 `Bearer ...` 填入配置文件的 `api_key` 中即可！
+
+        ![智谱网页 Token 获取方式](blog/images/zhipu-auth.png)
+
+#### 2. 阿里云百炼 (Alibaba Cloud DashScope / Qwen-Coder)
+*   **平台名称**: 阿里云百炼 (包含 Qwen-Coder 系列等强大模型)
+*   **获取地址**: [阿里云百炼控制台](https://bailian.console.aliyun.com/)
+*   **获取方式**:
+    *   **方式 A：标准开发者 API Key（用于接口路由代理）**
+        1. 登录阿里云账号并开通百炼服务。
+        2. 登录百炼控制台后，点击右上角的 **个人头像**。
+        3. 在下拉菜单中选择 **API-KEY**。
+        4. 点击 **创建新的 API-KEY** 并复制。
+    *   **方式 B：阿里云控制台 Cookie（用于在 UI 界面中可视化展示月度额度）**
+        如果你想让 Claude Code Router 的后台 Web UI 实时拉取并可视化展示你的 **GLM/Qwen Coding Plan（月度编程套餐）** 剩余用量额度条，你需要把控制台的浏览器 `Cookie` 复制作为 `quotaToken` 填入配置：
+        1. 登录 [阿里云百炼控制台](https://bailian.console.aliyun.com/)。
+        2. 按键盘 `F12` 打开浏览器开发者工具，并切换到 **Network (网络)** 标签页。
+        3. 点击页面用量模块右上角的 **用量刷新**（旋转循环箭头）按钮。
+        4. 在左侧网络请求列表中，找到一个以 `api.json?action=BroadScope...` 开头的接口调用请求并点击。
+        5. 在右侧 **Headers (标头)** 的 **Request Headers (请求头)** 中找到 **`Cookie`** 这一项，将其右侧的完整超长内容复制下来。
+        6. 在你的 `config.json` 中，将这个 cookie 填入阿里云 provider 下的 **`quotaToken`** 属性中即可！
+
+        ![阿里云用量 Cookie 获取方式](blog/images/aliyun-quota-auth.png)
 
 ### 3. 使用 Router 运行 Claude Code
 

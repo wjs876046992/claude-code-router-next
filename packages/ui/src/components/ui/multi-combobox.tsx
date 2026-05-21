@@ -38,6 +38,7 @@ export function MultiCombobox({
   emptyPlaceholder = "No options found.",
 }: MultiComboboxProps) {
   const [open, setOpen] = React.useState(false)
+  const [draggedIndex, setDraggedIndex] = React.useState<number | null>(null);
   
   const handleSelect = (currentValue: string) => {
     if (value.includes(currentValue)) {
@@ -52,19 +53,56 @@ export function MultiCombobox({
     onChange(value.filter(v => v !== val))
   }
 
+  const handleDragStart = (e: React.DragEvent, index: number) => {
+    e.dataTransfer.effectAllowed = "move";
+    setDraggedIndex(index);
+    // Needed for Firefox
+    e.dataTransfer.setData("text/plain", index.toString());
+  };
+
+  const handleDrop = (e: React.DragEvent, targetIndex: number) => {
+    e.preventDefault();
+    if (draggedIndex === null || draggedIndex === targetIndex) return;
+    
+    const newValue = [...value];
+    const [draggedItem] = newValue.splice(draggedIndex, 1);
+    newValue.splice(targetIndex, 0, draggedItem);
+    onChange(newValue);
+    setDraggedIndex(null);
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+  };
+
+  const handleDragEnd = () => {
+    setDraggedIndex(null);
+  };
+
   return (
     <div className="space-y-2">
-      <div className="flex flex-wrap gap-1">
-        {value.map((val) => {
+      <div className="flex flex-wrap gap-1.5">
+        {value.map((val, index) => {
           const option = options.find(opt => opt.value === val)
           return (
-            <Badge key={val} variant="outline" className="font-normal">
-              {option?.label || val}
+            <Badge 
+              key={val} 
+              variant="secondary" 
+              draggable
+              onDragStart={(e) => handleDragStart(e, index)}
+              onDragOver={handleDragOver}
+              onDrop={(e) => handleDrop(e, index)}
+              onDragEnd={handleDragEnd}
+              className={`text-xs font-medium py-1 px-2.5 rounded-md flex items-center bg-blue-50/80 hover:bg-blue-50 border border-blue-100 text-blue-800 dark:bg-blue-950/40 dark:border-blue-900/50 dark:text-blue-300 transition-all shadow-sm cursor-grab active:cursor-grabbing ${draggedIndex === index ? 'opacity-50 border-dashed' : ''}`}
+            >
+              <span className="truncate max-w-[250px]">{option?.label || val}</span>
               <button
                 onClick={(e) => removeValue(val, e)}
-                className="ml-1 rounded-full hover:bg-gray-200"
+                className="ml-1.5 p-0.5 rounded-full hover:bg-blue-100 dark:hover:bg-blue-900/60 text-blue-600/80 dark:text-blue-400/80 hover:text-blue-900 dark:hover:text-blue-200 transition-colors"
+                title="Remove"
               >
-                <X className="h-3 w-3" />
+                <X className="h-3.5 w-3.5" />
               </button>
             </Badge>
           )

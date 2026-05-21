@@ -290,7 +290,7 @@ export function UsageStats() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="__all__">{t("usage.provider")}: {t("usage.all")}</SelectItem>
-              {providers.map((p) => <SelectItem key={p} value={p}>{p}</SelectItem>)}
+              {providers.filter(Boolean).map((p) => <SelectItem key={p} value={p}>{p}</SelectItem>)}
             </SelectContent>
           </Select>
           <Select value={filterModel || "__all__"} onValueChange={(v) => { setFilterModel(v === "__all__" ? "" : v); setPage(1); }}>
@@ -299,7 +299,7 @@ export function UsageStats() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="__all__">{t("usage.model")}: {t("usage.all")}</SelectItem>
-              {models.map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}
+              {models.filter(Boolean).map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}
             </SelectContent>
           </Select>
           <Select value={filterScenario || "__all__"} onValueChange={(v) => { setFilterScenario(v === "__all__" ? "" : v); setPage(1); }}>
@@ -308,7 +308,7 @@ export function UsageStats() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="__all__">{t("usage.scenario")}: {t("usage.all")}</SelectItem>
-              {scenarios.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+              {scenarios.filter(Boolean).map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
             </SelectContent>
           </Select>
           <Select value={filterStatus || "__all__"} onValueChange={(v) => { setFilterStatus(v === "__all__" ? "" : v as "success" | "error"); setPage(1); }}>

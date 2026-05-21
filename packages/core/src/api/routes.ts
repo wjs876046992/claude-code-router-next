@@ -128,6 +128,13 @@ async function handleFallback(
   const globalFallback = fastify.configService.get<any>('fallback');
   const healthStore = getHealthStore();
 
+  // Check if fallback is enabled (default: false - disabled when not set)
+  const Router = fastify.configService.get<any>('Router');
+  if (!Router?.enableFallback) {
+    req.log.info(`Fallback disabled by configuration, skipping fallback attempts`);
+    return null;
+  }
+
   const parseFallbackModel = (fallbackModel: string) => {
     const [provider, ...modelParts] = fallbackModel.split(',');
     const providerName = provider?.trim();

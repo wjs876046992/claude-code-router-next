@@ -21,7 +21,6 @@ export interface HealthPoolConfig {
   failureThreshold?: number;
   probeIntervalMinutes?: number;
   halfOpenSuccessThreshold?: number;
-  rateLimitThreshold?: number;
 }
 
 const DEFAULT_CONFIG: Required<HealthPoolConfig> = {
@@ -29,7 +28,6 @@ const DEFAULT_CONFIG: Required<HealthPoolConfig> = {
   failureThreshold: 3,
   probeIntervalMinutes: 5,
   halfOpenSuccessThreshold: 2,
-  rateLimitThreshold: 1,
 };
 
 /**
@@ -95,21 +93,9 @@ export class ProviderHealthStore {
     }
   }
 
-  private isRateLimitError(error?: string): boolean {
-    if (!error) return false;
-    const lower = error.toLowerCase();
-    return lower.includes('429') ||
-      lower.includes('rate_limit') ||
-      lower.includes('ratelimit') ||
-      lower.includes('rate limit') ||
-      lower.includes('overloaded') ||
-      lower.includes('quota');
-  }
-
   /**
    * Record a failed request
    * Transitions: closed -> open (if threshold), half-open -> open (immediate)
-   * Rate limit errors (429/quota) use a lower threshold for faster failover
    */
   recordFailure(provider: string, model: string, error?: string): void {
     if (!this.config.enabled) return;
@@ -135,16 +121,12 @@ export class ProviderHealthStore {
     state.lastFailureTime = Date.now();
     state.lastError = error;
 
-    // Use lower threshold for rate limit errors
-    const isRateLimit = this.isRateLimitError(error);
-    const effectiveThreshold = isRateLimit ? this.config.rateLimitThreshold : this.config.failureThreshold;
-
     if (state.status === 'half-open') {
       // Immediate transition back to open on any failure in half-open
       state.status = 'open';
       state.successCount = 0;
       state.lastProbeTime = 0;
-    } else if (state.status === 'closed' && state.failureCount >= effectiveThreshold) {
+    } else if (state.status === 'closed' && state.failureCount >= this.config.failureThreshold) {
       // Transition to open (fail pool)
       state.status = 'open';
       state.lastProbeTime = 0;

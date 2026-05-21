@@ -80,6 +80,31 @@ function HealthIndicator({ status }: { status: 'closed' | 'open' | 'half-open' |
   );
 }
 
+// Helper to format reset time ISO string into a local readable time
+function formatResetTime(resetTimeStr: string): string {
+  try {
+    const date = new Date(resetTimeStr);
+    if (isNaN(date.getTime())) return resetTimeStr;
+    
+    const now = new Date();
+    const isToday = date.toDateString() === now.toDateString();
+    
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const hours = pad(date.getHours());
+    const minutes = pad(date.getMinutes());
+    
+    if (isToday) {
+      return `${hours}:${minutes}`;
+    } else {
+      const month = pad(date.getMonth() + 1);
+      const day = pad(date.getDate());
+      return `${month}-${day} ${hours}:${minutes}`;
+    }
+  } catch (e) {
+    return resetTimeStr;
+  }
+}
+
 // Quota progress bar component
 function QuotaProgressBar({
   label,
@@ -135,7 +160,7 @@ function QuotaProgressBar({
           </span>
           {resetTime && (
             <span className="text-[9px] text-muted-foreground/50 leading-none mt-0.5">
-              {t("providers.quota_reset", { time: resetTime })}
+              {t("providers.quota_reset", { time: formatResetTime(resetTime) })}
             </span>
           )}
         </div>
@@ -168,7 +193,7 @@ function QuotaProgressBar({
         </span>
         {resetTime && (
           <span className="text-[9px] text-muted-foreground/50 leading-none mt-0.5">
-            {t("providers.quota_reset", { time: resetTime })}
+            {t("providers.quota_reset", { time: formatResetTime(resetTime) })}
           </span>
         )}
       </div>

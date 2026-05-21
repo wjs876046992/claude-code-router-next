@@ -67,8 +67,8 @@ importers:
   packages/cli:
     dependencies:
       '@wengine-ai/llms':
-        specifier: ^2.0.77
-        version: 2.0.77(ws@8.18.3)
+        specifier: ^2.0.80
+        version: 2.0.80(ws@8.18.3)
       lru-cache:
         specifier: ^11.2.2
         version: 11.2.2
@@ -3326,8 +3326,8 @@ packages:
   '@webassemblyjs/wast-printer@1.14.1':
     resolution: {integrity: sha512-kPSSXE6De1XOR820C90RIo2ogvZG+c3KiHzqUoO/F34Y2shGzesfqv7o57xrxovZJH/MetF5UjroJ/R/3isoiw==}
 
-  '@wengine-ai/llms@2.0.77':
-    resolution: {integrity: sha512-Vn1X7yTZ0icFLV4nby8EQ2PN9TBHpF1NWuOwQS637qOXKmaLlKOECU6s6ufaxcLRf5X4sXWlGkAW0BY9derXVw==}
+  '@wengine-ai/llms@2.0.80':
+    resolution: {integrity: sha512-zMA6TSQbLEv5AEfhrJazcyXfuZBGRjZppCqa0B3sP6ZEnOjPnSn5arQll1n5icSsy5+oriNzfpkM82Mnsh+P/g==}
 
   '@xtuc/ieee754@1.2.0':
     resolution: {integrity: sha512-DX8nKgqcGwsc0eJSqYt5lwP4DH5FlHnmuWWBRy7X0NcaGR0ZtuyeESgMwTYVEtxmsNGY+qit4QYT/MIYTOTPeA==}
@@ -11540,7 +11540,7 @@ snapshots:
       '@webassemblyjs/ast': 1.14.1
       '@xtuc/long': 4.2.2
 
-  '@wengine-ai/llms@2.0.77(ws@8.18.3)':
+  '@wengine-ai/llms@2.0.80(ws@8.18.3)':
     dependencies:
       '@anthropic-ai/sdk': 0.54.0
       '@fastify/cors': 11.1.0

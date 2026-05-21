@@ -335,3 +335,17 @@ export function readTokenSpeedStats(sessionId: string): {
 
   return { ttft: null, tokensPerSecond: null };
 }
+
+export function getOldestRecordTimestamp(provider: string, startTime: string, endTime: string): string | undefined {
+  const records = readAllRecords();
+  let oldestTime: string | undefined;
+  for (const r of records) {
+    if (r.provider === provider && r.timestamp >= startTime && r.timestamp <= endTime) {
+      if (!oldestTime || r.timestamp < oldestTime) {
+        oldestTime = r.timestamp;
+      }
+    }
+  }
+  return oldestTime;
+}
+

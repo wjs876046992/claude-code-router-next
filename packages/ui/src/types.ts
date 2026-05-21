@@ -51,6 +51,7 @@ export interface RouterConfig {
     extendedContext?: string;
     extendedContextThreshold?: number;
     enableFamilyRouting?: boolean;
+    enableFallback?: boolean;
     webSearch: string;
     image: string;
     models?: Record<string, string>;

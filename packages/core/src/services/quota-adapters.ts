@@ -170,13 +170,25 @@ class ZhipuQuotaAdapter extends BaseQuotaAdapter {
     timeoutMs: number,
     proxyUrl?: string
   ): Promise<ProviderQuotaResult | null> {
-    if (!provider.quotaToken) return null;
+    // Use quotaToken if available, otherwise fallback to apiKey
+    const authToken = provider.quotaToken || provider.apiKey;
+    if (!authToken) return null;
+
+    // Dynamically format the Authorization header.
+    // If it already starts with 'bearer ' or 'ey' (JWT), use Bearer authentication.
+    // Otherwise (standard API key), send it raw without the 'Bearer ' prefix as required by Zhipu.
+    let authHeader = authToken.trim();
+    if (!authHeader.toLowerCase().startsWith("bearer ")) {
+      if (authHeader.startsWith("ey")) {
+        authHeader = `Bearer ${authHeader}`;
+      }
+    }
 
     const fetchOptions: RequestInit & { dispatcher?: unknown } = {
       method: "GET",
       headers: {
         Accept: "application/json",
-        Authorization: `Bearer ${provider.quotaToken}`,
+        Authorization: authHeader,
       },
       signal: AbortSignal.timeout(timeoutMs),
     };
@@ -192,7 +204,7 @@ class ZhipuQuotaAdapter extends BaseQuotaAdapter {
 
     try {
       const response = await fetch(
-        "https://bigmodel.cn/api/monitor/usage/quota/limit",
+        "https://api.z.ai/api/monitor/usage/quota/limit",
         fetchOptions
       );
       if (!response.ok) return null;
@@ -202,52 +214,362 @@ class ZhipuQuotaAdapter extends BaseQuotaAdapter {
         ? payload.data.limits
         : [];
 
-      const result: ProviderQuotaResult = {};
+      let limit5h: any = null;
+      let limitWeekly: any = null;
+      let limitMcp: any = null;
 
       for (const limit of limits) {
         if (limit.type === "TOKENS_LIMIT") {
-          // TOKENS_LIMIT is the model token quota (5-hour window).
-          // May have: percentage, nextResetTime, and optionally usage/currentValue/remaining
-          const current = parseOptionalNumber(limit.currentValue);
-          const usage = parseOptionalNumber(limit.usage);
-          const remaining = parseOptionalNumber(limit.remaining);
-          const percentage = parseOptionalNumber(limit.percentage);
+          if (limit.unit === 3) {
+            limit5h = limit;
+          } else if (limit.unit === 6) {
+            limitWeekly = limit;
+          } else {
+            // Fallback: if only one TOKENS_LIMIT is present and unit is not specified/matched, use it as 5h limit
+            if (!limit5h) {
+              limit5h = limit;
+            }
+          }
+        } else if (limit.type === "TIME_LIMIT") {
+          limitMcp = limit;
+        }
+      }
 
+      const result: ProviderQuotaResult = {};
+
+      if (limit5h) {
+        const current = parseOptionalNumber(limit5h.currentValue);
+        const usage = parseOptionalNumber(limit5h.usage);
+        const remaining = parseOptionalNumber(limit5h.remaining);
+        const percentage = parseOptionalNumber(limit5h.percentage);
+
+        if (current !== undefined) {
+          result.usedDailyBalance = current;
+        } else if (percentage !== undefined) {
+          result.usedDailyBalance = percentage;
+          result.limitDaily = 100;
+        }
+        if (usage !== undefined) {
+          result.limitDaily = usage;
+        } else if (current !== undefined && remaining !== undefined) {
+          result.limitDaily = current + remaining;
+        }
+        if (limit5h.nextResetTime) {
+          result.resetTime = new Date(limit5h.nextResetTime).toISOString();
+        }
+      }
+
+      if (limitWeekly) {
+        const current = parseOptionalNumber(limitWeekly.currentValue);
+        const usage = parseOptionalNumber(limitWeekly.usage);
+        const remaining = parseOptionalNumber(limitWeekly.remaining);
+        const percentage = parseOptionalNumber(limitWeekly.percentage);
+
+        if (current !== undefined) {
+          result.usedBalance = current;
+        } else if (percentage !== undefined) {
+          result.usedBalance = percentage;
+          result.totalBalance = 100;
+        }
+        if (usage !== undefined) {
+          result.totalBalance = usage;
+        } else if (current !== undefined && remaining !== undefined) {
+          result.totalBalance = current + remaining;
+        }
+        // If 5h resetTime is not set, set it from weekly nextResetTime
+        if (limitWeekly.nextResetTime && !result.resetTime) {
+          result.resetTime = new Date(limitWeekly.nextResetTime).toISOString();
+        }
+      }
+
+      if (limitMcp) {
+        // Fallback to TIME_LIMIT for daily limits if 5h token quota was not provided
+        if (result.usedDailyBalance === undefined) {
+          const current = parseOptionalNumber(limitMcp.currentValue);
           if (current !== undefined) {
             result.usedDailyBalance = current;
-          } else if (percentage !== undefined) {
-            // API sometimes only returns percentage without detailed values
-            result.usedDailyBalance = percentage;
-            result.limitDaily = 100;
           }
+        }
+        if (result.limitDaily === undefined) {
+          const usage = parseOptionalNumber(limitMcp.usage);
+          const current = parseOptionalNumber(limitMcp.currentValue);
+          const remaining = parseOptionalNumber(limitMcp.remaining);
           if (usage !== undefined) {
             result.limitDaily = usage;
           } else if (current !== undefined && remaining !== undefined) {
             result.limitDaily = current + remaining;
           }
-          if (limit.nextResetTime) {
-            result.resetTime = new Date(limit.nextResetTime).toISOString();
-          }
-        } else if (limit.type === "TIME_LIMIT") {
-          // TIME_LIMIT is MCP tool usage, not model token quota.
-          // Only used as fallback if TOKENS_LIMIT provided no data.
-          if (result.usedDailyBalance === undefined) {
-            const current = parseOptionalNumber(limit.currentValue);
-            if (current !== undefined) {
-              result.usedDailyBalance = current;
-            }
-          }
-          if (result.limitDaily === undefined) {
-            const usage = parseOptionalNumber(limit.usage);
-            const current = parseOptionalNumber(limit.currentValue);
-            const remaining = parseOptionalNumber(limit.remaining);
-            if (usage !== undefined) {
-              result.limitDaily = usage;
-            } else if (current !== undefined && remaining !== undefined) {
-              result.limitDaily = current + remaining;
-            }
-          }
         }
+        if (limitMcp.nextResetTime && !result.resetTime) {
+          result.resetTime = new Date(limitMcp.nextResetTime).toISOString();
+        }
+      }
+
+      return this.hasQuotaData(result) ? result : null;
+    } catch {
+      return null;
+    }
+  }
+}
+
+class AliyunCodingPlanQuotaAdapter extends BaseQuotaAdapter {
+  async queryQuota(
+    provider: LLMProvider,
+    timeoutMs: number,
+    proxyUrl?: string
+  ): Promise<ProviderQuotaResult | null> {
+    // quotaToken should contain the Alibaba Cloud console cookie string
+    if (!provider.quotaToken) return null;
+
+    const fetchOptions: RequestInit & { dispatcher?: unknown } = {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
+        "Origin": "https://bailian.console.aliyun.com",
+        "Referer": "https://bailian.console.aliyun.com/cn-beijing",
+        Cookie: provider.quotaToken,
+      },
+      signal: AbortSignal.timeout(timeoutMs),
+    };
+
+    if (proxyUrl) {
+      try {
+        const { ProxyAgent } = await import("undici");
+        fetchOptions.dispatcher = new ProxyAgent(new URL(proxyUrl).toString());
+      } catch {
+        // Continue without proxy
+      }
+    }
+
+    const params = JSON.stringify({
+      Api: "zeldaEasy.broadscope-bailian.codingPlan.queryCodingPlanInstanceInfoV2",
+      V: "1.0",
+      Data: {
+        queryCodingPlanInstanceInfoRequest: {
+          commodityCode: "sfm_codingplan_public_cn",
+          onlyLatestOne: true,
+        },
+        cornerstoneParam: {
+          feTraceId: `ccr-${Date.now()}`,
+          feURL: "https://bailian.console.aliyun.com/cn-beijing",
+          protocol: "V2",
+          console: "ONE_CONSOLE",
+          productCode: "p_efm",
+          switchAgent: 10736808,
+          switchUserType: 3,
+          domain: "bailian.console.aliyun.com",
+          consoleSite: "BAILIAN_ALIYUN",
+          userNickName: "",
+          userPrincipalName: "",
+          xsp_lang: "zh-CN",
+        },
+      },
+    });
+
+    const body = new URLSearchParams({
+      params,
+      region: "cn-beijing",
+    }).toString();
+
+    try {
+      const response = await fetch(
+        "https://bailian-cs.console.aliyun.com/data/api.json?action=BroadScopeAspnGateway&product=sfm_bailian&api=zeldaEasy.broadscope-bailian.codingPlan.queryCodingPlanInstanceInfoV2",
+        {
+          ...fetchOptions,
+          body,
+        }
+      );
+      if (!response.ok) return null;
+
+      const payload = await response.json();
+      const codingPlanInfos =
+        payload?.data?.DataV2?.data?.data?.codingPlanInstanceInfos;
+      if (!Array.isArray(codingPlanInfos) || codingPlanInfos.length === 0)
+        return null;
+
+      const quotaInfo = codingPlanInfos[0]?.codingPlanQuotaInfo;
+      if (!quotaInfo) return null;
+
+      const result: ProviderQuotaResult = {};
+
+      // 5-hour window quota
+      const used5h = parseOptionalNumber(quotaInfo.per5HourUsedQuota);
+      const total5h = parseOptionalNumber(quotaInfo.per5HourTotalQuota);
+      if (used5h !== undefined) result.usedDailyBalance = used5h;
+      if (total5h !== undefined) result.limitDaily = total5h;
+
+      // 7-day/week quota - stored in usedBalance/totalBalance for balance display
+      const usedWeek = parseOptionalNumber(quotaInfo.perWeekUsedQuota);
+      const totalWeek = parseOptionalNumber(quotaInfo.perWeekTotalQuota);
+      if (usedWeek !== undefined) result.usedBalance = usedWeek;
+      if (totalWeek !== undefined) result.totalBalance = totalWeek;
+
+      return this.hasQuotaData(result) ? result : null;
+    } catch {
+      return null;
+    }
+  }
+}
+
+class KimiCodingPlanQuotaAdapter extends BaseQuotaAdapter {
+  async queryQuota(
+    provider: LLMProvider,
+    timeoutMs: number,
+    proxyUrl?: string
+  ): Promise<ProviderQuotaResult | null> {
+    const authToken = provider.quotaToken || provider.apiKey;
+    if (!authToken) return null;
+
+    const fetchOptions: RequestInit & { dispatcher?: unknown } = {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${authToken.trim()}`,
+      },
+      signal: AbortSignal.timeout(timeoutMs),
+    };
+
+    if (proxyUrl) {
+      try {
+        const { ProxyAgent } = await import("undici");
+        fetchOptions.dispatcher = new ProxyAgent(new URL(proxyUrl).toString());
+      } catch {
+        // Continue without proxy
+      }
+    }
+
+    try {
+      const response = await fetch(
+        "https://api.kimi.com/coding/v1/usages",
+        fetchOptions
+      );
+      if (!response.ok) return null;
+
+      const payload = await response.json();
+      const result: ProviderQuotaResult = {};
+
+      // 5-hour window limit
+      const limits = Array.isArray(payload?.limits) ? payload.limits : [];
+      if (limits.length > 0 && limits[0]?.detail) {
+        const detail = limits[0].detail;
+        const limit = parseOptionalNumber(detail.limit);
+        const remaining = parseOptionalNumber(detail.remaining);
+        const resetTime = detail.resetTime;
+
+        if (limit !== undefined && remaining !== undefined) {
+          result.usedDailyBalance = Math.max(0, limit - remaining);
+          result.limitDaily = limit;
+        }
+        if (resetTime) {
+          result.resetTime = new Date(resetTime).toISOString();
+        }
+      }
+
+      // Weekly limit
+      const usage = payload?.usage;
+      if (usage) {
+        const limit = parseOptionalNumber(usage.limit);
+        const remaining = parseOptionalNumber(usage.remaining);
+        const resetTime = usage.resetTime;
+
+        if (limit !== undefined && remaining !== undefined) {
+          result.usedBalance = Math.max(0, limit - remaining);
+          result.remainingBalance = remaining;
+          result.totalBalance = limit;
+        }
+        if (resetTime && !result.resetTime) {
+          result.resetTime = new Date(resetTime).toISOString();
+        }
+      }
+
+      return this.hasQuotaData(result) ? result : null;
+    } catch {
+      return null;
+    }
+  }
+}
+
+class MiniMaxCodingPlanQuotaAdapter extends BaseQuotaAdapter {
+  async queryQuota(
+    provider: LLMProvider,
+    timeoutMs: number,
+    proxyUrl?: string
+  ): Promise<ProviderQuotaResult | null> {
+    const authToken = provider.quotaToken || provider.apiKey;
+    if (!authToken) return null;
+
+    const hostname = getHostname(provider.baseUrl) || "api.minimaxi.com";
+    const apiDomain = hostname.endsWith(".minimax.io") || hostname === "minimax.io"
+      ? "api.minimax.io"
+      : "api.minimaxi.com";
+
+    const fetchOptions: RequestInit & { dispatcher?: unknown } = {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${authToken.trim()}`,
+      },
+      signal: AbortSignal.timeout(timeoutMs),
+    };
+
+    if (proxyUrl) {
+      try {
+        const { ProxyAgent } = await import("undici");
+        fetchOptions.dispatcher = new ProxyAgent(new URL(proxyUrl).toString());
+      } catch {
+        // Continue without proxy
+      }
+    }
+
+    try {
+      const response = await fetch(
+        `https://${apiDomain}/v1/api/openplatform/coding_plan/remains`,
+        fetchOptions
+      );
+      if (!response.ok) return null;
+
+      const payload = await response.json();
+      
+      // Check business level error
+      if (payload?.base_resp) {
+        const statusCode = payload.base_resp.status_code;
+        if (statusCode !== undefined && statusCode !== 0) {
+          return null;
+        }
+      }
+
+      const modelRemains = Array.isArray(payload?.model_remains) ? payload.model_remains : [];
+      if (modelRemains.length === 0) return null;
+
+      const item = modelRemains[0];
+      const result: ProviderQuotaResult = {};
+
+      // 5-hour window limit
+      const intervalTotal = parseOptionalNumber(item.current_interval_total_count);
+      const intervalRemaining = parseOptionalNumber(item.current_interval_usage_count);
+      const endTime = parseOptionalNumber(item.end_time); // Unix milliseconds
+
+      if (intervalTotal !== undefined && intervalRemaining !== undefined) {
+        result.usedDailyBalance = Math.max(0, intervalTotal - intervalRemaining);
+        result.limitDaily = intervalTotal;
+      }
+      if (endTime) {
+        result.resetTime = new Date(endTime).toISOString();
+      }
+
+      // Weekly limit
+      const weeklyTotal = parseOptionalNumber(item.current_weekly_total_count);
+      const weeklyRemaining = parseOptionalNumber(item.current_weekly_usage_count);
+      const weeklyEndTime = parseOptionalNumber(item.weekly_end_time); // Unix milliseconds
+
+      if (weeklyTotal !== undefined && weeklyRemaining !== undefined) {
+        result.usedBalance = Math.max(0, weeklyTotal - weeklyRemaining);
+        result.remainingBalance = weeklyRemaining;
+        result.totalBalance = weeklyTotal;
+      }
+      if (weeklyEndTime && !result.resetTime) {
+        result.resetTime = new Date(weeklyEndTime).toISOString();
       }
 
       return this.hasQuotaData(result) ? result : null;
@@ -261,10 +583,31 @@ const deepSeekQuotaAdapter = new DeepSeekQuotaAdapter();
 const openRouterQuotaAdapter = new OpenRouterQuotaAdapter();
 const siliconFlowQuotaAdapter = new SiliconFlowQuotaAdapter();
 const zhipuQuotaAdapter = new ZhipuQuotaAdapter();
+const aliyunCodingPlanQuotaAdapter = new AliyunCodingPlanQuotaAdapter();
+const kimiCodingPlanQuotaAdapter = new KimiCodingPlanQuotaAdapter();
+const miniMaxCodingPlanQuotaAdapter = new MiniMaxCodingPlanQuotaAdapter();
 
 export function getQuotaAdapter(baseUrl: string): QuotaAdapter | null {
   const hostname = getHostname(baseUrl);
   if (!hostname) return null;
+
+  if (
+    hostname === "kimi.com" ||
+    hostname.endsWith(".kimi.com") ||
+    hostname === "moonshot.cn" ||
+    hostname.endsWith(".moonshot.cn")
+  ) {
+    return kimiCodingPlanQuotaAdapter;
+  }
+
+  if (
+    hostname === "minimaxi.com" ||
+    hostname.endsWith(".minimaxi.com") ||
+    hostname === "minimax.io" ||
+    hostname.endsWith(".minimax.io")
+  ) {
+    return miniMaxCodingPlanQuotaAdapter;
+  }
 
   if (hostname === "deepseek.com" || hostname.endsWith(".deepseek.com")) {
     return deepSeekQuotaAdapter;
@@ -288,6 +631,14 @@ export function getQuotaAdapter(baseUrl: string): QuotaAdapter | null {
     hostname.endsWith(".bigmodel.cn")
   ) {
     return zhipuQuotaAdapter;
+  }
+
+  // Aliyun Coding Plan quota adapter - matches dashscope.aliyuncs.com or coding.dashscope.aliyuncs.com
+  if (
+    hostname === "dashscope.aliyuncs.com" ||
+    hostname.endsWith(".dashscope.aliyuncs.com")
+  ) {
+    return aliyunCodingPlanQuotaAdapter;
   }
 
   return null;

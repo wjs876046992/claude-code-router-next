@@ -126,8 +126,9 @@ async function probeProvider(
       return { success: true, headers: response.headers };
     }
 
-    // Treat 401/403 as success for health (endpoint exists, auth works)
-    if (response.status === 401 || response.status === 403) {
+    // Any HTTP response means the server is reachable
+    // Treat 4xx as success for health (server is up, just rejected the request)
+    if (response.status >= 400 && response.status < 500) {
       return { success: true, headers: response.headers };
     }
 
@@ -221,23 +222,27 @@ export class ActiveProbeService {
    * Run quota probes for configured providers.
    * Provider-specific adapters actively query official quota APIs, while the
    * Kimi/Moonshot models probe continues to capture header-based limits.
+   * When quota is exhausted, marks provider as unhealthy in health store.
    */
   private async runQuotaProbe(): Promise<void> {
     const providers = this.getProviders().filter(
       p => p?.name && !this.config.excludeProviders.includes(p.name)
     );
     const proxy = this.getHttpsProxy?.();
+    const healthStore = getHealthStore();
 
     if (providers.length === 0) return;
 
-    const tasks: Array<{ provider: string; type: string; promise: Promise<void> }> = [];
+    const tasks: Array<{ provider: string; models: string[]; type: string; promise: Promise<void> }> = [];
 
     for (const provider of providers) {
       const adapter = getQuotaAdapter(provider.baseUrl);
+      const models = Array.isArray(provider.models) ? provider.models : [];
 
       if (adapter) {
         tasks.push({
           provider: provider.name,
+          models,
           type: 'quota-adapter',
           promise: adapter
             .queryQuota(provider, this.config.probeTimeoutMs, proxy)
@@ -245,6 +250,24 @@ export class ActiveProbeService {
               if (result) {
                 storeQuotaResult(provider.name, result);
                 this.logger?.debug?.(`Stored quota probe result for ${provider.name}`);
+
+                // Check if quota is exhausted and mark as unhealthy
+                const is5hExhausted = result.limitDaily !== undefined &&
+                  result.usedDailyBalance !== undefined &&
+                  result.usedDailyBalance >= result.limitDaily;
+                const is7dExhausted = result.totalBalance !== undefined &&
+                  result.usedBalance !== undefined &&
+                  result.usedBalance >= result.totalBalance;
+
+                if (is5hExhausted || is7dExhausted) {
+                  const errorMsg = is5hExhausted
+                    ? `Quota exhausted: 5h limit reached (${result.usedDailyBalance}/${result.limitDaily})`
+                    : `Quota exhausted: 7d balance depleted (${result.usedBalance}/${result.totalBalance})`;
+                  for (const m of models) {
+                    healthStore.forceOpen(provider.name, m, errorMsg);
+                  }
+                  this.logger?.warn?.(`${errorMsg} for ${provider.name}, marked as unhealthy`);
+                }
               }
             }),
         });
@@ -253,6 +276,7 @@ export class ActiveProbeService {
       if (shouldProbeRateLimitHeaders(provider.baseUrl)) {
         tasks.push({
           provider: provider.name,
+          models,
           type: 'rate-limit-headers',
           promise: probeProvider(provider, this.config.probeTimeoutMs, proxy).then(() => undefined),
         });
@@ -279,69 +303,48 @@ export class ActiveProbeService {
   }
 
   /**
-   * Run health probe for providers in open state
-   * Only probes models that need probing (needsProbe returns true)
+   * Run health probe for all providers
+   * Probes every configured provider to detect reachability issues early,
+   * not just providers already in the fail pool.
    */
   private async runHealthProbe(): Promise<void> {
     const healthStore = getHealthStore();
-    const providers = this.getProviders();
+    const providers = this.getProviders().filter(
+      p => p?.name && !this.config.excludeProviders.includes(p.name)
+    );
     const proxy = this.getHttpsProxy?.();
 
-    // Find all models in open state that need probing
-    const openStates = healthStore.getFailPoolModels();
-    const toProbe: Array<{ provider: LLMProvider; model: string; state: ProviderHealthState }> = [];
+    if (providers.length === 0) return;
 
-    for (const key of openStates) {
-      const [providerName, model] = key.split(',');
-      const state = healthStore.getState(providerName, model);
+    this.logger?.debug?.(`Running health probe for ${providers.length} providers`);
 
-      if (state && state.status === 'open' && healthStore.needsProbe(state)) {
-        const provider = providers.find(p => p.name === providerName);
-        if (provider && !this.config.excludeProviders.includes(providerName)) {
-          toProbe.push({ provider, model, state });
-        }
-      }
-    }
-
-    if (toProbe.length === 0) return;
-
-    this.logger?.debug?.(`Running health probe for ${toProbe.length} open models`);
-
-    // Mark probe attempts first
-    for (const { provider, model } of toProbe) {
-      healthStore.markProbeAttempt(provider.name, model);
-    }
-
-    // Probe each provider concurrently
+    // Probe all providers concurrently
     const results = await Promise.allSettled(
-      toProbe.map(({ provider }) =>
+      providers.map(provider =>
         probeProvider(provider, this.config.probeTimeoutMs, proxy)
       )
     );
 
-    // Record results for each provider/model combination
-    for (let i = 0; i < toProbe.length; i++) {
-      const { provider, model } = toProbe[i];
+    for (let i = 0; i < providers.length; i++) {
+      const provider = providers[i];
       const result = results[i];
+      const models = Array.isArray(provider.models) ? provider.models : [];
 
       if (result.status === 'fulfilled') {
         const probeResult = result.value;
         if (probeResult.success) {
-          // Probe succeeded - record for each model of this provider
-          for (const m of provider.models) {
+          for (const m of models) {
             healthStore.recordSuccess(provider.name, m);
           }
           this.logger?.info?.(`Health probe succeeded for ${provider.name}`);
         } else {
-          // Probe failed - record for each model
-          for (const m of provider.models) {
+          for (const m of models) {
             healthStore.recordFailure(provider.name, m, probeResult.error);
           }
           this.logger?.warn?.(`Health probe failed for ${provider.name}: ${probeResult.error}`);
         }
       } else {
-        // Probe threw error
-        for (const m of provider.models) {
+        for (const m of models) {
           healthStore.recordFailure(provider.name, m, result.reason?.message || 'Probe error');
         }
         this.logger?.warn?.(`Health probe error for ${provider.name}: ${result.reason}`);
@@ -364,12 +367,14 @@ export class ActiveProbeService {
     const proxy = this.getHttpsProxy?.();
     const result = await probeProvider(provider, this.config.probeTimeoutMs, proxy);
 
+    const models = Array.isArray(provider.models) ? provider.models : [];
+
     if (result.success) {
-      for (const m of provider.models) {
+      for (const m of models) {
         getHealthStore().recordSuccess(provider.name, m);
       }
     } else {
-      for (const m of provider.models) {
+      for (const m of models) {
         getHealthStore().recordFailure(provider.name, m, result.error);
       }
     }

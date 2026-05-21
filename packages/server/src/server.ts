@@ -46,18 +46,17 @@ interface ProviderQuotaUsage {
  * Compute provider quota usage for 5-hour and 7-day windows
  */
 function computeProviderQuota(providers: any[]): ProviderQuotaUsage[] {
-  const now = new Date();
-  const nowIso = now.toISOString();
+  const now = new Date().toISOString();
 
   // 5 hours window
-  const start5h = new Date(now.getTime() - 5 * 60 * 60 * 1000).toISOString();
+  const start5h = new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString();
 
   // 7 days window
-  const start7d = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const start7d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
   // Query summaries per provider
-  const summary5h = queryUsageSummary(start5h, nowIso);
-  const summary7d = queryUsageSummary(start7d, nowIso);
+  const summary5h = queryUsageSummary(start5h, now);
+  const summary7d = queryUsageSummary(start7d, now);
 
   // Build result array
   const result: ProviderQuotaUsage[] = [];
@@ -86,18 +85,12 @@ function computeProviderQuota(providers: any[]): ProviderQuotaUsage[] {
       limit7d = providerConfig.quota.limit7d;
     }
 
-    // Compute approximate reset times (window end)
-    const reset5hDate = new Date(now.getTime() + 5 * 60 * 60 * 1000);
-    const reset7dDate = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
-
     result.push({
       provider: name,
       used5h,
       used7d,
       limit5h,
       limit7d,
-      reset5h: reset5hDate.toISOString(),
-      reset7d: reset7dDate.toISOString(),
     });
   }
 
@@ -379,7 +372,9 @@ export const createServer = async (config: any): Promise<any> => {
 
         if (typeof stored.totalBalance === 'number') {
           quota.limit7d = stored.totalBalance;
-          quota.type7d = 'balance';
+          // Only treat as currency balance when a currency is explicitly set;
+          // otherwise display as percentage (e.g. token-quota weekly limits).
+          quota.type7d = stored.currency ? 'balance' : 'rateLimit';
           if (stored.currency) {
             quota.currency = stored.currency;
           }

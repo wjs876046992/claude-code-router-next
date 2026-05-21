@@ -1,6 +1,6 @@
 {
   "name": "@wengine-ai/claude-code-router",
-  "version": "2.0.84",
+  "version": "2.0.99",
   "description": "CLI for Claude Code Router",
   "bin": {
     "ccr": "dist/cli.js"
@@ -17,7 +17,7 @@
     "build": "node ../../scripts/build-cli.js"
   },
   "dependencies": {
-    "@wengine-ai/llms": "^2.0.77",
+    "@wengine-ai/llms": "^2.0.80",
     "lru-cache": "^11.2.2"
   },
   "devDependencies": {

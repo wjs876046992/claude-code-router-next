@@ -343,7 +343,7 @@ export function DynamicConfigForm({
                   <SelectValue placeholder={field.placeholder || t('presets.form.select', { label })} />
                 </SelectTrigger>
                 <SelectContent>
-                  {getOptions(field).map((option) => (
+                  {getOptions(field).filter((option) => option.value !== "" && option.value != null).map((option) => (
                     <SelectItem
                       key={String(option.value)}
                       value={String(option.value)}

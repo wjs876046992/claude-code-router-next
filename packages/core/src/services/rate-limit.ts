@@ -13,21 +13,21 @@ export interface RateLimitInfo {
 const store = new Map<string, RateLimitInfo>();
 
 const REMAINING_HEADERS = [
-  'x-ratelimit-remaining',
-  'x-ratelimit-remaining-requests',
   'x-ratelimit-remaining-tokens',
+  'x-ratelimit-remaining-requests',
+  'x-ratelimit-remaining',
 ] as const;
 
 const LIMIT_HEADERS = [
-  'x-ratelimit-limit',
-  'x-ratelimit-limit-requests',
   'x-ratelimit-limit-tokens',
+  'x-ratelimit-limit-requests',
+  'x-ratelimit-limit',
 ] as const;
 
 const RESET_HEADERS = [
-  'x-ratelimit-reset',
-  'x-ratelimit-reset-requests',
   'x-ratelimit-reset-tokens',
+  'x-ratelimit-reset-requests',
+  'x-ratelimit-reset',
 ] as const;
 
 /**

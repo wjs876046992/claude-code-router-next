@@ -7,6 +7,7 @@ import { CLAUDE_PROJECTS_DIR, HOME_DIR } from "@wengine-ai/claude-code-router-sh
 import { ConfigService } from "../services/config";
 import { TokenizerService } from "../services/tokenizer";
 import { getHealthStore } from "../services/provider-health";
+import { getQuotaResult } from "../services/quota-store";
 import { getFallbackPromotionStore } from "./fallback-promotion";
 
 // Types from @anthropic-ai/sdk
@@ -256,6 +257,21 @@ function resolveConfiguredModel(
     const healthStore = getHealthStore();
     if (!healthStore.isAvailable(providerName, routeModel)) {
       return null; // Model is unavailable, return null to signal skip
+    }
+  }
+
+  // Check quota status - skip if provider quota is exhausted
+  const quotaResult = getQuotaResult(providerName);
+  if (quotaResult) {
+    const is5hExhausted = quotaResult.limitDaily !== undefined &&
+      quotaResult.usedDailyBalance !== undefined &&
+      quotaResult.usedDailyBalance >= quotaResult.limitDaily;
+    const is7dExhausted = quotaResult.totalBalance !== undefined &&
+      quotaResult.usedBalance !== undefined &&
+      quotaResult.usedBalance >= quotaResult.totalBalance;
+
+    if (is5hExhausted || is7dExhausted) {
+      return null; // Quota exhausted, skip this provider
     }
   }
 
