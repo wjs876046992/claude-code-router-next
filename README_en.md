@@ -306,6 +306,8 @@ You can use it to view:
 - Daily usage chart
 - Detailed request records with filters and pagination
 
+![Usage Statistics](/blog/images/usage-statistics.png)
+
 How to use it:
 
 1. Start the router service with `ccr start`

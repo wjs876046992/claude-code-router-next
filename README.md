@@ -282,6 +282,8 @@ ccr ui
 - 每日用量图表
 - 支持筛选和分页的详细请求历史记录
 
+![用量统计](/blog/images/usage-statistics.png)
+
 如何使用：
 
 1. 使用 `ccr start` 启动路由器服务
