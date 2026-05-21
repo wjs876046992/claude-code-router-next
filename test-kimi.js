@@ -2,7 +2,7 @@ async function test() {
   const res = await fetch('https://api.kimi.com/coding/v1/messages', {
     method: 'POST',
     headers: {
-      'Authorization': 'Bearer sk-kimi-Pw1ugRWpLJulDeF4spAqbMRo7evKdFc95adI8dwtpc6az1fWgVUM3oqiYSlJWEMI',
+      'Authorization': `Bearer ${process.env.KIMI_API_KEY || 'YOUR_KIMI_API_KEY'}`,
       'Content-Type': 'application/json',
       'X-Use-Cache': 'true'
     },
