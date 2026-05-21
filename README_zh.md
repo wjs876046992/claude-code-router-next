@@ -618,21 +618,5 @@ jobs:
 -   [项目动机和工作原理](blog/zh/项目初衷及原理.md)
 -   [也许我们可以用路由器做更多事情](blog/zh/或许我们能在Router中做更多事情.md)
 
-## ❤️ 支持与赞助
-
-如果您觉得这个项目有帮助，请考虑赞助它的开发。非常感谢您的支持！
-
-[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/F1F31GN2GM)
-
-[Paypal](https://paypal.me/musistudio1999)
-
-<table>
-  <tr>
-    <td><img src="/blog/images/alipay.jpg" width="200" alt="Alipay" /></td>
-    <td><img src="/blog/images/wechat.jpg" width="200" alt="WeChat Pay" /></td>
-  </tr>
-</table>
-
-
 ## 交流群
 <img src="/blog/images/wechat_group.jpg" width="200" alt="wechat_group" />

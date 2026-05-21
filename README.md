@@ -705,18 +705,4 @@ This setup allows for interesting automations, like running tasks during off-pea
 - [Maybe We Can Do More with the Router](blog/en/maybe-we-can-do-more-with-the-route.md)
 - [GLM-4.6 Supports Reasoning and Interleaved Thinking](blog/en/glm-4.6-supports-reasoning.md)
 
-## ❤️ Support & Sponsoring
-
-If you find this project helpful, please consider sponsoring its development. Your support is greatly appreciated!
-
-[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/F1F31GN2GM)
-
-[Paypal](https://paypal.me/musistudio1999)
-
-<table>
-  <tr>
-    <td><img src="/blog/images/alipay.jpg" width="200" alt="Alipay" /></td>
-    <td><img src="/blog/images/wechat.jpg" width="200" alt="WeChat Pay" /></td>
-  </tr>
-</table>
 
