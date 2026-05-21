@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { useConfig } from '@/components/ConfigProvider';
 import { api } from '@/lib/api';
 import { useTranslation } from 'react-i18next';
-import { Save, X, RefreshCw } from 'lucide-react';
+import { Save, X, RefreshCw, ArrowLeft } from 'lucide-react';
 
 interface JsonEditorProps {
   open: boolean;
@@ -160,17 +160,19 @@ export function JsonEditor({ open, onOpenChange, showToast }: JsonEditorProps) {
         }}
       >
         <div className="flex items-center justify-between border-b p-4">
-          <h2 className="text-lg font-semibold">{t('json_editor.title')}</h2>
-          <div className="flex gap-2">
+          <div className="flex items-center gap-4">
             <Button
-              variant="outline"
+              variant="ghost"
               size="sm"
               onClick={() => onOpenChange(false)}
               disabled={isSaving}
             >
-              <X className="h-4 w-4 mr-2" />
+              <ArrowLeft className="h-4 w-4 mr-2" />
               {t('json_editor.cancel')}
             </Button>
+            <h2 className="text-lg font-semibold">{t('json_editor.title')}</h2>
+          </div>
+          <div className="flex gap-2">
             <Button
               variant="outline"
               size="sm"

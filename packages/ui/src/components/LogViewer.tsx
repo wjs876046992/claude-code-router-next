@@ -522,7 +522,7 @@ export function LogViewer({ open, onOpenChange, showToast }: LogViewerProps) {
       >
         <div className="flex items-center justify-between border-b p-4">
           <div className="flex items-center gap-2">
-            {getBackAction() && (
+            {getBackAction() ? (
               <Button
                 variant="ghost"
                 size="sm"
@@ -530,6 +530,15 @@ export function LogViewer({ open, onOpenChange, showToast }: LogViewerProps) {
               >
                 <ArrowLeft className="h-4 w-4 mr-2" />
                 {t('log_viewer.back')}
+              </Button>
+            ) : (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => onOpenChange(false)}
+              >
+                <ArrowLeft className="h-4 w-4 mr-2" />
+                {t('log_viewer.close')}
               </Button>
             )}
 
@@ -597,14 +606,6 @@ export function LogViewer({ open, onOpenChange, showToast }: LogViewerProps) {
                 </Button>
               </>
             )}
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => onOpenChange(false)}
-            >
-              <X className="h-4 w-4 mr-2" />
-              {t('log_viewer.close')}
-            </Button>
           </div>
         </div>
 
