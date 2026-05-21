@@ -242,29 +242,22 @@ Here is a comprehensive example:
 }
 ```
 
-### 🔑 API Key / Token Guide
+### 🔑 Alibaba Cloud Bailian Quota Token (Cookie) Guide
 
-To use the router, you need to acquire API Keys from your preferred LLM providers. Please refer to each provider's official documentation for API Key acquisition instructions.
+If you want the Claude Code Router UI to fetch and display your monthly **Qwen Coding Plan** quota progress bars, you need to configure your console session `Cookie` as `quotaToken` in your configuration:
 
-#### Alibaba Cloud (DashScope / Bailian / Qwen-Coder)
-*   **Platform**: Alibaba Cloud Bailian (highly capable Qwen-Coder models)
-*   **Link**: [Alibaba Cloud Bailian Console](https://bailian.console.aliyun.com/)
-*   **Acquisition Methods**:
-    *   **Method A: Standard Developer API Key (For Request Routing)**
-        1. Log in to Alibaba Cloud and enable the "Bailian" model service.
-        2. Go to the Bailian Console, click on your **profile icon** in the top-right corner.
-        3. Click on **API-KEY** in the dropdown.
-        4. Click **Create New API-KEY** and copy the generated key.
-    *   **Method B: Aliyun Console Cookie (For Quota Visualization in UI)**
-        If you want the Claude Code Router UI to fetch and display your monthly **Qwen Coding Plan** quota progress bars, you need to configure your console session `Cookie` as `quotaToken` in your configuration:
-        1. Log in to the [Alibaba Cloud Bailian Console](https://bailian.console.aliyun.com/).
-        2. Open your browser's Developer Tools (F12) and switch to the **Network** tab.
-        3. Click the **Refresh** (用量刷新) button on the console's usage cards.
-        4. Look for an API request starting with `api.json?action=BroadScope...` in the network log.
-        5. Select the request, find the **`Cookie`** header under **Request Headers**, and copy its entire value.
-        6. Paste this copied cookie string as the **`quotaToken`** property inside the Alibaba Cloud provider block in your `config.json`.
+1. Log in to the [Alibaba Cloud Bailian Console](https://bailian.console.aliyun.com/).
+2. Open your browser's Developer Tools (F12) and switch to the **Network** tab.
+3. Click the **Refresh** (用量刷新) button on the console's usage cards.
+4. Look for an API request starting with `api.json?action=BroadScope...` in the network log.
+5. Select the request, find the **`Cookie`** header under **Request Headers**, and copy its entire value.
+6. Paste this copied cookie string as the **`quotaToken`** property inside the Alibaba Cloud provider block in your `config.json`.
 
-        ![Alibaba Cloud Quota Cookie Acquisition](blog/images/aliyun-quota-auth.png)
+![Alibaba Cloud Quota Cookie Acquisition](blog/images/aliyun-quota-auth.png)
+
+Once configured, the Provider list in the Web UI will display your real-time Qwen Coding Plan remaining quota progress bar and refresh status:
+
+![Alibaba Cloud Quota Progress Display](blog/images/aliyun-quota-display.png)
 
 ### 3. Running Claude Code with the Router
 

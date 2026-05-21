@@ -219,29 +219,22 @@ npm install -g @wengine-ai/claude-code-router-next
 }
 ```
 
-### 🔑 获取 API Key / Token 引导
+### 🔑 阿里云百炼用量 Token (Cookie) 获取引导
 
-为了让 Router 正常代理服务，您需要获取对应服务商的 API Key。各服务商的 API Key 获取方式请参考其官方文档。
+如果您想让 Claude Code Router 的后台 Web UI 实时拉取并可视化展示您的 **Qwen Coding Plan（Qwen 编程时限套餐）** 剩余用量额度条，您需要获取控制台的浏览器 `Cookie` 作为 `quotaToken` 填入配置：
 
-#### 阿里云百炼 (Alibaba Cloud DashScope / Qwen-Coder)
-*   **平台名称**: 阿里云百炼 (包含 Qwen-Coder 系列等强大模型)
-*   **获取地址**: [阿里云百炼控制台](https://bailian.console.aliyun.com/)
-*   **获取方式**:
-    *   **方式 A：标准开发者 API Key（用于接口路由代理）**
-        1. 登录阿里云账号并开通百炼服务。
-        2. 登录百炼控制台后，点击右上角的 **个人头像**。
-        3. 在下拉菜单中选择 **API-KEY**。
-        4. 点击 **创建新的 API-KEY** 并复制。
-    *   **方式 B：阿里云控制台 Cookie（用于在 UI 界面中可视化展示月度额度）**
-        如果你想让 Claude Code Router 的后台 Web UI 实时拉取并可视化展示你的 **Qwen Coding Plan（月度编程套餐）** 剩余用量额度条，你需要把控制台的浏览器 `Cookie` 复制作为 `quotaToken` 填入配置：
-        1. 登录 [阿里云百炼控制台](https://bailian.console.aliyun.com/)。
-        2. 按键盘 `F12` 打开浏览器开发者工具，并切换到 **Network (网络)** 标签页。
-        3. 点击页面用量模块右上角的 **用量刷新**（旋转循环箭头）按钮。
-        4. 在左侧网络请求列表中，找到一个以 `api.json?action=BroadScope...` 开头的接口调用请求并点击。
-        5. 在右侧 **Headers (标头)** 的 **Request Headers (请求头)** 中找到 **`Cookie`** 这一项，将其右侧的完整超长内容复制下来。
-        6. 在你的 `config.json` 中，将这个 cookie 填入阿里云 provider 下的 **`quotaToken`** 属性中即可！
+1. 登录 [阿里云百炼控制台](https://bailian.console.aliyun.com/)。
+2. 按键盘 `F12` 打开浏览器开发者工具，并切换到 **Network (网络)** 标签页。
+3. 点击页面用量模块右上角的 **用量刷新**（旋转循环箭头）按钮。
+4. 在左侧网络请求列表中，找到一个以 `api.json?action=BroadScope...` 开头的接口调用请求并点击。
+5. 在右侧 **Headers (标头)** 的 **Request Headers (请求头)** 中找到 **`Cookie`** 这一项，将其右侧的完整超长内容复制下来。
+6. 在您的 `config.json` 中，将这个 cookie 填入阿里云 provider 下的 **`quotaToken`** 属性中即可！
 
-        ![阿里云用量 Cookie 获取方式](blog/images/aliyun-quota-auth.png)
+![阿里云用量 Cookie 获取方式](blog/images/aliyun-quota-auth.png)
+
+配置成功后，Web UI 的 Provider 列表中将会实时展示您的套餐剩余用量额度条与刷新状态：
+
+![阿里云用量额度条展示](blog/images/aliyun-quota-display.png)
 
 ### 3. 使用 Router 运行 Claude Code
 
