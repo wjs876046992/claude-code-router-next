@@ -424,7 +424,7 @@ const FULL_THEME: StatusLineThemeConfig = {
 // Format token count with fixed-width units for stable display
 function formatTokenCount(count: number): string {
     if (count < 1000) {
-        return `${count}`.padStart(4, ' ');
+        return `${count}tok`;
     }
     if (count < 1_000_000) {
         const val = count / 1000;

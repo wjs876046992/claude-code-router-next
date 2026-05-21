@@ -182,6 +182,19 @@ async function handleFallback(
   if (originalProvider && originalModel) {
     healthStore.recordFailure(originalProvider, originalModel, error?.message);
     attemptedFallbacks.add(`${originalProvider},${originalModel}`);
+
+    // Record failed primary model attempt in usage stats
+    fastify.recordUsage?.({
+      provider: originalProvider,
+      model: originalModel,
+      originalModel: (req as any).originalModel || originalModel,
+      scenarioType,
+      modelFamily: (req as any).modelFamily,
+      errorMessage: error?.message || String(error),
+      sessionId: (req as any).usageSessionId || req.id,
+      stream: (req.body as any).stream,
+      inputTokens: (req as any).tokenCount || 0,
+    });
   }
 
   const totalFallbacks = fallbackStages.reduce((total, stage) => total + stage.models.length, 0);

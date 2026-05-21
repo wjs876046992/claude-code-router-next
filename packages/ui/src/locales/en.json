@@ -127,7 +127,7 @@
     "quota_token": "Quota Query Token",
     "quota_token_placeholder": "Optional, enables automatic 5h/7d quota querying",
     "quota_token_desc": "Some providers require a separate token/cookie to query quotas.",
-    "quota_token_tooltip": "Zhipu: Login to open.bigmodel.cn, copy the JWT Token from Authorization header in Network tab (or leave blank to automatically reuse developer API Key).\nKimi / MiniMax: Leave blank to automatically reuse configured developer API Key for quota querying (or fill in a separate API Key if you want to use a different key for quota lookup).\nAliyun Coding Plan: Login to bailian.console.aliyun.com, copy the full Cookie header value from Network tab."
+    "quota_token_tooltip": "Zhipu: Leave blank to automatically reuse developer API Key for quota querying (or fill in a separate API Key if needed).\nKimi / MiniMax: Leave blank to automatically reuse configured developer API Key for quota querying (or fill in a separate API Key if you want to use a different key for quota lookup).\nAliyun Coding Plan: Login to bailian.console.aliyun.com, copy the full Cookie header value from Network tab."
   },
   "router": {
     "title": "Router",

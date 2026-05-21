@@ -148,33 +148,42 @@ function computeSummary(records: UsageRecord[]): UsageSummary {
   let speedCount = 0;
 
   for (const r of records) {
-    if (r.status === "success") summary.successCount++;
-    else summary.errorCount++;
+    const isSuccess = r.status === "success";
+    if (isSuccess) {
+      summary.successCount++;
+    } else {
+      summary.errorCount++;
+    }
 
-    summary.totalInputTokens += r.inputTokens;
-    summary.totalOutputTokens += r.outputTokens;
-    summary.totalCacheReadInputTokens += r.cacheReadInputTokens || 0;
-    summary.totalCacheCreationInputTokens += r.cacheCreationInputTokens || 0;
+    const inputTokens = isSuccess ? (r.inputTokens || 0) : 0;
+    const outputTokens = isSuccess ? (r.outputTokens || 0) : 0;
+    const cacheReadInputTokens = isSuccess ? (r.cacheReadInputTokens || 0) : 0;
+    const cacheCreationInputTokens = isSuccess ? (r.cacheCreationInputTokens || 0) : 0;
 
-    if (r.ttft != null) {
+    summary.totalInputTokens += inputTokens;
+    summary.totalOutputTokens += outputTokens;
+    summary.totalCacheReadInputTokens += cacheReadInputTokens;
+    summary.totalCacheCreationInputTokens += cacheCreationInputTokens;
+
+    if (isSuccess && r.ttft != null) {
       ttftSum += r.ttft;
       ttftCount++;
     }
-    if (r.tokensPerSecond != null) {
+    if (isSuccess && r.tokensPerSecond != null) {
       speedSum += r.tokensPerSecond;
       speedCount++;
     }
 
     const day = r.timestamp.slice(0, 10);
 
-    aggregateInto(summary.byModel, r.model, r.inputTokens, r.outputTokens, r.cacheReadInputTokens || 0, r.cacheCreationInputTokens || 0);
-    aggregateInto(summary.byProvider, r.provider, r.inputTokens, r.outputTokens, r.cacheReadInputTokens || 0, r.cacheCreationInputTokens || 0);
-    aggregateInto(summary.byScenario, r.scenarioType, r.inputTokens, r.outputTokens, r.cacheReadInputTokens || 0, r.cacheCreationInputTokens || 0);
+    aggregateInto(summary.byModel, r.model, inputTokens, outputTokens, cacheReadInputTokens, cacheCreationInputTokens);
+    aggregateInto(summary.byProvider, r.provider, inputTokens, outputTokens, cacheReadInputTokens, cacheCreationInputTokens);
+    aggregateInto(summary.byScenario, r.scenarioType, inputTokens, outputTokens, cacheReadInputTokens, cacheCreationInputTokens);
     if (r.modelFamily) {
       const familyScenario = `${r.modelFamily}/${r.scenarioType}`;
-      aggregateInto(summary.byFamily, familyScenario, r.inputTokens, r.outputTokens, r.cacheReadInputTokens || 0, r.cacheCreationInputTokens || 0);
+      aggregateInto(summary.byFamily, familyScenario, inputTokens, outputTokens, cacheReadInputTokens, cacheCreationInputTokens);
     }
-    aggregateInto(summary.byDay, day, r.inputTokens, r.outputTokens, r.cacheReadInputTokens || 0, r.cacheCreationInputTokens || 0);
+    aggregateInto(summary.byDay, day, inputTokens, outputTokens, cacheReadInputTokens, cacheCreationInputTokens);
   }
 
   if (ttftCount > 0) summary.avgTtft = Math.round(ttftSum / ttftCount);

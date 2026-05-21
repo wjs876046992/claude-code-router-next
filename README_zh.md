@@ -8,7 +8,7 @@
 
 > [从CLI工具风格看工具渐进式披露](/blog/zh/从CLI工具风格看工具渐进式披露.md)
 
-> 一款强大的工具，可将 Claude Code 请求路由到不同的模型，并自定义任何请求。
+> 一款强大的工具，可将 Claude Code 请求路由到不同的模型，并自定义任何请求。 
 
 ![](blog/images/claude-code.png)
 
@@ -225,21 +225,12 @@ npm install -g claude-code-router-next
 #### 1. 智谱 AI (Zhipu BigModel / GLM CODING PLAN)
 *   **平台名称**: 智谱大模型开放平台
 *   **获取地址**: [智谱 AI 大模型开放平台](https://www.bigmodel.cn/claude-code?ic=RRVJPB5SII) (使用此链接注册可享 9 折优惠)
-*   **获取方式**: 
-    *   **方式 A：标准开发者 API Key（按量付费计费）**
-        1. 点击链接注册并登录。
-        2. 进入右上角 **控制台** -> **API Keys**。
-        3. 创建或复制你的 API Key。
-    *   **方式 B：GLM CODING PLAN 网页端 Token（推荐订阅套餐用户使用）**
-        如果你订阅了官方的 AI 编程订阅套餐（月度包月计费），你可以直接提取浏览器登录状态下的鉴权 Token：
-        1. 登录 [智谱大模型开放平台](https://www.bigmodel.cn/claude-code?ic=RRVJPB5SII)。
-        2. 按键盘 `F12` 打开浏览器开发者工具，并切换到 **Network (网络)** 标签页。
-        3. 刷新页面或在页面上随便触发一次接口请求（例如查看一下用量额度）。
-        4. 在左侧请求列表中找到任意一个接口请求（例如 `usage`、`interfaceacting.js` 等），点击它。
-        5. 在右侧 **Request Headers (请求头)** 中找到 **`Authorization`** 这一项，将其右侧的完整内容（以 `Bearer eyJ...` 开头的一长串字符）复制下来。
-        6. 将这个 `Bearer ...` 填入配置文件的 `api_key` 中即可！
+*   **获取方式**:
+    1. 点击链接注册并登录。
+    2. 进入右上角 **控制台** -> **API Keys**。
+    3. 创建或复制你的 API Key。
 
-        ![智谱网页 Token 获取方式](blog/images/zhipu-auth.png)
+    GLM CODING PLAN 的用量信息会通过该 API Key 获取，无需再配置网页端 Token 或 `quotaToken`。
 
 #### 2. 阿里云百炼 (Alibaba Cloud DashScope / Qwen-Coder)
 *   **平台名称**: 阿里云百炼 (包含 Qwen-Coder 系列等强大模型)
@@ -251,7 +242,7 @@ npm install -g claude-code-router-next
         3. 在下拉菜单中选择 **API-KEY**。
         4. 点击 **创建新的 API-KEY** 并复制。
     *   **方式 B：阿里云控制台 Cookie（用于在 UI 界面中可视化展示月度额度）**
-        如果你想让 Claude Code Router 的后台 Web UI 实时拉取并可视化展示你的 **GLM/Qwen Coding Plan（月度编程套餐）** 剩余用量额度条，你需要把控制台的浏览器 `Cookie` 复制作为 `quotaToken` 填入配置：
+        如果你想让 Claude Code Router 的后台 Web UI 实时拉取并可视化展示你的 **Qwen Coding Plan（月度编程套餐）** 剩余用量额度条，你需要把控制台的浏览器 `Cookie` 复制作为 `quotaToken` 填入配置：
         1. 登录 [阿里云百炼控制台](https://bailian.console.aliyun.com/)。
         2. 按键盘 `F12` 打开浏览器开发者工具，并切换到 **Network (网络)** 标签页。
         3. 点击页面用量模块右上角的 **用量刷新**（旋转循环箭头）按钮。

@@ -248,20 +248,12 @@ To use the router, you need to acquire API Keys from your preferred LLM provider
 #### 1. Zhipu AI (BigModel / GLM CODING PLAN)
 *   **Platform**: Zhipu BigModel Platform (sponsored partner)
 *   **Link**: [Zhipu AI BigModel Platform](https://www.bigmodel.cn/claude-code?ic=RRVJPB5SII) (Use this referral link for a 10% discount on GLM CODING PLAN)
-*   **Acquisition Methods**:
-    *   **Method A: Standard Developer API Key (Pay-as-you-go)**
-        1. Register and log in using the link above.
-        2. Go to the top-right **Console** -> **API Keys**.
-        3. Copy your API Key.
-    *   **Method B: GLM CODING PLAN Web Token (Recommended for Subscription Users)**
-        If you are using the AI coding subscription plan (monthly flat-rate), you need to get your browser's session `Authorization` token:
-        1. Log in to the [Zhipu AI BigModel Platform](https://www.bigmodel.cn/claude-code?ic=RRVJPB5SII).
-        2. Open your browser's Developer Tools (F12) and go to the **Network** tab.
-        3. Refresh the page or click on any feature (e.g., check your usage). Look for any XHR/Fetch request (such as `usage`, `interfaceacting.js`, etc.).
-        4. Inspect the **Request Headers** of that request, locate the **`Authorization`** header, and copy its entire value (which starts with `Bearer eyJ...`).
-        5. Paste this copied `Bearer ...` token into your `api_key` configuration.
+*   **Acquisition Method**:
+    1. Register and log in using the link above.
+    2. Go to the top-right **Console** -> **API Keys**.
+    3. Copy your API Key.
 
-        ![Zhipu Web Token Acquisition](blog/images/zhipu-auth.png)
+    GLM CODING PLAN quota information is fetched with this API Key, so you no longer need to configure a web token or `quotaToken`.
 
 #### 2. Alibaba Cloud (DashScope / Bailian / Qwen-Coder)
 *   **Platform**: Alibaba Cloud Bailian (highly capable Qwen-Coder models)
@@ -273,7 +265,7 @@ To use the router, you need to acquire API Keys from your preferred LLM provider
         3. Click on **API-KEY** in the dropdown.
         4. Click **Create New API-KEY** and copy the generated key.
     *   **Method B: Aliyun Console Cookie (For Quota Visualization in UI)**
-        If you want the Claude Code Router UI to fetch and display your beautiful monthly **GLM/Qwen Coding Plan** quota progress bars, you need to configure your console session `Cookie` as `quotaToken` in your configuration:
+        If you want the Claude Code Router UI to fetch and display your monthly **Qwen Coding Plan** quota progress bars, you need to configure your console session `Cookie` as `quotaToken` in your configuration:
         1. Log in to the [Alibaba Cloud Bailian Console](https://bailian.console.aliyun.com/).
         2. Open your browser's Developer Tools (F12) and switch to the **Network** tab.
         3. Click the **Refresh** (用量刷新) button on the console's usage cards.

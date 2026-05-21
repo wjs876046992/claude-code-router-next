@@ -466,17 +466,22 @@ class KimiCodingPlanQuotaAdapter extends BaseQuotaAdapter {
         }
       }
 
-      // Weekly limit
+      // Weekly limit — Kimi API returns `used` (not `remaining`) for the 7d window
       const usage = payload?.usage;
       if (usage) {
         const limit = parseOptionalNumber(usage.limit);
         const remaining = parseOptionalNumber(usage.remaining);
+        const used = parseOptionalNumber(usage.used);
         const resetTime = usage.resetTime;
 
-        if (limit !== undefined && remaining !== undefined) {
-          result.usedBalance = Math.max(0, limit - remaining);
-          result.remainingBalance = remaining;
+        if (limit !== undefined) {
           result.totalBalance = limit;
+          if (used !== undefined) {
+            result.usedBalance = used;
+          } else if (remaining !== undefined) {
+            result.usedBalance = Math.max(0, limit - remaining);
+            result.remainingBalance = remaining;
+          }
         }
         if (resetTime && !result.resetTime) {
           result.resetTime = new Date(resetTime).toISOString();
