@@ -48,13 +48,13 @@ npm install -g claude-code-router-next
 
 1. **先卸载已安装的全局版本**（以避免指令冲突）：
    ```shell
-   npm uninstall -g claude-code-router-next @musistudio/claude-code-router
+   npm uninstall -g claude-code-router-next @musistudio/claude-code-router @wengine-ai/claude-code-router
    ```
 
 2. **克隆本仓库并在本地进行 Link**（推荐开发者使用）：
    ```shell
-   git clone https://github.com/xiaoliu10/claude-code-router.git
-   cd claude-code-router
+   git clone https://github.com/xiaoliu10/claude-code-router-next.git
+   cd claude-code-router-next
    pnpm install
    pnpm build
    npm link
@@ -62,7 +62,7 @@ npm install -g claude-code-router-next
 
    *或者直接从 GitHub 进行全局安装：*
    ```shell
-   npm install -g github:xiaoliu10/claude-code-router
+   npm install -g github:xiaoliu10/claude-code-router-next
    ```
 
 #### 🔄 从官方原版社区版迁移 (@musistudio/claude-code-router)

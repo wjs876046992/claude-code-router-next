@@ -3,7 +3,7 @@ set -e
 
 # Release script
 # - Publish the core package as @wengine-ai/llms
-# - Publish the CLI package as @wengine-ai/claude-code-router
+# - Publish the CLI package as claude-code-router-next
 # - Publish the server package as a Docker image
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"

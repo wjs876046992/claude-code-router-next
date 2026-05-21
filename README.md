@@ -53,8 +53,8 @@ If you want to use the latest features and bug fixes directly from the source co
 
 2. **Clone and link locally** (recommended for developers):
    ```shell
-   git clone https://github.com/xiaoliu10/claude-code-router.git
-   cd claude-code-router
+   git clone https://github.com/xiaoliu10/claude-code-router-next.git
+   cd claude-code-router-next
    pnpm install
    pnpm build
    npm link
@@ -62,7 +62,7 @@ If you want to use the latest features and bug fixes directly from the source co
 
    *Alternatively, install directly from GitHub globally:*
    ```shell
-   npm install -g github:xiaoliu10/claude-code-router
+   npm install -g github:xiaoliu10/claude-code-router-next
    ```
 
 #### 🔄 Migrating from the Official Upstream (@musistudio/claude-code-router)
