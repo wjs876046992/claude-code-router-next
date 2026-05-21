@@ -6,9 +6,9 @@ slug: /
 
 # 欢迎使用 Claude Code Router
 
-[![npm version](https://badge.fury.io/js/%40musistudio%2Fclaude-code-router.svg)](https://www.npmjs.com/package/@wengine-ai/claude-code-router)
+[![npm version](https://badge.fury.io/js/%40musistudio%2Fclaude-code-router.svg)](https://www.npmjs.com/package/claude-code-router-next)
 ![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
-![Node Version](https://img.shields.io/node/v/@wengine-ai/claude-code-router.svg)
+![Node Version](https://img.shields.io/node/v/claude-code-router-next.svg)
 
 **Claude Code Router** 是一个强大的工具，允许你在没有 Anthropic 账户的情况下使用 [Claude Code](https://claude.ai/code)，并将请求路由到其他 LLM 提供商。
 
@@ -28,11 +28,11 @@ slug: /
 ### 安装
 
 ```bash
-npm install -g @wengine-ai/claude-code-router
+npm install -g claude-code-router-next
 # 或
-pnpm add -g @wengine-ai/claude-code-router
+pnpm add -g claude-code-router-next
 # 或
-yarn global add @wengine-ai/claude-code-router
+yarn global add claude-code-router-next
 ```
 
 ### 基本使用
@@ -60,10 +60,10 @@ claude code
 
 Claude Code Router 由四个主要组件组成：
 
-- **CLI** (`@wengine-ai/claude-code-router`): 提供 `ccr` 命令的命令行工具
-- **Server** (`@wengine-ai/claude-code-router-server`): 处理 API 路由和转换的核心服务器
-- **Shared** (`@wengine-ai/claude-code-router-shared`): 共享常量和工具
-- **UI** (`@wengine-ai/claude-code-router-ui`): Web 管理界面（React + Vite）
+- **CLI** (`claude-code-router-next`): 提供 `ccr` 命令的命令行工具
+- **Server** (`claude-code-router-next-server`): 处理 API 路由和转换的核心服务器
+- **Shared** (`claude-code-router-next-shared`): 共享常量和工具
+- **UI** (`claude-code-router-next-ui`): Web 管理界面（React + Vite）
 
 ## 许可证
 

@@ -6,7 +6,7 @@
     "build": "pnpm build:shared && pnpm build:core && pnpm build:server && pnpm build:cli && pnpm build:ui",
     "build:core": "pnpm --filter @wengine-ai/llms build",
     "build:shared": "pnpm --filter @wengine-ai/claude-code-router-shared build",
-    "build:cli": "pnpm --filter @wengine-ai/claude-code-router build",
+    "build:cli": "pnpm --filter claude-code-router-next build",
     "build:server": "pnpm --filter @wengine-ai/claude-code-router-server build",
     "build:ui": "pnpm --filter @wengine-ai/claude-code-router-ui build",
     "build:docs": "pnpm --filter claude-code-router-docs build",

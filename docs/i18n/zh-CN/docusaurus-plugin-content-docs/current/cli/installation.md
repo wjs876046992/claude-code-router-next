@@ -16,19 +16,19 @@ sidebar_position: 2
 ## 通过 npm 安装
 
 ```bash
-npm install -g @wengine-ai/claude-code-router
+npm install -g claude-code-router-next
 ```
 
 ## 通过 pnpm 安装
 
 ```bash
-pnpm add -g @wengine-ai/claude-code-router
+pnpm add -g claude-code-router-next
 ```
 
 ## 通过 Yarn 安装
 
 ```bash
-yarn global add @wengine-ai/claude-code-router
+yarn global add claude-code-router-next
 ```
 
 ## 验证安装

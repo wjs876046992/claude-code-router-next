@@ -71,7 +71,7 @@ publish_core_npm() {
 publish_npm() {
   echo ""
   echo "========================================="
-  echo "发布 npm 包 @wengine-ai/claude-code-router"
+  echo "发布 npm 包 claude-code-router-next"
   echo "========================================="
 
   if ! npm whoami &>/dev/null; then
@@ -96,7 +96,7 @@ const pkg = JSON.parse(fs.readFileSync(process.env.CLI_PKG_PATH, 'utf8'));
 const serverPkg = JSON.parse(fs.readFileSync(process.env.SERVER_PKG_PATH, 'utf8'));
 const corePkg = JSON.parse(fs.readFileSync(process.env.CORE_PKG_PATH, 'utf8'));
 
-pkg.name = '@wengine-ai/claude-code-router';
+pkg.name = 'claude-code-router-next';
 delete pkg.scripts;
 pkg.files = ['dist/*', 'README.md', 'LICENSE'];
 pkg.dependencies = {
@@ -127,7 +127,7 @@ EOF
 
   echo ""
   echo "✅ npm 包发布成功!"
-  echo "   包名: @wengine-ai/claude-code-router@${VERSION}"
+  echo "   包名: claude-code-router-next@${VERSION}"
 }
 
 # Publish Docker image

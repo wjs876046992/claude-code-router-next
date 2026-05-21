@@ -21,7 +21,7 @@ Claude Code Router CLI (`ccr`) is a command-line tool for managing and controlli
 ## Installation
 
 ```bash
-npm install -g @wengine-ai/claude-code-router
+npm install -g claude-code-router-next
 ```
 
 ## Basic Usage

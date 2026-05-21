@@ -13,7 +13,7 @@ const execPromise = promisify(exec);
 export async function checkForUpdates(currentVersion: string) {
   try {
     // Get latest version info from npm registry
-    const { stdout } = await execPromise("npm view @wengine-ai/claude-code-router version");
+    const { stdout } = await execPromise("npm view claude-code-router-next version");
     const latestVersion = stdout.trim();
     
     // Compare versions
@@ -37,7 +37,7 @@ export async function checkForUpdates(currentVersion: string) {
 export async function performUpdate() {
   try {
     // Execute npm update command
-    const { stdout, stderr } = await execPromise("npm update -g @wengine-ai/claude-code-router");
+    const { stdout, stderr } = await execPromise("npm install -g claude-code-router-next@latest");
     
     if (stderr) {
       console.error("Update stderr:", stderr);

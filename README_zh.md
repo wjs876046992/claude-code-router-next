@@ -1,8 +1,8 @@
 ![](blog/images/claude-code-router-img.png)
 
-[![](https://img.shields.io/badge/%F0%9F%87%AC%F0%9F%87%A7-English-000aff?style=flat)](README.md)
-[![Discord](https://img.shields.io/badge/Discord-%235865F2.svg?&logo=discord&logoColor=white)](https://discord.gg/rdftVMaUcS)
-[![](https://img.shields.io/github/license/musistudio/claude-code-router)](https://github.com/musistudio/claude-code-router/blob/main/LICENSE)
+**[🇨🇳 中文文档](README_zh.md)**  |  **[🇬🇧 English](README.md)**  |  [![npm version](https://badge.fury.io/js/claude-code-router-next.svg)](https://www.npmjs.com/package/claude-code-router-next)
+
+> **说明**：原版 [claude-code-router](https://github.com/musistudio/claude-code-router) 仓库已不再活跃维护。本项目是基于原仓库 fork 的社区活跃版本，持续进行 Bug 修复、功能开发和长期维护。
 
 <hr>
 
@@ -39,7 +39,7 @@ npm install -g @anthropic-ai/claude-code
 然后，安装 Claude Code Router：
 
 ```shell
-npm install -g @wengine-ai/claude-code-router
+npm install -g claude-code-router-next
 ```
 
 #### 选项 B：从 GitHub 安装（最新开发版）
@@ -48,7 +48,7 @@ npm install -g @wengine-ai/claude-code-router
 
 1. **先卸载已安装的全局版本**（以避免指令冲突）：
    ```shell
-   npm uninstall -g @wengine-ai/claude-code-router @musistudio/claude-code-router
+   npm uninstall -g claude-code-router-next @musistudio/claude-code-router
    ```
 
 2. **克隆本仓库并在本地进行 Link**（推荐开发者使用）：
@@ -67,17 +67,19 @@ npm install -g @wengine-ai/claude-code-router
 
 #### 🔄 从官方原版社区版迁移 (@musistudio/claude-code-router)
 
-如果您当前正在使用官方原版社区版本 `@musistudio/claude-code-router`，并且希望切换到本仓库提供的增强版本 (`@wengine-ai/claude-code-router`) 以使用高级功能（如：月度额度可视化用量条、DeepSeek 思维链多轮对话兼容性修复、主动健康探测等）：
+如果您当前正在使用官方原版社区版本 `@musistudio/claude-code-router` 或之前的版本 `@wengine-ai/claude-code-router`，希望切换到 `claude-code-router-next`：
 
-1. **先卸载官方社区原版本**：
+1. **先卸载旧版本**：
    ```shell
-   npm uninstall -g @musistudio/claude-code-router
+   npm uninstall -g @musistudio/claude-code-router @wengine-ai/claude-code-router
    ```
 
 2. **安装本仓库增强版本**：
    ```shell
-   npm install -g @wengine-ai/claude-code-router
+   npm install -g claude-code-router-next
    ```
+
+> **说明**：卸载旧包**不会影响**您已有的配置文件 `~/.claude-code-router/config.json`，新版本会自动读取原有配置。
 
 ### 2. 配置
 
@@ -606,7 +608,7 @@ jobs:
 
       - name: Start Claude Code Router
         run: |
-          nohup ~/.bun/bin/bunx @wengine-ai/claude-code-router@1.0.8 start &
+          nohup ~/.bun/bin/bunx claude-code-router-next@1.0.8 start &
         shell: bash
 
       - name: Run Claude Code

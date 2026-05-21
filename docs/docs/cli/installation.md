@@ -15,19 +15,19 @@ Install Claude Code Router globally using your preferred package manager.
 ## Install via npm
 
 ```bash
-npm install -g @wengine-ai/claude-code-router
+npm install -g claude-code-router-next
 ```
 
 ## Install via pnpm
 
 ```bash
-pnpm add -g @wengine-ai/claude-code-router
+pnpm add -g claude-code-router-next
 ```
 
 ## Install via Yarn
 
 ```bash
-yarn global add @wengine-ai/claude-code-router
+yarn global add claude-code-router-next
 ```
 
 ## Verify Installation

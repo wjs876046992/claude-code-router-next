@@ -39,7 +39,7 @@ npm install -g @anthropic-ai/claude-code
 Then, install Claude Code Router:
 
 ```shell
-npm install -g @wengine-ai/claude-code-router
+npm install -g claude-code-router-next
 ```
 
 #### Option B: Install from GitHub (Latest Development Version)
@@ -48,7 +48,7 @@ If you want to use the latest features and bug fixes directly from the source co
 
 1. **Uninstall the current version first** (to prevent command conflicts):
    ```shell
-   npm uninstall -g @wengine-ai/claude-code-router @musistudio/claude-code-router
+   npm uninstall -g claude-code-router-next @musistudio/claude-code-router
    ```
 
 2. **Clone and link locally** (recommended for developers):
@@ -67,7 +67,7 @@ If you want to use the latest features and bug fixes directly from the source co
 
 #### 🔄 Migrating from the Official Upstream (@musistudio/claude-code-router)
 
-If you are currently using the upstream community version `@musistudio/claude-code-router` and want to switch to this repository's version (`@wengine-ai/claude-code-router`) for advanced features (e.g. enhanced token-limit UI bars, DeepSeek thinking compatibilities, active health probes):
+If you are currently using the upstream community version `@musistudio/claude-code-router` and want to switch to this repository's version (`claude-code-router-next`) for advanced features (e.g. enhanced token-limit UI bars, DeepSeek thinking compatibilities, active health probes):
 
 1. **Uninstall the upstream community version**:
    ```shell
@@ -76,7 +76,7 @@ If you are currently using the upstream community version `@musistudio/claude-co
 
 2. **Install this version**:
    ```shell
-   npm install -g @wengine-ai/claude-code-router
+   npm install -g claude-code-router-next
    ```
 
 ### 2. Configuration
@@ -689,7 +689,7 @@ jobs:
 
       - name: Start Claude Code Router
         run: |
-          nohup ~/.bun/bin/bunx @wengine-ai/claude-code-router@latest start &
+          nohup ~/.bun/bin/bunx claude-code-router-next@latest start &
         shell: bash
 
       - name: Run Claude Code

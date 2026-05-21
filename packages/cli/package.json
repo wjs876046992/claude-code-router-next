@@ -1,5 +1,5 @@
 {
-  "name": "@wengine-ai/claude-code-router",
+  "name": "claude-code-router-next",
   "version": "2.1.0",
   "description": "CLI for Claude Code Router",
   "bin": {
