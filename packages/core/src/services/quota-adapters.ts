@@ -170,19 +170,10 @@ class ZhipuQuotaAdapter extends BaseQuotaAdapter {
     timeoutMs: number,
     proxyUrl?: string
   ): Promise<ProviderQuotaResult | null> {
-    // Use quotaToken if available, otherwise fallback to apiKey
-    const authToken = provider.quotaToken || provider.apiKey;
-    if (!authToken) return null;
+    if (!provider.apiKey) return null;
 
-    // Dynamically format the Authorization header.
-    // If it already starts with 'bearer ' or 'ey' (JWT), use Bearer authentication.
-    // Otherwise (standard API key), send it raw without the 'Bearer ' prefix as required by Zhipu.
-    let authHeader = authToken.trim();
-    if (!authHeader.toLowerCase().startsWith("bearer ")) {
-      if (authHeader.startsWith("ey")) {
-        authHeader = `Bearer ${authHeader}`;
-      }
-    }
+    // Zhipu API Key authentication: send raw without 'Bearer ' prefix
+    const authHeader = provider.apiKey.trim();
 
     const fetchOptions: RequestInit & { dispatcher?: unknown } = {
       method: "GET",
