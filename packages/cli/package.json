@@ -1,5 +1,5 @@
 {
-  "name": "claude-code-router-next",
+  "name": "@wengine-ai/claude-code-router-next",
   "version": "2.1.1",
   "description": "CLI for Claude Code Router",
   "bin": {
@@ -17,7 +17,7 @@
     "build": "node ../../scripts/build-cli.js"
   },
   "dependencies": {
-    "@wengine-ai/llms": "^2.0.80",
+    "@wengine-ai/llms": "^2.0.86",
     "lru-cache": "^11.2.2"
   },
   "devDependencies": {
