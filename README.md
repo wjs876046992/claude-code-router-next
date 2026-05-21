@@ -603,10 +603,5 @@ jobs:
 
 这种设置可以实现有趣的自动化，例如在非高峰时段运行任务以降低 API 成本。
 
-## 📝 深入阅读
-
--   [项目动机和工作原理](blog/zh/项目初衷及原理.md)
--   [也许我们可以用路由器做更多事情](blog/zh/或许我们能在Router中做更多事情.md)
-
 ## 交流群
 <img src="/blog/images/wechat_group.jpg" width="200" alt="wechat_group" />
