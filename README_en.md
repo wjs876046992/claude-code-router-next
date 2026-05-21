@@ -689,5 +689,142 @@ jobs:
 
 This setup allows for interesting automations, like running tasks during off-peak hours to reduce API costs.
 
+## 🎯 Advanced Features
+
+### Model Family Routing
+
+Claude Code Router supports **model family routing**, mapping Claude Code's model tiers (opus/sonnet/haiku) to different provider models. This enables intelligent cost control: main process keeps the same model for cache hits, while subagents can auto-downgrade.
+
+#### Configuration Example
+
+```json
+{
+  "Router": {
+    "enableFamilyRouting": true,
+    "families": {
+      "opus": {
+        "default": "Zhipu Coding Plan,glm-5",
+        "think": "DeepSeek,deepseek-reasoner",
+        "longContext": "Alibaba Cloud,qwen3-plus",
+        "webSearch": "Gemini,gemini-2.5-flash",
+        "fallback": {
+          "default": ["Alibaba Cloud,glm-4", "DeepSeek,deepseek-chat"],
+          "think": ["Alibaba Cloud,qwen-plus", "DeepSeek,deepseek-reasoner"]
+        }
+      },
+      "sonnet": {
+        "default": "OpenRouter,deepseek/deepseek-v3",
+        "think": "DeepSeek,deepseek-reasoner",
+        "fallback": {
+          "default": ["Alibaba Cloud,qwen-turbo", "Gemini,gemini-2.0-flash"]
+        }
+      },
+      "haiku": {
+        "default": "Alibaba Cloud,qwen-turbo",
+        "fallback": {
+          "default": ["Gemini,gemini-2.0-flash-lite"]
+        }
+      }
+    }
+  }
+}
+```
+
+#### Scenario Types
+
+| Scenario | Trigger Condition | Description |
+|----------|-------------------|-------------|
+| `default` | Default | Daily conversations and code generation |
+| `think` | Plan Mode | Complex reasoning, architecture design |
+| `longContext` | tokens > 60000 | Large file analysis |
+| `webSearch` | web_search tool | Web search tasks |
+| `background` | Background tasks | Auto commits, simple checks |
+
+### Fallback Mechanism
+
+When a primary model fails, Router automatically tries fallback models in the chain to ensure requests don't fail.
+
+#### Workflow
+
+1. **Health Check**: Each provider/model maintains health status
+   - `closed` (healthy) → Green indicator
+   - `open` (fail pool) → Red indicator, auto skipped
+   - `half-open` (recovering) → Yellow indicator
+
+2. **Failure Detection**: After 3 consecutive failures, enters `open` status
+
+3. **Fallback Promotion**: When primary fails and fallback succeeds, the fallback model is temporarily "promoted" (TTL 10 min). Subsequent requests use the promoted model directly, avoiding repeated attempts on the failed primary.
+
+4. **Auto Recovery**: Every 5 minutes, probe failed models. On success → `half-open`, then 2 more successes → `closed`.
+
+<!-- Health indicator screenshot placeholder -->
+
+#### Fallback Configuration Priority
+
+```
+family fallback → global fallback
+```
+
+Use family-specific fallback first, then global fallback.
+
+```json
+{
+  "Router": {
+    "enableFallback": true,
+    "families": {
+      "opus": {
+        "fallback": {
+          "default": ["Alibaba Cloud,glm-4", "DeepSeek,deepseek-chat"]
+        }
+      }
+    }
+  },
+  "fallback": {
+    "default": ["OpenRouter,deepseek/deepseek-v3", "Gemini,gemini-2.5-flash"],
+    "think": ["DeepSeek,deepseek-reasoner"]
+  }
+}
+```
+
+### Usage Statistics
+
+Router provides comprehensive usage tracking:
+
+#### Quota Monitoring
+
+UI displays real-time quota usage for each provider:
+
+- **5h Quota**: Short-window limit (5-hour reset)
+- **7d Quota**: Weekly limit (7-day reset)
+- **Reset Time**: Next quota reset timestamp
+
+<!-- Quota bar screenshot placeholder -->
+
+Supported providers:
+- Zhipu GLM Coding Plan
+- Alibaba Cloud Qwen Coding Plan
+- Kimi Coding Plan
+- MiniMax Coding Plan
+- DeepSeek
+- OpenRouter
+- SiliconFlow
+
+#### Usage Records
+
+Each request logs detailed statistics:
+
+| Field | Description |
+|-------|-------------|
+| `inputTokens` | Input token count |
+| `outputTokens` | Output token count |
+| `cacheReadInputTokens` | Cache read tokens |
+| `cacheCreationInputTokens` | Cache creation tokens |
+| `ttft` | Time to first token (ms) |
+| `tokensPerSecond` | Output speed |
+| `durationMs` | Request duration |
+| `status` | success / error |
+
+Data location: `~/.claude-code-router/data/usage.jsonl`
+
 
 

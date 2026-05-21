@@ -603,5 +603,142 @@ jobs:
 
 这种设置可以实现有趣的自动化，例如在非高峰时段运行任务以降低 API 成本。
 
+## 🎯 高级功能
+
+### 模型族映射 (Family Routing)
+
+Claude Code Router 支持**模型族映射**，将 Claude Code 的模型分级（opus/sonnet/haiku）映射到不同服务商的模型。这实现了智能成本控制：主进程保持相同模型以最大化缓存命中，子代理可自动降级。
+
+#### 配置示例
+
+```json
+{
+  "Router": {
+    "enableFamilyRouting": true,
+    "families": {
+      "opus": {
+        "default": "智谱 Coding Plan,glm-5",
+        "think": "DeepSeek,deepseek-reasoner",
+        "longContext": "阿里云,qwen3-plus",
+        "webSearch": "Gemini,gemini-2.5-flash",
+        "fallback": {
+          "default": ["阿里云,glm-4", "DeepSeek,deepseek-chat"],
+          "think": ["阿里云,qwen-plus", "DeepSeek,deepseek-reasoner"]
+        }
+      },
+      "sonnet": {
+        "default": "OpenRouter,deepseek/deepseek-v3",
+        "think": "DeepSeek,deepseek-reasoner",
+        "fallback": {
+          "default": ["阿里云,qwen-turbo", "Gemini,gemini-2.0-flash"]
+        }
+      },
+      "haiku": {
+        "default": "阿里云,qwen-turbo",
+        "fallback": {
+          "default": ["Gemini,gemini-2.0-flash-lite"]
+        }
+      }
+    }
+  }
+}
+```
+
+#### 场景说明
+
+| 场景 | 触发条件 | 说明 |
+|------|----------|------|
+| `default` | 默认 | 日常对话和代码生成 |
+| `think` | Plan Mode | 复杂推理、架构设计 |
+| `longContext` | token > 60000 | 大文件分析 |
+| `webSearch` | web_search tool | 网络搜索任务 |
+| `background` | 后台任务 | 自动提交、简单检查 |
+
+### Fallback 机制
+
+当主模型失败时，Router 会自动尝试 fallback 链中的备用模型，确保请求不中断。
+
+#### 工作流程
+
+1. **健康检查**：每个 provider/model 维护健康状态
+   - `closed`（健康）→ 绿色指示器
+   - `open`（失败池）→ 红色指示器，自动跳过
+   - `half-open`（恢复中）→ 黄色指示器
+
+2. **失败判定**：连续 3 次失败后进入 `open` 状态
+
+3. **Fallback Promotion**：当主模型失败且 fallback 成功时，临时"晋升" fallback 模型（TTL 10 分钟），后续请求直接使用晋升模型，避免重复尝试失败的主模型
+
+4. **自动恢复**：每 5 分钟探测失败模型，成功后恢复为 `half-open`，再成功 2 次后恢复为 `closed`
+
+<!-- 健康状态指示器截图位置 -->
+
+#### Fallback 配置层级
+
+```
+family fallback → global fallback
+```
+
+优先使用模型族专属的 fallback 配置，其次使用全局 fallback。
+
+```json
+{
+  "Router": {
+    "enableFallback": true,
+    "families": {
+      "opus": {
+        "fallback": {
+          "default": ["阿里云,glm-4", "DeepSeek,deepseek-chat"]
+        }
+      }
+    }
+  },
+  "fallback": {
+    "default": ["OpenRouter,deepseek/deepseek-v3", "Gemini,gemini-2.5-flash"],
+    "think": ["DeepSeek,deepseek-reasoner"]
+  }
+}
+```
+
+### 用量统计
+
+Router 提供完善的用量统计功能：
+
+#### Quota 监控
+
+UI 界面实时显示各服务商的额度使用情况：
+
+- **5h 额度**：短窗口限额（5 小时重置）
+- **7d 额度**：周度限额（7 天重置）
+- **重置时间**：显示下次额度重置时间
+
+<!-- Quota 条截图位置 -->
+
+支持的服务商：
+- 智谱 GLM Coding Plan
+- 阿里云 Qwen Coding Plan
+- Kimi Coding Plan
+- MiniMax Coding Plan
+- DeepSeek
+- OpenRouter
+- SiliconFlow
+
+#### Usage 记录
+
+每次请求都会记录详细统计信息：
+
+| 字段 | 说明 |
+|------|------|
+| `inputTokens` | 输入 token 数 |
+| `outputTokens` | 输出 token 数 |
+| `cacheReadInputTokens` | 缓存读取 token |
+| `cacheCreationInputTokens` | 缓存创建 token |
+| `ttft` | 首 token 时间 (ms) |
+| `tokensPerSecond` | 输出速度 |
+| `durationMs` | 请求耗时 |
+| `status` | success / error |
+
+数据存储位置：`~/.claude-code-router/data/usage.jsonl`
+
 ## 交流群
 <img src="/blog/images/wechat_group.jpg" width="200" alt="wechat_group" />
