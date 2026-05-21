@@ -20,6 +20,7 @@
 - **Dynamic Model Switching**: Switch models on-the-fly within Claude Code using the `/model` command.
 - **CLI Model Management**: Manage models and providers directly from the terminal with `ccr model`.
 - **GitHub Actions Integration**: Trigger Claude Code tasks in your GitHub workflows.
+- **Usage Statistics & Quota Monitoring**: Tracks tokens, cache hits, Time to First Token (TTFT), and generation speed (tokens/sec) for each request, with real-time tracking of quotas and reset times for major providers.
 - **Plugin System**: Extend functionality with custom transformers.
 
 ## 🚀 Getting Started
