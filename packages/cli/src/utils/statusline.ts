@@ -397,7 +397,7 @@ const FULL_THEME: StatusLineThemeConfig = {
         {
             type: "speed",
             icon: "⚡",
-            text: "{{tokenSpeed}}tok/s {{isStreaming}}",
+            text: "{{tokenSpeed}} {{isStreaming}}",
             color: "bright_yellow"
         },
         {
@@ -423,8 +423,11 @@ const FULL_THEME: StatusLineThemeConfig = {
 
 // Format token count with fixed-width units for stable display
 function formatTokenCount(count: number): string {
+    if (!Number.isFinite(count) || count < 0) {
+        return '0tok';
+    }
     if (count < 1000) {
-        return `${count}tok`;
+        return `${Math.round(count)}tok`;
     }
     if (count < 1_000_000) {
         const val = count / 1000;
@@ -517,60 +520,50 @@ function formatDuration(ms: number): string {
     }
 }
 
-// Read token-speed statistics from temp file
-async function getTokenSpeedStats(sessionId: string): Promise<{
-    tokensPerSecond: number;
-    timeToFirstToken?: number;
+// Read timing data from token-speed temp file (duration and TTFT are accurate;
+// tokensPerSecond is NOT used because it relies on estimateTokens which overestimates).
+async function getTokenSpeedTiming(sessionId: string): Promise<{
+    durationMs: number;
+    ttftMs: number;
+    timestamp: number;
 } | null> {
     try {
-        // Use system temp directory
         const tempDir = path.join(tmpdir(), 'claude-code-router');
-
-        // Check if temp directory exists
-        try {
-            await fs.access(tempDir);
-        } catch {
-            return null;
-        }
+        try { await fs.access(tempDir); } catch { return null; }
 
         const statsFilePath = path.join(tempDir, `session-${sessionId}.json`);
-        try {
-            await fs.access(statsFilePath);
-        } catch {
-            return null;
-        }
+        try { await fs.access(statsFilePath); } catch { return null; }
 
-        // Read stats file
         const content = await fs.readFile(statsFilePath, 'utf-8');
         const data = JSON.parse(content);
 
-        // Check if data has tokensPerSecond
-        if (data.tokensPerSecond !== undefined && data.tokensPerSecond > 0) {
-            // Check if timestamp is within last 3 seconds
-            const now = Date.now();
-            const timestamp = data.timestamp || 0;
-            const ageInSeconds = (now - timestamp) / 1000;
+        // Parse duration (e.g. "9.99s") and TTFT (e.g. "9994ms")
+        const durationMs = parseDurationToMs(data.duration);
+        const ttftMs = parseDurationToMs(data.timeToFirstToken);
+        if (!durationMs) return null;
 
-            // If data is older than 3 seconds, return 0 speed
-            if (ageInSeconds > 3) {
-                return {
-                    tokensPerSecond: 0,
-                    timeToFirstToken: data.timeToFirstToken
-                };
-            }
-
-            const result = {
-                tokensPerSecond: parseInt(data.tokensPerSecond),
-                timeToFirstToken: data.timeToFirstToken
-            };
-            return result;
-        }
-
-        return null;
-    } catch (error) {
-        // Silently fail on error
+        return { durationMs, ttftMs, timestamp: data.timestamp || 0 };
+    } catch {
         return null;
     }
+}
+
+// Parse duration strings like "9.99s", "9994ms", "1m30s" to milliseconds
+function parseDurationToMs(value: any): number {
+    if (typeof value === 'number') return value;
+    if (typeof value !== 'string') return 0;
+
+    const str = value.trim();
+    const msMatch = str.match(/^([\d.]+)ms$/);
+    if (msMatch) return parseFloat(msMatch[1]);
+
+    const sMatch = str.match(/^([\d.]+)s$/);
+    if (sMatch) return parseFloat(sMatch[1]) * 1000;
+
+    const mMatch = str.match(/^(\d+)m([\d.]+)s$/);
+    if (mMatch) return parseInt(mMatch[1]) * 60000 + parseFloat(mMatch[2]) * 1000;
+
+    return 0;
 }
 
 // Read theme configuration from user home directory
@@ -829,21 +822,30 @@ export async function parseStatusLineData(input: StatusLineInput, presetName?: s
         const usage = formatUsage(inputTokens, outputTokens);
         const [formattedInputTokens, formattedOutputTokens] = usage.split(" ");
 
-        // Get token-speed statistics
-        const tokenSpeedData = await getTokenSpeedStats(input.session_id);
-        const formattedTokenSpeed = tokenSpeedData && tokenSpeedData.tokensPerSecond > 0
-            ? tokenSpeedData.tokensPerSecond.toString()
-            : '';
+        // Calculate token speed from transcript output_tokens + token-speed timing data
+        // We use the LLM-reported output_tokens (accurate) divided by decode duration
+        // instead of the token-speed plugin's estimateTokens-based value (which overestimates).
+        const timingData = await getTokenSpeedTiming(input.session_id);
+        let tokenSpeed = 0;
+        let isStreaming = false;
 
-        // Check if streaming (has active token speed)
-        const isStreaming = tokenSpeedData !== null && tokenSpeedData.tokensPerSecond > 0;
+        if (timingData) {
+            const ageInSeconds = (Date.now() - timingData.timestamp) / 1000;
+            isStreaming = ageInSeconds <= 3 && outputTokens > 0;
 
-        const streamingIndicator = isStreaming ? '[Streaming]' : ''
+            if (outputTokens > 0 && timingData.durationMs > 0) {
+                const decodeDurationMs = Math.max(timingData.durationMs - timingData.ttftMs, 100);
+                tokenSpeed = Math.round(outputTokens / (decodeDurationMs / 1000));
+            }
+        }
+
+        const formattedTokenSpeed = tokenSpeed > 0 ? `${tokenSpeed}tok/s` : '';
+        const streamingIndicator = isStreaming ? '[Streaming]' : '';
 
         // Format time to first token
         let formattedTimeToFirstToken = '';
-        if (tokenSpeedData?.timeToFirstToken !== undefined) {
-            formattedTimeToFirstToken = formatDuration(tokenSpeedData.timeToFirstToken);
+        if (timingData?.ttftMs) {
+            formattedTimeToFirstToken = formatDuration(timingData.ttftMs);
         }
 
         // Process context window data
