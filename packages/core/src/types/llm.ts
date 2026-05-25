@@ -242,4 +242,10 @@ export interface ConfigProvider {
     };
   };
   tokenizer?: ProviderTokenizerConfig;
+  /**
+   * How the provider reports input_tokens in usage responses.
+   * - 'exclusive' (default): input_tokens is net of cache, total = input + cache_read + cache_creation + output
+   * - 'inclusive': input_tokens already includes cache tokens, total = input + output
+   */
+  cache_mode?: 'exclusive' | 'inclusive';
 }

@@ -127,7 +127,7 @@
     "quota_token": "限额查询 Token",
     "quota_token_placeholder": "可选，填入后可自动查询5小时/7天限额",
     "quota_token_desc": "部分供应商需要额外的 Token/Cookie 来查询限额。",
-    "quota_token_tooltip": "Kimi / MiniMax：无需填写，系统会自动复用您配置的 API Key 进行额度查询（若想使用不同的 Key 进行额度查询则可在此填入独立的 API Key）。\n阿里云 Coding Plan：登录 bailian.console.aliyun.com，在 Network 复制 Cookie 请求头的完整 Cookie 值。"
+    "quota_token_tooltip": "阿里云 Coding Plan：登录 bailian.console.aliyun.com，在 Network 复制 Cookie 请求头的完整 Cookie 值。"
   },
   "router": {
     "title": "路由",

@@ -86,6 +86,7 @@ declare module "@wengine-ai/llms" {
     limitDaily?: number;
     currency?: string;
     resetTime?: string;
+    resetTime7d?: string;
   }
 
   export interface StoredQuotaResult extends ProviderQuotaResult {

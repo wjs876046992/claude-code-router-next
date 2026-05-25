@@ -472,6 +472,24 @@ function getContextUsageColor(contextPercent: string): string {
     return "#22c55e";
 }
 
+function getContextCircleIcon(contextPercentStr: string): string {
+    const percent = parseInt(contextPercentStr || "0", 10);
+    if (percent <= 0) return "○";
+    if (percent < 20) return "○";
+    if (percent < 40) return "◔";
+    if (percent < 60) return "◑";
+    if (percent < 80) return "◕";
+    return "●";
+}
+
+function getContextProgressBar(percent: number, length: number = 8): string {
+    const filledLength = Math.round((percent / 100) * length);
+    const emptyLength = length - filledLength;
+    const filled = "▰".repeat(Math.max(0, filledLength));
+    const empty = "▱".repeat(Math.max(0, emptyLength));
+    return `${filled}${empty}`;
+}
+
 // Format cost display
 function formatCost(cost_usd: number): string {
     if (cost_usd < 0.01) {
@@ -734,6 +752,7 @@ export async function parseStatusLineData(input: StatusLineInput, presetName?: s
         let sessionTotalOutputTokens = 0;
         let sessionTotalCacheCreationTokens = 0;
         let sessionTotalCacheReadTokens = 0;
+        let sessionTotalEffectiveTokens = 0;
 
         for (let i = lines.length - 1; i >= 0; i--) {
             try {
@@ -741,10 +760,16 @@ export async function parseStatusLineData(input: StatusLineInput, presetName?: s
                 if (message.type === "assistant" && message.message.model) {
                     // Accumulate tokens for session total
                     if (message.message.usage) {
-                        sessionTotalInputTokens += message.message.usage.input_tokens;
-                        sessionTotalOutputTokens += message.message.usage.output_tokens;
-                        sessionTotalCacheCreationTokens += message.message.usage.cache_creation_input_tokens || 0;
-                        sessionTotalCacheReadTokens += message.message.usage.cache_read_input_tokens || 0;
+                        const usage = message.message.usage;
+                        sessionTotalInputTokens += usage.input_tokens;
+                        sessionTotalOutputTokens += usage.output_tokens;
+                        sessionTotalCacheCreationTokens += usage.cache_creation_input_tokens || 0;
+                        sessionTotalCacheReadTokens += usage.cache_read_input_tokens || 0;
+                        // Per-message effective total: input is always net of cache
+                        sessionTotalEffectiveTokens += usage.input_tokens
+                            + (usage.cache_read_input_tokens || 0)
+                            + (usage.cache_creation_input_tokens || 0)
+                            + usage.output_tokens;
                     }
 
                     // Get last message's model and tokens
@@ -831,12 +856,9 @@ export async function parseStatusLineData(input: StatusLineInput, presetName?: s
         const totalCacheTokens = sessionTotalCacheCreationTokens + sessionTotalCacheReadTokens;
         const contextWindowSize = input.context_window?.context_window_size || 0;
 
-        // Determine if input_tokens already includes cache tokens
-        // If cache_read > input, the provider reports total input (cache included)
-        // Otherwise, input_tokens is net input (cache separate), need to add cache
-        const inputIncludesCache = sessionTotalCacheReadTokens > sessionTotalInputTokens;
-        const effectiveTotalInput = inputIncludesCache ? totalInputTokens : totalInputTokens + totalCacheTokens;
-        const effectiveTotalTokens = effectiveTotalInput + totalOutputTokens;
+        // Use per-message accumulated effective total (already includes input + cache + output)
+        // Fallback to context_window total_input_tokens when transcript has no data
+        const effectiveTotalTokens = sessionTotalEffectiveTokens || input.context_window?.total_input_tokens || 0;
 
         // Process cost data
         const totalCost = input.cost?.total_cost_usd || 0;
@@ -857,6 +879,7 @@ export async function parseStatusLineData(input: StatusLineInput, presetName?: s
             isStreaming: isStreaming ? 'streaming' : '',
             timeToFirstToken: formattedTimeToFirstToken,
             contextPercent: contextPercent.toString(),
+            contextBar: getContextProgressBar(contextPercent),
             contextUsedTokens: formatTokenCount(contextUsedTokens),
             contextUsage: contextWindowSize ? `${formatTokenCount(contextUsedTokens)}/${formatTokenCount(contextWindowSize)}` : '',
             streamingIndicator,
@@ -906,7 +929,10 @@ async function renderDefaultStyle(
 
         const color = dynamicColor ? getColorCode(dynamicColor) : "";
         const background = module.background ? getColorCode(module.background) : "";
-        const icon = module.icon || "";
+        let icon = module.icon || "";
+        if (module.type === "contextCircle") {
+            icon = getContextCircleIcon(variables.contextPercent);
+        }
 
         // If script type, execute script to get text
         let text = "";
@@ -1058,7 +1084,10 @@ async function renderPowerlineStyle(
             ? getContextUsageColor(variables.contextPercent)
             : module.color || "white";
         const backgroundName = module.background || "";
-        const icon = module.icon || "";
+        let icon = module.icon || "";
+        if (module.type === "contextCircle") {
+            icon = getContextCircleIcon(variables.contextPercent);
+        }
 
         // If script type, execute script to get text
         let text = "";

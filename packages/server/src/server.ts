@@ -411,6 +411,10 @@ export const createServer = async (config: any): Promise<any> => {
             quota.reset7d = stored.resetTime;
           }
         }
+
+        if (typeof stored.resetTime7d === 'string') {
+          quota.reset7d = stored.resetTime7d;
+        }
       }
 
       return {

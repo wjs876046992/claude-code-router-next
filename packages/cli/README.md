@@ -1,57 +1,58 @@
 ![](blog/images/claude-code-router-img.png)
 
-[![](https://img.shields.io/badge/%F0%9F%87%A8%F0%9F%87%B3-%E4%B8%AD%E6%96%87%E7%89%88-ff0000?style=flat)](README_zh.md)
-[![Discord](https://img.shields.io/badge/Discord-%235865F2.svg?&logo=discord&logoColor=white)](https://discord.gg/rdftVMaUcS)
-[![](https://img.shields.io/github/license/musistudio/claude-code-router)](https://github.com/musistudio/claude-code-router/blob/main/LICENSE)
+**[🇨🇳 中文文档](README.md)**  |  **[🇬🇧 English](README_en.md)**  |  [![npm version](https://badge.fury.io/js/@wengine-ai_claude-code-router-next.svg)](https://www.npmjs.com/package/@wengine-ai/claude-code-router-next)
+
+> **说明**：原版 [claude-code-router](https://github.com/musistudio/claude-code-router) 仓库已不再活跃维护。本项目是基于原仓库 fork 的社区活跃版本，持续进行 Bug 修复、功能开发和长期维护。
 
 <hr>
 
-> [Progressive Disclosure of Agent Tools from the Perspective of CLI Tool Style](/blog/en/progressive-disclosure-of-agent-tools-from-the-perspective-of-cli-tool-style.md)
+> [从CLI工具风格看工具渐进式披露](/blog/zh/从CLI工具风格看工具渐进式披露.md)
 
-> A powerful tool to route Claude Code requests to different models and customize any request.
+> 一款强大的工具，可将 Claude Code 请求路由到不同的模型，并自定义任何请求。 
 
 ![](blog/images/claude-code.png)
 
-## ✨ Features
 
-- **Model Routing**: Route requests to different models based on your needs (e.g., background tasks, thinking, long context).
-- **Multi-Provider Support**: Supports various model providers like OpenRouter, DeepSeek, Ollama, Gemini, Volcengine, and SiliconFlow.
-- **Request/Response Transformation**: Customize requests and responses for different providers using transformers.
-- **Dynamic Model Switching**: Switch models on-the-fly within Claude Code using the `/model` command.
-- **CLI Model Management**: Manage models and providers directly from the terminal with `ccr model`.
-- **GitHub Actions Integration**: Trigger Claude Code tasks in your GitHub workflows.
-- **Plugin System**: Extend functionality with custom transformers.
+## ✨ 功能
 
-## 🚀 Getting Started
+-   **模型路由**: 根据您的需求将请求路由到不同的模型（例如，后台任务、思考、长上下文）。
+-   **多提供商支持**: 支持 OpenRouter、DeepSeek、Ollama、Gemini、Volcengine 和 SiliconFlow 等各种模型提供商。
+-   **请求/响应转换**: 使用转换器为不同的提供商自定义请求和响应。
+-   **动态模型切换**: 在 Claude Code 中使用 `/model` 命令动态切换模型。
+-   **GitHub Actions 集成**: 在您的 GitHub 工作流程中触发 Claude Code 任务。
+-   **用量统计与限额监控**: 追踪请求的 Token 数、缓存命中率、首 Token 延迟 (TTFT) 和生成速度，并实时展示主流服务商（如智谱、Qwen 等）的限额使用情况。
+-   **插件系统**: 使用自定义转换器扩展功能。
 
-### 1. Installation
+## 🚀 快速入门
 
-You can install Claude Code Router either from the npm registry or directly from this GitHub repository for the latest development version.
+### 1. 安装
 
-#### Option A: Install from npm registry (Stable)
+您可以从 npm 官方仓库安装 Claude Code Router，或者直接从本 GitHub 仓库安装以获取最新的开发版本。
 
-First, ensure you have [Claude Code](https://docs.anthropic.com/en/docs/claude-code/quickstart) installed:
+#### 选项 A：从 npm 官方仓库安装（稳定版）
+
+首先，请确保您已安装 [Claude Code](https://docs.anthropic.com/en/docs/claude-code/quickstart)：
 
 ```shell
 npm install -g @anthropic-ai/claude-code
 ```
 
-Then, install Claude Code Router:
+然后，安装 Claude Code Router：
 
 ```shell
-npm install -g claude-code-router-next
+npm install -g @wengine-ai/claude-code-router-next
 ```
 
-#### Option B: Install from GitHub (Latest Development Version)
+#### 选项 B：从 GitHub 安装（最新开发版）
 
-If you want to use the latest features and bug fixes directly from the source code:
+如果您想直接使用源码中的最新功能和修复：
 
-1. **Uninstall the current version first** (to prevent command conflicts):
+1. **先卸载已安装的全局版本**（以避免指令冲突）：
    ```shell
-   npm uninstall -g claude-code-router-next @musistudio/claude-code-router @wengine-ai/claude-code-router
+   npm uninstall -g @wengine-ai/claude-code-router-next @musistudio/claude-code-router @wengine-ai/claude-code-router
    ```
 
-2. **Clone and link locally** (recommended for developers):
+2. **克隆本仓库并在本地进行 Link**（推荐开发者使用）：
    ```shell
    git clone https://github.com/xiaoliu10/claude-code-router-next.git
    cd claude-code-router-next
@@ -60,67 +61,46 @@ If you want to use the latest features and bug fixes directly from the source co
    npm link
    ```
 
-   *Alternatively, install directly from GitHub globally:*
+   *或者直接从 GitHub 进行全局安装：*
    ```shell
    npm install -g github:xiaoliu10/claude-code-router-next
    ```
 
-#### 🔄 Migrating from the Official Upstream (@musistudio/claude-code-router)
+#### 🔄 从官方原版社区版迁移 (@musistudio/claude-code-router)
 
-If you are currently using the upstream community version `@musistudio/claude-code-router` and want to switch to this repository's version (`claude-code-router-next`) for advanced features (e.g. enhanced token-limit UI bars, DeepSeek thinking compatibilities, active health probes):
+如果您当前正在使用官方原版社区版本 `@musistudio/claude-code-router` 或之前的版本 `@wengine-ai/claude-code-router`，希望切换到 `@wengine-ai/claude-code-router-next`：
 
-1. **Uninstall the upstream community version**:
+1. **先卸载旧版本**：
    ```shell
-   npm uninstall -g @musistudio/claude-code-router
+   npm uninstall -g @musistudio/claude-code-router @wengine-ai/claude-code-router
    ```
 
-2. **Install this version**:
+2. **安装本仓库增强版本**：
    ```shell
-   npm install -g claude-code-router-next
+   npm install -g @wengine-ai/claude-code-router-next
    ```
 
-### 2. Configuration
+> **说明**：卸载旧包**不会影响**您已有的配置文件 `~/.claude-code-router/config.json`，新版本会自动读取原有配置。
 
-Create and configure your `~/.claude-code-router/config.json` file. For more details, you can refer to `config.example.json`.
+### 2. 配置
 
-The `config.json` file has several key sections:
+创建并配置您的 `~/.claude-code-router/config.json` 文件。有关更多详细信息，您可以参考 `config.example.json`。
 
-- **`PROXY_URL`** (optional): You can set a proxy for API requests, for example: `"PROXY_URL": "http://127.0.0.1:7890"`.
-- **`LOG`** (optional): You can enable logging by setting it to `true`. When set to `false`, no log files will be created. Default is `true`.
-- **`LOG_LEVEL`** (optional): Set the logging level. Available options are: `"fatal"`, `"error"`, `"warn"`, `"info"`, `"debug"`, `"trace"`. Default is `"debug"`.
-- **Logging Systems**: The Claude Code Router uses two separate logging systems:
-  - **Server-level logs**: HTTP requests, API calls, and server events are logged using pino in the `~/.claude-code-router/logs/` directory with filenames like `ccr-*.log`
-  - **Application-level logs**: Routing decisions and business logic events are logged in `~/.claude-code-router/claude-code-router.log`
-- **`APIKEY`** (optional): You can set a secret key to authenticate requests. When set, clients must provide this key in the `Authorization` header (e.g., `Bearer your-secret-key`) or the `x-api-key` header. Example: `"APIKEY": "your-secret-key"`.
-- **`HOST`** (optional): You can set the host address for the server. If `APIKEY` is not set, the host will be forced to `127.0.0.1` for security reasons to prevent unauthorized access. Example: `"HOST": "0.0.0.0"`.
-- **`NON_INTERACTIVE_MODE`** (optional): When set to `true`, enables compatibility with non-interactive environments like GitHub Actions, Docker containers, or other CI/CD systems. This sets appropriate environment variables (`CI=true`, `FORCE_COLOR=0`, etc.) and configures stdin handling to prevent the process from hanging in automated environments. Example: `"NON_INTERACTIVE_MODE": true`.
+`config.json` 文件有几个关键部分：
+- **`PROXY_URL`** (可选): 您可以为 API 请求设置代理，例如：`"PROXY_URL": "http://127.0.0.1:7890"`。
+- **`LOG`** (可选): 您可以通过将其设置为 `true` 来启用日志记录。当设置为 `false` 时，将不会创建日志文件。默认值为 `true`。
+- **`LOG_LEVEL`** (可选): 设置日志级别。可用选项包括：`"fatal"`、`"error"`、`"warn"`、`"info"`、`"debug"`、`"trace"`。默认值为 `"debug"`。
+- **日志系统**: Claude Code Router 使用两个独立的日志系统：
+  - **服务器级别日志**: HTTP 请求、API 调用和服务器事件使用 pino 记录在 `~/.claude-code-router/logs/` 目录中，文件名类似于 `ccr-*.log`
+  - **应用程序级别日志**: 路由决策和业务逻辑事件记录在 `~/.claude-code-router/claude-code-router.log` 文件中
+- **`APIKEY`** (可选): 您可以设置一个密钥来进行身份验证。设置后，客户端请求必须在 `Authorization` 请求头 (例如, `Bearer your-secret-key`) 或 `x-api-key` 请求头中提供此密钥。例如：`"APIKEY": "your-secret-key"`。
+- **`HOST`** (可选): 您可以设置服务的主机地址。如果未设置 `APIKEY`，出于安全考虑，主机地址将强制设置为 `127.0.0.1`，以防止未经授权的访问。例如：`"HOST": "0.0.0.0"`。
+- **`NON_INTERACTIVE_MODE`** (可选): 当设置为 `true` 时，启用与非交互式环境（如 GitHub Actions、Docker 容器或其他 CI/CD 系统）的兼容性。这会设置适当的环境变量（`CI=true`、`FORCE_COLOR=0` 等）并配置 stdin 处理，以防止进程在自动化环境中挂起。例如：`"NON_INTERACTIVE_MODE": true`。
+- **`Providers`**: 用于配置不同的模型提供商。
+- **`Router`**: 用于设置路由规则。`default` 指定默认模型，如果未配置其他路由，则该模型将用于所有请求。
+- **`API_TIMEOUT_MS`**: API 请求超时时间，单位为毫秒。
 
-- **`Providers`**: Used to configure different model providers.
-- **`Router`**: Used to set up routing rules. `default` specifies the default model, which will be used for all requests if no other route is configured.
-- **`API_TIMEOUT_MS`**: Specifies the timeout for API calls in milliseconds.
-
-#### Environment Variable Interpolation
-
-Claude Code Router supports environment variable interpolation for secure API key management. You can reference environment variables in your `config.json` using either `$VAR_NAME` or `${VAR_NAME}` syntax:
-
-```json
-{
-  "OPENAI_API_KEY": "$OPENAI_API_KEY",
-  "GEMINI_API_KEY": "${GEMINI_API_KEY}",
-  "Providers": [
-    {
-      "name": "openai",
-      "api_base_url": "https://api.openai.com/v1/chat/completions",
-      "api_key": "$OPENAI_API_KEY",
-      "models": ["gpt-5", "gpt-5-mini"]
-    }
-  ]
-}
-```
-
-This allows you to keep sensitive API keys in environment variables instead of hardcoding them in configuration files. The interpolation works recursively through nested objects and arrays.
-
-Here is a comprehensive example:
+这是一个综合示例：
 
 ```json
 {
@@ -239,330 +219,301 @@ Here is a comprehensive example:
 }
 ```
 
-### 🔑 API Key / Token Guide
+### 🔑 阿里云百炼用量 Token (Cookie) 获取引导
 
-To use the router, you need to acquire API Keys from your preferred LLM providers. Below are guides for some popular providers:
+如果您想让 Claude Code Router 的后台 Web UI 实时拉取并可视化展示您的 **Qwen Coding Plan（Qwen 编程时限套餐）** 剩余用量额度条，您需要获取控制台的浏览器 `Cookie` 作为 `quotaToken` 填入配置：
 
-#### 1. Zhipu AI (BigModel / GLM CODING PLAN)
-*   **Platform**: Zhipu BigModel Platform (sponsored partner)
-*   **Link**: [Zhipu AI BigModel Platform](https://www.bigmodel.cn/claude-code?ic=RRVJPB5SII) (Use this referral link for a 10% discount on GLM CODING PLAN)
-*   **Acquisition Method**:
-    1. Register and log in using the link above.
-    2. Go to the top-right **Console** -> **API Keys**.
-    3. Copy your API Key.
+1. 登录 [阿里云百炼控制台](https://bailian.console.aliyun.com/)。
+2. 按键盘 `F12` 打开浏览器开发者工具，并切换到 **Network (网络)** 标签页。
+3. 点击页面用量模块右上角的 **用量刷新**（旋转循环箭头）按钮。
+4. 在左侧网络请求列表中，找到一个以 `api.json?action=BroadScope...` 开头的接口调用请求并点击。
+5. 在右侧 **Headers (标头)** 的 **Request Headers (请求头)** 中找到 **`Cookie`** 这一项，将其右侧的完整超长内容复制下来。
+6. 在您的 `config.json` 中，将这个 cookie 填入阿里云 provider 下的 **`quotaToken`** 属性中即可！
 
-    GLM CODING PLAN quota information is fetched with this API Key, so you no longer need to configure a web token or `quotaToken`.
+![阿里云用量 Cookie 获取方式](blog/images/aliyun-quota-auth.png)
 
-#### 2. Alibaba Cloud (DashScope / Bailian / Qwen-Coder)
-*   **Platform**: Alibaba Cloud Bailian (highly capable Qwen-Coder models)
-*   **Link**: [Alibaba Cloud Bailian Console](https://bailian.console.aliyun.com/)
-*   **Acquisition Methods**:
-    *   **Method A: Standard Developer API Key (For Request Routing)**
-        1. Log in to Alibaba Cloud and enable the "Bailian" model service.
-        2. Go to the Bailian Console, click on your **profile icon** in the top-right corner.
-        3. Click on **API-KEY** in the dropdown.
-        4. Click **Create New API-KEY** and copy the generated key.
-    *   **Method B: Aliyun Console Cookie (For Quota Visualization in UI)**
-        If you want the Claude Code Router UI to fetch and display your monthly **Qwen Coding Plan** quota progress bars, you need to configure your console session `Cookie` as `quotaToken` in your configuration:
-        1. Log in to the [Alibaba Cloud Bailian Console](https://bailian.console.aliyun.com/).
-        2. Open your browser's Developer Tools (F12) and switch to the **Network** tab.
-        3. Click the **Refresh** (用量刷新) button on the console's usage cards.
-        4. Look for an API request starting with `api.json?action=BroadScope...` in the network log.
-        5. Select the request, find the **`Cookie`** header under **Request Headers**, and copy its entire value.
-        6. Paste this copied cookie string as the **`quotaToken`** property inside the Alibaba Cloud provider block in your `config.json`.
+配置成功后，Web UI 的 Provider 列表中将会实时展示您的套餐剩余用量额度条与刷新状态：
 
-        ![Alibaba Cloud Quota Cookie Acquisition](blog/images/aliyun-quota-auth.png)
+![阿里云用量额度条展示](blog/images/aliyun-quota-display.png)
 
-### 3. Running Claude Code with the Router
+### 3. 使用 Router 运行 Claude Code
 
-Start Claude Code using the router:
+使用 router 启动 Claude Code：
 
 ```shell
 ccr code
 ```
 
-> **Note**: After modifying the configuration file, you need to restart the service for the changes to take effect:
->
+> **注意**: 修改配置文件后，需要重启服务使配置生效：
 > ```shell
 > ccr restart
 > ```
 
-### 4. UI Mode
+### 4. UI 模式
 
-For a more intuitive experience, you can use the UI mode to manage your configuration:
+为了获得更直观的体验，您可以使用 UI 模式来管理您的配置：
 
 ```shell
 ccr ui
 ```
 
-This will open a web-based interface where you can easily view and edit your `config.json` file.
+这将打开一个基于 Web 的界面，您可以在其中轻松查看和编辑您的 `config.json` 文件。
 
 ![UI](/blog/images/ui.png)
 
-#### Usage Statistics
+#### 用量统计
 
-The dashboard includes a built-in **Usage Statistics** panel at the bottom of the main page. Once your requests are routed through Claude Code Router, usage records are collected automatically and displayed in the UI.
+仪表盘在主页面底部内置了**用量统计**面板。当您的请求通过 Claude Code Router 进行路由时，系统会自动收集用量记录并在 UI 界面中展示。
 
-You can use it to view:
+您可以使用它来查看：
 
-- Total requests
-- Input and output tokens
-- Average TTFT
-- Average generation speed
-- Success rate
-- Daily usage chart
-- Detailed request records with filters and pagination
+- 总请求数
+- 输入和输出 Token 数
+- 平均首 Token 延迟 (TTFT)
+- 平均生成速度 (Tokens/秒)
+- 请求成功率
+- 每日用量图表
+- 支持筛选和分页的详细请求历史记录
 
-How to use it:
+![用量统计](/blog/images/usage-statistics.png)
 
-1. Start the router service with `ccr start`
-2. Open the UI with `ccr ui`
-3. Send requests through Claude Code Router, for example with `ccr code`
-4. Return to the main dashboard and check the **Usage Statistics** panel
+如何使用：
 
-Usage data is stored in:
+1. 使用 `ccr start` 启动路由器服务
+2. 使用 `ccr ui` 打开 Web 界面
+3. 通过 Claude Code Router 发送请求（例如使用 `ccr code`）
+4. 返回主仪表盘，查看**用量统计**面板
+
+用量数据保存在：
 
 ```shell
 ~/.claude-code-router/data/usage.jsonl
 ```
 
-You can also filter records by date range, provider, model, and scenario directly in the UI.
+### 5. CLI 模型管理
 
-If the `token-speed` plugin is enabled, the panel will also show TTFT and tokens-per-second metrics. Without that plugin, token counts and request statistics still work, but TTFT and speed may appear as `-`.
-
-For API-based access, Claude Code Router also provides:
-
-- `GET /api/usage` — paginated records with summary
-- `GET /api/usage/summary` — summary only
-- `DELETE /api/usage` — clear usage data
-
-### 5. CLI Model Management
-
-For users who prefer terminal-based workflows, you can use the interactive CLI model selector:
+对于偏好终端工作流的用户，可以使用交互式 CLI 模型选择器：
 
 ```shell
 ccr model
 ```
-![](blog/images/models.gif)
 
-This command provides an interactive interface to:
+该命令提供交互式界面来：
 
-- View current configuration:
-- See all configured models (default, background, think, longContext, webSearch, image)
-- Switch models: Quickly change which model is used for each router type
-- Add new models: Add models to existing providers
-- Create new providers: Set up complete provider configurations including:
-   - Provider name and API endpoint
-   - API key
-   - Available models
-   - Transformer configuration with support for:
-     - Multiple transformers (openrouter, deepseek, gemini, etc.)
-     - Transformer options (e.g., maxtoken with custom limits)
-     - Provider-specific routing (e.g., OpenRouter provider preferences)
+- 查看当前配置
+- 查看所有配置的模型（default、background、think、longContext、webSearch、image）
+- 切换模型：快速更改每个路由器类型使用的模型
+- 添加新模型：向现有提供商添加模型
+- 创建新提供商：设置完整的提供商配置，包括：
+   - 提供商名称和 API 端点
+   - API 密钥
+   - 可用模型
+   - Transformer 配置，支持：
+     - 多个转换器（openrouter、deepseek、gemini 等）
+     - Transformer 选项（例如，带自定义限制的 maxtoken）
+     - 特定于提供商的路由（例如，OpenRouter 提供商偏好）
 
-The CLI tool validates all inputs and provides helpful prompts to guide you through the configuration process, making it easy to manage complex setups without editing JSON files manually.
+CLI 工具验证所有输入并提供有用的提示来引导您完成配置过程，使管理复杂的设置变得容易，无需手动编辑 JSON 文件。
 
-### 6. Presets Management
+### 6. 预设管理
 
-Presets allow you to save, share, and reuse configurations easily. You can export your current configuration as a preset and install presets from files or URLs.
+预设允许您轻松保存、共享和重用配置。您可以将当前配置导出为预设，并从文件或 URL 安装预设。
 
 ```shell
-# Export current configuration as a preset
+# 将当前配置导出为预设
 ccr preset export my-preset
 
-# Export with metadata
-ccr preset export my-preset --description "My OpenAI config" --author "Your Name" --tags "openai,production"
+# 使用元数据导出
+ccr preset export my-preset --description "我的 OpenAI 配置" --author "您的名字" --tags "openai,生产环境"
 
-# Install a preset from local directory
+# 从本地目录安装预设
 ccr preset install /path/to/preset
 
-# List all installed presets
+# 列出所有已安装的预设
 ccr preset list
 
-# Show preset information
+# 显示预设信息
 ccr preset info my-preset
 
-# Delete a preset
+# 删除预设
 ccr preset delete my-preset
 ```
 
-**Preset Features:**
-- **Export**: Save your current configuration as a preset directory (with manifest.json)
-- **Install**: Install presets from local directories
-- **Sensitive Data Handling**: API keys and other sensitive data are automatically sanitized during export (marked as `{{field}}` placeholders)
-- **Dynamic Configuration**: Presets can include input schemas for collecting required information during installation
-- **Version Control**: Each preset includes version metadata for tracking updates
+**预设功能：**
+- **导出**：将当前配置保存为预设目录（包含 manifest.json）
+- **安装**：从本地目录安装预设
+- **敏感数据处理**：导出期间自动清理 API 密钥和其他敏感数据（标记为 `{{field}}` 占位符）
+- **动态配置**：预设可以包含输入架构，用于在安装期间收集所需信息
+- **版本控制**：每个预设包含版本元数据，用于跟踪更新
 
-**Preset File Structure:**
+**预设文件结构：**
 ```
 ~/.claude-code-router/presets/
 ├── my-preset/
-│   └── manifest.json    # Contains configuration and metadata
+│   └── manifest.json    # 包含配置和元数据
 ```
 
-### 7. Activate Command (Environment Variables Setup)
+### 7. Activate 命令（环境变量设置）
 
-The `activate` command allows you to set up environment variables globally in your shell, enabling you to use the `claude` command directly or integrate Claude Code Router with applications built using the Agent SDK.
+`activate` 命令允许您在 shell 中全局设置环境变量，使您能够直接使用 `claude` 命令或将 Claude Code Router 与使用 Agent SDK 构建的应用程序集成。
 
-To activate the environment variables, run:
+要激活环境变量，请运行：
 
 ```shell
 eval "$(ccr activate)"
 ```
 
-This command outputs the necessary environment variables in shell-friendly format, which are then set in your current shell session. After activation, you can:
+此命令会以 shell 友好的格式输出必要的环境变量，这些变量将在当前的 shell 会话中设置。激活后，您可以：
 
-- **Use `claude` command directly**: Run `claude` commands without needing to use `ccr code`. The `claude` command will automatically route requests through Claude Code Router.
-- **Integrate with Agent SDK applications**: Applications built with the Anthropic Agent SDK will automatically use the configured router and models.
+- **直接使用 `claude` 命令**：无需使用 `ccr code` 即可运行 `claude` 命令。`claude` 命令将自动通过 Claude Code Router 路由请求。
+- **与 Agent SDK 应用程序集成**：使用 Anthropic Agent SDK 构建的应用程序将自动使用配置的路由器和模型。
 
-The `activate` command sets the following environment variables:
+`activate` 命令设置以下环境变量：
 
-- `ANTHROPIC_AUTH_TOKEN`: API key from your configuration
-- `ANTHROPIC_BASE_URL`: The local router endpoint (default: `http://127.0.0.1:3456`)
-- `NO_PROXY`: Set to `127.0.0.1` to prevent proxy interference
-- `DISABLE_TELEMETRY`: Disables telemetry
-- `DISABLE_COST_WARNINGS`: Disables cost warnings
-- `API_TIMEOUT_MS`: API timeout from your configuration
+- `ANTHROPIC_AUTH_TOKEN`: 来自配置的 API 密钥
+- `ANTHROPIC_BASE_URL`: 本地路由器端点（默认：`http://127.0.0.1:3456`）
+- `NO_PROXY`: 设置为 `127.0.0.1` 以防止代理干扰
+- `DISABLE_TELEMETRY`: 禁用遥测
+- `DISABLE_COST_WARNINGS`: 禁用成本警告
+- `API_TIMEOUT_MS`: 来自配置的 API 超时时间
 
-> **Note**: Make sure the Claude Code Router service is running (`ccr start`) before using the activated environment variables. The environment variables are only valid for the current shell session. To make them persistent, you can add `eval "$(ccr activate)"` to your shell configuration file (e.g., `~/.zshrc` or `~/.bashrc`).
+> **注意**：在使用激活的环境变量之前，请确保 Claude Code Router 服务正在运行（`ccr start`）。环境变量仅在当前 shell 会话中有效。要使其持久化，您可以将 `eval "$(ccr activate)"` 添加到您的 shell 配置文件（例如 `~/.zshrc` 或 `~/.bashrc`）中。
 
 #### Providers
 
-The `Providers` array is where you define the different model providers you want to use. Each provider object requires:
+`Providers` 数组是您定义要使用的不同模型提供商的地方。每个提供商对象都需要：
 
-- `name`: A unique name for the provider.
-- `api_base_url`: The full API endpoint for chat completions.
-- `api_key`: Your API key for the provider.
-- `models`: A list of model names available from this provider.
-- `transformer` (optional): Specifies transformers to process requests and responses.
+-   `name`: 提供商的唯一名称。
+-   `api_base_url`: 聊天补全的完整 API 端点。
+-   `api_key`: 您提供商的 API 密钥。
+-   `models`: 此提供商可用的模型名称列表。
+-   `transformer` (可选): 指定用于处理请求和响应的转换器。
 
 #### Transformers
 
-Transformers allow you to modify the request and response payloads to ensure compatibility with different provider APIs.
+Transformers 允许您修改请求和响应负载，以确保与不同提供商 API 的兼容性。
 
-- **Global Transformer**: Apply a transformer to all models from a provider. In this example, the `openrouter` transformer is applied to all models under the `openrouter` provider.
-  ```json
-  {
-    "name": "openrouter",
-    "api_base_url": "https://openrouter.ai/api/v1/chat/completions",
-    "api_key": "sk-xxx",
-    "models": [
-      "google/gemini-2.5-pro-preview",
-      "anthropic/claude-sonnet-4",
-      "anthropic/claude-3.5-sonnet"
-    ],
-    "transformer": { "use": ["openrouter"] }
-  }
-  ```
-- **Model-Specific Transformer**: Apply a transformer to a specific model. In this example, the `deepseek` transformer is applied to all models, and an additional `tooluse` transformer is applied only to the `deepseek-chat` model.
+-   **全局 Transformer**: 将转换器应用于提供商的所有模型。在此示例中，`openrouter` 转换器将应用于 `openrouter` 提供商下的所有模型。
+    ```json
+     {
+       "name": "openrouter",
+       "api_base_url": "https://openrouter.ai/api/v1/chat/completions",
+       "api_key": "sk-xxx",
+       "models": [
+         "google/gemini-2.5-pro-preview",
+         "anthropic/claude-sonnet-4",
+         "anthropic/claude-3.5-sonnet"
+       ],
+       "transformer": { "use": ["openrouter"] }
+     }
+    ```
+-   **特定于模型的 Transformer**: 将转换器应用于特定模型。在此示例中，`deepseek` 转换器应用于所有模型，而额外的 `tooluse` 转换器仅应用于 `deepseek-chat` 模型。
+    ```json
+     {
+       "name": "deepseek",
+       "api_base_url": "https://api.deepseek.com/chat/completions",
+       "api_key": "sk-xxx",
+       "models": ["deepseek-chat", "deepseek-reasoner"],
+       "transformer": {
+         "use": ["deepseek"],
+         "deepseek-chat": { "use": ["tooluse"] }
+       }
+     }
+    ```
 
-  ```json
-  {
-    "name": "deepseek",
-    "api_base_url": "https://api.deepseek.com/chat/completions",
-    "api_key": "sk-xxx",
-    "models": ["deepseek-chat", "deepseek-reasoner"],
-    "transformer": {
-      "use": ["deepseek"],
-      "deepseek-chat": { "use": ["tooluse"] }
-    }
-  }
-  ```
-
-- **Passing Options to a Transformer**: Some transformers, like `maxtoken`, accept options. To pass options, use a nested array where the first element is the transformer name and the second is an options object.
-  ```json
-  {
-    "name": "siliconflow",
-    "api_base_url": "https://api.siliconflow.cn/v1/chat/completions",
-    "api_key": "sk-xxx",
-    "models": ["moonshotai/Kimi-K2-Instruct"],
-    "transformer": {
-      "use": [
-        [
-          "maxtoken",
-          {
-            "max_tokens": 16384
-          }
-        ]
-      ]
-    }
-  }
-  ```
-
-**Available Built-in Transformers:**
-
-- `Anthropic`:If you use only the `Anthropic` transformer, it will preserve the original request and response parameters(you can use it to connect directly to an Anthropic endpoint).
-- `deepseek`: Adapts requests/responses for DeepSeek API.
-- `gemini`: Adapts requests/responses for Gemini API.
-- `openrouter`: Adapts requests/responses for OpenRouter API. It can also accept a `provider` routing parameter to specify which underlying providers OpenRouter should use. For more details, refer to the [OpenRouter documentation](https://openrouter.ai/docs/features/provider-routing). See an example below:
-  ```json
-    "transformer": {
-      "use": ["openrouter"],
-      "moonshotai/kimi-k2": {
+-   **向 Transformer 传递选项**: 某些转换器（如 `maxtoken`）接受选项。要传递选项，请使用嵌套数组，其中第一个元素是转换器名称，第二个元素是选项对象。
+    ```json
+    {
+      "name": "siliconflow",
+      "api_base_url": "https://api.siliconflow.cn/v1/chat/completions",
+      "api_key": "sk-xxx",
+      "models": ["moonshotai/Kimi-K2-Instruct"],
+      "transformer": {
         "use": [
           [
-            "openrouter",
+            "maxtoken",
             {
-              "provider": {
-                "only": ["moonshotai/fp8"]
-              }
+              "max_tokens": 16384
             }
           ]
         ]
       }
     }
-  ```
-- `groq`: Adapts requests/responses for groq API.
-- `maxtoken`: Sets a specific `max_tokens` value.
-- `tooluse`: Optimizes tool usage for certain models via `tool_choice`.
-- `gemini-cli` (experimental): Unofficial support for Gemini via Gemini CLI [gemini-cli.js](https://gist.github.com/musistudio/1c13a65f35916a7ab690649d3df8d1cd).
-- `reasoning`: Used to process the `reasoning_content` field.
-- `sampling`: Used to process sampling information fields such as `temperature`, `top_p`, `top_k`, and `repetition_penalty`.
-- `enhancetool`: Adds a layer of error tolerance to the tool call parameters returned by the LLM (this will cause the tool call information to no longer be streamed).
-- `cleancache`: Clears the `cache_control` field from requests.
-- `vertex-gemini`: Handles the Gemini API using Vertex authentication.
-- `chutes-glm` Unofficial support for GLM 4.5 model via Chutes [chutes-glm-transformer.js](https://gist.github.com/vitobotta/2be3f33722e05e8d4f9d2b0138b8c863).
-- `qwen-cli` (experimental): Unofficial support for qwen3-coder-plus model via Qwen CLI [qwen-cli.js](https://gist.github.com/musistudio/f5a67841ced39912fd99e42200d5ca8b).
-- `rovo-cli` (experimental): Unofficial support for gpt-5 via Atlassian Rovo Dev CLI [rovo-cli.js](https://gist.github.com/SaseQ/c2a20a38b11276537ec5332d1f7a5e53).
+    ```
 
-**Custom Transformers:**
+**可用的内置 Transformer：**
 
-You can also create your own transformers and load them via the `transformers` field in `config.json`.
+-   `Anthropic`: 如果你只使用这一个转换器，则会直接透传请求和响应(你可以用它来接入其他支持Anthropic端点的服务商)。
+-   `deepseek`: 适配 DeepSeek API 的请求/响应。
+-   `gemini`: 适配 Gemini API 的请求/响应。
+-   `openrouter`: 适配 OpenRouter API 的请求/响应。它还可以接受一个 `provider` 路由参数，以指定 OpenRouter 应使用哪些底层提供商。有关更多详细信息，请参阅 [OpenRouter 文档](https://openrouter.ai/docs/features/provider-routing)。请参阅下面的示例：
+    ```json
+      "transformer": {
+        "use": ["openrouter"],
+        "moonshotai/kimi-k2": {
+          "use": [
+            [
+              "openrouter",
+              {
+                "provider": {
+                  "only": ["moonshotai/fp8"]
+                }
+              }
+            ]
+          ]
+        }
+      }
+    ```
+-   `groq`: 适配 groq API 的请求/响应
+-   `maxtoken`: 设置特定的 `max_tokens` 值。
+-   `tooluse`: 优化某些模型的工具使用(通过`tool_choice`参数)。
+-   `gemini-cli` (实验性): 通过 Gemini CLI [gemini-cli.js](https://gist.github.com/musistudio/1c13a65f35916a7ab690649d3df8d1cd) 对 Gemini 的非官方支持。
+-   `reasoning`: 用于处理 `reasoning_content` 字段。
+-   `sampling`: 用于处理采样信息字段，如 `temperature`、`top_p`、`top_k` 和 `repetition_penalty`。
+-   `enhancetool`: 对 LLM 返回的工具调用参数增加一层容错处理（这会导致不再流式返回工具调用信息）。
+-   `cleancache`: 清除请求中的 `cache_control` 字段。
+-   `vertex-gemini`: 处理使用 vertex 鉴权的 gemini api。
+-   `qwen-cli` (实验性): 通过 Qwen CLI [qwen-cli.js](https://gist.github.com/musistudio/f5a67841ced39912fd99e42200d5ca8b) 对 qwen3-coder-plus 的非官方支持。
+-   `rovo-cli` (experimental): 通过 Atlassian Rovo Dev CLI [rovo-cli.js](https://gist.github.com/SaseQ/c2a20a38b11276537ec5332d1f7a5e53) 对 GPT-5 的非官方支持。
+
+**自定义 Transformer:**
+
+您还可以创建自己的转换器，并通过 `config.json` 中的 `transformers` 字段加载它们。
 
 ```json
 {
   "transformers": [
-    {
-      "path": "/User/xxx/.claude-code-router/plugins/gemini-cli.js",
-      "options": {
-        "project": "xxx"
+      {
+        "path": "/User/xxx/.claude-code-router/plugins/gemini-cli.js",
+        "options": {
+          "project": "xxx"
+        }
       }
-    }
   ]
 }
 ```
 
 #### Router
 
-The `Router` object defines which model to use for different scenarios:
+`Router` 对象定义了在不同场景下使用哪个模型：
 
-- `default`: The default model for general tasks.
-- `background`: A model for background tasks. This can be a smaller, local model to save costs.
-- `think`: A model for reasoning-heavy tasks, like Plan Mode.
-- `longContext`: A model for handling long contexts (e.g., > 60K tokens).
-- `longContextThreshold` (optional): The token count threshold for triggering the long context model. Defaults to 60000 if not specified.
-- `webSearch`: Used for handling web search tasks and this requires the model itself to support the feature. If you're using openrouter, you need to add the `:online` suffix after the model name.
-- `image` (beta): Used for handling image-related tasks (supported by CCR’s built-in agent). If the model does not support tool calling, you need to set the `config.forceUseImageAgent` property to `true`.
+-   `default`: 用于常规任务的默认模型。
+-   `background`: 用于后台任务的模型。这可以是一个较小的本地模型以节省成本。
+-   `think`: 用于推理密集型任务（如计划模式）的模型。
+-   `longContext`: 用于处理长上下文（例如，> 60K 令牌）的模型。
+-   `longContextThreshold` (可选): 触发长上下文模型的令牌数阈值。如果未指定，默认为 60000。
+-   `webSearch`: 用于处理网络搜索任务，需要模型本身支持。如果使用`openrouter`需要在模型后面加上`:online`后缀。
+-   `image`(测试版): 用于处理图片类任务（采用CCR内置的agent支持），如果该模型不支持工具调用，需要将`config.forceUseImageAgent`属性设置为`true`。
 
-- You can also switch models dynamically in Claude Code with the `/model` command:
+您还可以使用 `/model` 命令在 Claude Code 中动态切换模型：
 `/model provider_name,model_name`
-Example: `/model openrouter,anthropic/claude-3.5-sonnet`
+示例: `/model openrouter,anthropic/claude-3.5-sonnet`
 
-#### Custom Router
+#### 自定义路由器
 
-For more advanced routing logic, you can specify a custom router script via the `CUSTOM_ROUTER_PATH` in your `config.json`. This allows you to implement complex routing rules beyond the default scenarios.
+对于更高级的路由逻辑，您可以在 `config.json` 中通过 `CUSTOM_ROUTER_PATH` 字段指定一个自定义路由器脚本。这允许您实现超出默认场景的复杂路由规则。
 
-In your `config.json`:
+在您的 `config.json` 中配置:
 
 ```json
 {
@@ -570,74 +521,54 @@ In your `config.json`:
 }
 ```
 
-The custom router file must be a JavaScript module that exports an `async` function. This function receives the request object and the config object as arguments and should return the provider and model name as a string (e.g., `"provider_name,model_name"`), or `null` to fall back to the default router.
+自定义路由器文件必须是一个导出 `async` 函数的 JavaScript 模块。该函数接收请求对象和配置对象作为参数，并应返回提供商和模型名称的字符串（例如 `"provider_name,model_name"`），如果返回 `null` 则回退到默认路由。
 
-Here is an example of a `custom-router.js` based on `custom-router.example.js`:
+这是一个基于 `custom-router.example.js` 的 `custom-router.js` 示例：
 
 ```javascript
 // /User/xxx/.claude-code-router/custom-router.js
 
 /**
- * A custom router function to determine which model to use based on the request.
+ * 一个自定义路由函数，用于根据请求确定使用哪个模型。
  *
- * @param {object} req - The request object from Claude Code, containing the request body.
- * @param {object} config - The application's config object.
- * @returns {Promise<string|null>} - A promise that resolves to the "provider,model_name" string, or null to use the default router.
+ * @param {object} req - 来自 Claude Code 的请求对象，包含请求体。
+ * @param {object} config - 应用程序的配置对象。
+ * @returns {Promise<string|null>} - 一个解析为 "provider,model_name" 字符串的 Promise，如果返回 null，则使用默认路由。
  */
 module.exports = async function router(req, config) {
-  const userMessage = req.body.messages.find((m) => m.role === "user")?.content;
+  const userMessage = req.body.messages.find(m => m.role === 'user')?.content;
 
-  if (userMessage && userMessage.includes("explain this code")) {
-    // Use a powerful model for code explanation
-    return "openrouter,anthropic/claude-3.5-sonnet";
+  if (userMessage && userMessage.includes('解释这段代码')) {
+    // 为代码解释任务使用更强大的模型
+    return 'openrouter,anthropic/claude-3.5-sonnet';
   }
 
-  // Fallback to the default router configuration
+  // 回退到默认的路由配置
   return null;
 };
 ```
 
-##### Subagent Routing
+##### 子代理路由
 
-For routing within subagents, you must specify a particular provider and model by including `<CCR-SUBAGENT-MODEL>provider,model</CCR-SUBAGENT-MODEL>` at the **beginning** of the subagent's prompt. This allows you to direct specific subagent tasks to designated models.
+对于子代理内的路由，您必须在子代理提示词的**开头**包含 `<CCR-SUBAGENT-MODEL>provider,model</CCR-SUBAGENT-MODEL>` 来指定特定的提供商和模型。这样可以将特定的子代理任务定向到指定的模型。
 
-**Example:**
+**示例：**
 
 ```
 <CCR-SUBAGENT-MODEL>openrouter,anthropic/claude-3.5-sonnet</CCR-SUBAGENT-MODEL>
-Please help me analyze this code snippet for potential optimizations...
+请帮我分析这段代码是否存在潜在的优化空间...
 ```
 
 ## Status Line (Beta)
-
-To better monitor the status of Claude Code Router at runtime, the project includes a built-in status line tool that can be enabled from the UI.
-
+为了在运行时更好的查看claude-code-router的状态，claude-code-router在v1.0.40内置了一个statusline工具，你可以在UI中启用它，
 ![statusline-config.png](/blog/images/statusline-config.png)
 
-How to use it:
-
-1. Open the UI with `ccr ui`
-2. Enable **StatusLine** in the configuration panel
-3. Save the configuration and restart the service with `ccr restart`
-4. Start Claude Code with `ccr code`
-
-> The built-in status line is injected automatically when Claude Code is launched with `ccr code`.
-
-The status line supports token-related variables such as:
-
-- `{{inputTokens}}`
-- `{{outputTokens}}`
-- `{{tokenSpeed}}`
-
-This makes it possible to display input tokens, output tokens, and streaming speed directly in the terminal while requests are running.
-
-The effect is as follows:
-
+效果如下：
 ![statusline](/blog/images/statusline.png)
 
 ## 🤖 GitHub Actions
 
-Integrate Claude Code Router into your CI/CD pipeline. After setting up [Claude Code Actions](https://docs.anthropic.com/en/docs/claude-code/github-actions), modify your `.github/workflows/claude.yaml` to use the router:
+将 Claude Code Router 集成到您的 CI/CD 管道中。在设置 [Claude Code Actions](https://docs.anthropic.com/en/docs/claude-code/github-actions) 后，修改您的 `.github/workflows/claude.yaml` 以使用路由器：
 
 ```yaml
 name: Claude Code
@@ -681,7 +612,7 @@ jobs:
 
       - name: Start Claude Code Router
         run: |
-          nohup ~/.bun/bin/bunx claude-code-router-next@latest start &
+          nohup ~/.bun/bin/bunx @wengine-ai/claude-code-router-next@latest start &
         shell: bash
 
       - name: Run Claude Code
@@ -693,28 +624,146 @@ jobs:
           anthropic_api_key: "any-string-is-ok"
 ```
 
-> **Note**: When running in GitHub Actions or other automation environments, make sure to set `"NON_INTERACTIVE_MODE": true` in your configuration to prevent the process from hanging due to stdin handling issues.
+这种设置可以实现有趣的自动化，例如在非高峰时段运行任务以降低 API 成本。
 
-This setup allows for interesting automations, like running tasks during off-peak hours to reduce API costs.
+## 🎯 高级功能
 
-## 📝 Further Reading
+### 模型族映射 (Family Routing)
 
-- [Project Motivation and How It Works](blog/en/project-motivation-and-how-it-works.md)
-- [Maybe We Can Do More with the Router](blog/en/maybe-we-can-do-more-with-the-route.md)
-- [GLM-4.6 Supports Reasoning and Interleaved Thinking](blog/en/glm-4.6-supports-reasoning.md)
+Claude Code Router 支持**模型族映射**，将 Claude Code 的模型分级（opus/sonnet/haiku）映射到不同服务商的模型。这实现了智能成本控制：主进程保持相同模型以最大化缓存命中，子代理可自动降级。
 
-## ❤️ Support & Sponsoring
+#### 配置示例
 
-If you find this project helpful, please consider sponsoring its development. Your support is greatly appreciated!
+```json
+{
+  "Router": {
+    "enableFamilyRouting": true,
+    "families": {
+      "opus": {
+        "default": "智谱 Coding Plan,glm-5",
+        "think": "DeepSeek,deepseek-reasoner",
+        "longContext": "阿里云,qwen3-plus",
+        "webSearch": "Gemini,gemini-2.5-flash",
+        "fallback": {
+          "default": ["阿里云,glm-4", "DeepSeek,deepseek-chat"],
+          "think": ["阿里云,qwen-plus", "DeepSeek,deepseek-reasoner"]
+        }
+      },
+      "sonnet": {
+        "default": "OpenRouter,deepseek/deepseek-v3",
+        "think": "DeepSeek,deepseek-reasoner",
+        "fallback": {
+          "default": ["阿里云,qwen-turbo", "Gemini,gemini-2.0-flash"]
+        }
+      },
+      "haiku": {
+        "default": "阿里云,qwen-turbo",
+        "fallback": {
+          "default": ["Gemini,gemini-2.0-flash-lite"]
+        }
+      }
+    }
+  }
+}
+```
 
-[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/F1F31GN2GM)
+#### 场景说明
 
-[Paypal](https://paypal.me/musistudio1999)
+| 场景 | 触发条件 | 说明 |
+|------|----------|------|
+| `default` | 默认 | 日常对话和代码生成 |
+| `think` | Plan Mode | 复杂推理、架构设计 |
+| `longContext` | token > 60000 | 大文件分析 |
+| `webSearch` | web_search tool | 网络搜索任务 |
+| `background` | 后台任务 | 自动提交、简单检查 |
 
-<table>
-  <tr>
-    <td><img src="/blog/images/alipay.jpg" width="200" alt="Alipay" /></td>
-    <td><img src="/blog/images/wechat.jpg" width="200" alt="WeChat Pay" /></td>
-  </tr>
-</table>
+### Fallback 机制
 
+当主模型失败时，Router 会自动尝试 fallback 链中的备用模型，确保请求不中断。
+
+#### 工作流程
+
+1. **健康检查**：每个 provider/model 维护健康状态
+   - `closed`（健康）→ 绿色指示器
+   - `open`（失败池）→ 红色指示器，自动跳过
+   - `half-open`（恢复中）→ 黄色指示器
+
+2. **失败判定**：连续 3 次失败后进入 `open` 状态
+
+3. **拖动排序**：UI 支持拖动 fallback 模型调整优先级，排序越靠前越先尝试
+
+4. **Fallback Promotion**：当主模型失败且 fallback 成功时，临时"晋升" fallback 模型（TTL 10 分钟），后续请求直接使用晋升模型，避免重复尝试失败的主模型
+
+5. **自动恢复**：每 5 分钟探测失败模型，成功后恢复为 `half-open`，再成功 2 次后恢复为 `closed`
+
+![Provider 健康状态](/blog/images/provider-health-healthy.png)
+
+#### Fallback 配置层级
+
+```
+family fallback → global fallback
+```
+
+优先使用模型族专属的 fallback 配置，其次使用全局 fallback。
+
+```json
+{
+  "Router": {
+    "enableFallback": true,
+    "families": {
+      "opus": {
+        "fallback": {
+          "default": ["阿里云,glm-4", "DeepSeek,deepseek-chat"]
+        }
+      }
+    }
+  },
+  "fallback": {
+    "default": ["OpenRouter,deepseek/deepseek-v3", "Gemini,gemini-2.5-flash"],
+    "think": ["DeepSeek,deepseek-reasoner"]
+  }
+}
+```
+
+### 用量统计
+
+Router 提供完善的用量统计功能：
+
+#### Quota 监控
+
+UI 界面实时显示各服务商的额度使用情况：
+
+- **5h 额度**：短窗口限额（5 小时重置）
+- **7d 额度**：周度限额（7 天重置）
+- **重置时间**：显示下次额度重置时间
+
+![Quota 用量条](/blog/images/provider-quota-usage.png)
+
+支持的服务商：
+- 智谱 GLM Coding Plan
+- 阿里云 Qwen Coding Plan
+- Kimi Coding Plan
+- MiniMax Coding Plan
+- DeepSeek
+- OpenRouter
+- SiliconFlow
+
+#### Usage 记录
+
+每次请求都会记录详细统计信息：
+
+| 字段 | 说明 |
+|------|------|
+| `inputTokens` | 输入 token 数 |
+| `outputTokens` | 输出 token 数 |
+| `cacheReadInputTokens` | 缓存读取 token |
+| `cacheCreationInputTokens` | 缓存创建 token |
+| `ttft` | 首 token 时间 (ms) |
+| `tokensPerSecond` | 输出速度 |
+| `durationMs` | 请求耗时 |
+| `status` | success / error |
+
+数据存储位置：`~/.claude-code-router/data/usage.jsonl`
+
+## 交流群
+<img src="/blog/images/wechat_group.jpg" width="200" alt="wechat_group" />

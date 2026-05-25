@@ -9,6 +9,7 @@ export interface ProviderQuotaResult {
   limitDaily?: number;
   currency?: string;
   resetTime?: string;
+  resetTime7d?: string;
 }
 
 export interface QuotaAdapter {
@@ -474,8 +475,11 @@ class KimiCodingPlanQuotaAdapter extends BaseQuotaAdapter {
             result.remainingBalance = remaining;
           }
         }
-        if (resetTime && !result.resetTime) {
-          result.resetTime = new Date(resetTime).toISOString();
+        if (resetTime) {
+          result.resetTime7d = new Date(resetTime).toISOString();
+          if (!result.resetTime) {
+            result.resetTime = result.resetTime7d;
+          }
         }
       }
 
