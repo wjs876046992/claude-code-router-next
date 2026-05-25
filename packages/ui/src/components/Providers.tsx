@@ -153,7 +153,7 @@ export function Providers() {
     fetchTransformers();
   }, []);
 
-  // Fetch provider health status periodically
+  // Fetch provider health status periodically + on page visibility change
   useEffect(() => {
     const fetchHealth = async () => {
       try {
@@ -165,11 +165,19 @@ export function Providers() {
     };
 
     fetchHealth();
-    const interval = setInterval(fetchHealth, 30000); // Refresh every 30 seconds
-    return () => clearInterval(interval);
+    const interval = setInterval(fetchHealth, 30000);
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') fetchHealth();
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
   }, []);
 
-  // Fetch provider quota usage periodically
+  // Fetch provider quota usage periodically + on page visibility change
   useEffect(() => {
     const fetchQuota = async () => {
       try {
@@ -181,8 +189,16 @@ export function Providers() {
     };
 
     fetchQuota();
-    const interval = setInterval(fetchQuota, 30000); // Refresh every 30 seconds
-    return () => clearInterval(interval);
+    const interval = setInterval(fetchQuota, 30000);
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') fetchQuota();
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
   }, []);
 
   // Handle case where config is null or undefined

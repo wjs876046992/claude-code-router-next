@@ -566,6 +566,46 @@ function parseDurationToMs(value: any): number {
     return 0;
 }
 
+const SESSION_TOTALS_DIR = path.join(tmpdir(), 'claude-code-router');
+
+// Persist and retrieve session-level peak token totals.
+// Guarantees monotonically non-decreasing values across all statusline invocations
+// within a session, even when transcript parsing fails mid-stream or context_window
+// shrinks after compaction.
+async function getSessionPeakTotal(
+    sessionId: string,
+    currentInputTokens: number,
+    currentOutputTokens: number,
+): Promise<number> {
+    const filePath = path.join(SESSION_TOTALS_DIR, `totals-${sessionId}.json`);
+    const current = currentInputTokens + currentOutputTokens;
+
+    try {
+        await fs.access(SESSION_TOTALS_DIR);
+    } catch {
+        return current;
+    }
+
+    let peak = 0;
+    try {
+        const raw = await fs.readFile(filePath, 'utf-8');
+        const cached = JSON.parse(raw);
+        peak = cached.peak || 0;
+    } catch {
+        // first call or corrupt file
+    }
+
+    peak = Math.max(peak, current);
+
+    try {
+        await fs.writeFile(filePath, JSON.stringify({ peak, ts: Date.now() }), 'utf-8');
+    } catch {
+        // write failure must not break statusline
+    }
+
+    return peak;
+}
+
 // Read theme configuration from user home directory
 async function getProjectThemeConfig(): Promise<{ theme: StatusLineThemeConfig | null, style: string }> {
     try {
@@ -822,24 +862,25 @@ export async function parseStatusLineData(input: StatusLineInput, presetName?: s
         const usage = formatUsage(inputTokens, outputTokens);
         const [formattedInputTokens, formattedOutputTokens] = usage.split(" ");
 
-        // Calculate token speed from transcript output_tokens + token-speed timing data
-        // We use the LLM-reported output_tokens (accurate) divided by decode duration
-        // instead of the token-speed plugin's estimateTokens-based value (which overestimates).
+        // Calculate token speed using current_usage.output_tokens (accurate, from LLM)
+        // divided by decode duration from token-speed temp file.
+        // Note: transcript does NOT contain usage data, so we must use context_window.
+        const currentOutputTokens = input.context_window?.current_usage?.output_tokens || 0;
         const timingData = await getTokenSpeedTiming(input.session_id);
         let tokenSpeed = 0;
         let isStreaming = false;
 
         if (timingData) {
             const ageInSeconds = (Date.now() - timingData.timestamp) / 1000;
-            isStreaming = ageInSeconds <= 3 && outputTokens > 0;
+            isStreaming = ageInSeconds <= 3 && currentOutputTokens > 0;
 
-            if (outputTokens > 0 && timingData.durationMs > 0) {
+            if (currentOutputTokens > 0 && timingData.durationMs > 0) {
                 const decodeDurationMs = Math.max(timingData.durationMs - timingData.ttftMs, 100);
-                tokenSpeed = Math.round(outputTokens / (decodeDurationMs / 1000));
+                tokenSpeed = Math.round(currentOutputTokens / (decodeDurationMs / 1000));
             }
         }
 
-        const formattedTokenSpeed = tokenSpeed > 0 ? `${tokenSpeed}tok/s` : '';
+        const formattedTokenSpeed = tokenSpeed > 0 ? tokenSpeed.toString() : '';
         const streamingIndicator = isStreaming ? '[Streaming]' : '';
 
         // Format time to first token
@@ -851,23 +892,20 @@ export async function parseStatusLineData(input: StatusLineInput, presetName?: s
         // Process context window data
         const contextPercent = input.context_window ? calculateContextPercent(input.context_window) : 0;
         const contextUsedTokens = input.context_window ? calculateContextTokens(input.context_window) : 0;
-        // Use context_window as the authoritative source for session-level totals
-        // (Claude Code provides these as stable session aggregates).
-        // Fall back to transcript accumulation only when context_window data is missing,
-        // but never mix the two sources to avoid fluctuation.
-        const cwTotalInput = input.context_window?.total_input_tokens ?? 0;
-        const cwTotalOutput = input.context_window?.total_output_tokens ?? 0;
-        const hasCwTotals = cwTotalInput > 0 || cwTotalOutput > 0;
-        const totalInputTokens = hasCwTotals ? cwTotalInput : sessionTotalInputTokens;
-        const totalOutputTokens = hasCwTotals ? cwTotalOutput : sessionTotalOutputTokens;
-        const totalCacheTokens = sessionTotalCacheCreationTokens + sessionTotalCacheReadTokens;
         const contextWindowSize = input.context_window?.context_window_size || 0;
 
-        // effectiveTotalTokens = input + output (mirrors the context_window convention).
-        // Use context_window as primary source, fall back to transcript accumulation.
-        const effectiveTotalTokens = hasCwTotals
-            ? (cwTotalInput + cwTotalOutput)
-            : sessionTotalEffectiveTokens;
+        // Session total tokens: persist a session-level peak to guarantee monotonicity.
+        // Take the max of transcript accumulation and context_window as the current
+        // candidate, then floor it at the historical peak for this session.
+        const cwTotalInput = input.context_window?.total_input_tokens ?? 0;
+        const cwTotalOutput = input.context_window?.total_output_tokens ?? 0;
+        const totalInputTokens = Math.max(sessionTotalInputTokens, cwTotalInput);
+        const totalOutputTokens = Math.max(sessionTotalOutputTokens, cwTotalOutput);
+        const effectiveTotalTokens = await getSessionPeakTotal(
+            input.session_id,
+            totalInputTokens,
+            totalOutputTokens,
+        );
 
         // Process cost data
         const totalCost = input.cost?.total_cost_usd || 0;
