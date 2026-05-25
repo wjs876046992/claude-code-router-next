@@ -1,6 +1,6 @@
 {
   "name": "claude-code-router-workspace",
-  "version": "2.0.35",
+  "version": "2.0.36",
   "description": "Use Claude Code without an Anthropics account and route it to another LLM provider",
   "scripts": {
     "build": "pnpm build:shared && pnpm build:core && pnpm build:server && pnpm build:cli && pnpm build:ui",
