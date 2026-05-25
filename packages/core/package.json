@@ -1,6 +1,6 @@
 {
   "name": "@wengine-ai/llms",
-  "version": "2.0.88",
+  "version": "2.0.89",
   "description": "A universal LLM API transformation server",
   "main": "dist/cjs/server.cjs",
   "module": "dist/esm/server.mjs",
