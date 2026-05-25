@@ -849,16 +849,23 @@ export async function parseStatusLineData(input: StatusLineInput, presetName?: s
         // Process context window data
         const contextPercent = input.context_window ? calculateContextPercent(input.context_window) : 0;
         const contextUsedTokens = input.context_window ? calculateContextTokens(input.context_window) : 0;
-        // Always use transcript-accumulated values for stable monotonically-increasing totals
-        // Fallback to context_window only when transcript has no data
-        const totalInputTokens = sessionTotalInputTokens || input.context_window?.total_input_tokens || 0;
-        const totalOutputTokens = sessionTotalOutputTokens || input.context_window?.total_output_tokens || 0;
+        // Use context_window as the authoritative source for session-level totals
+        // (Claude Code provides these as stable session aggregates).
+        // Fall back to transcript accumulation only when context_window data is missing,
+        // but never mix the two sources to avoid fluctuation.
+        const cwTotalInput = input.context_window?.total_input_tokens ?? 0;
+        const cwTotalOutput = input.context_window?.total_output_tokens ?? 0;
+        const hasCwTotals = cwTotalInput > 0 || cwTotalOutput > 0;
+        const totalInputTokens = hasCwTotals ? cwTotalInput : sessionTotalInputTokens;
+        const totalOutputTokens = hasCwTotals ? cwTotalOutput : sessionTotalOutputTokens;
         const totalCacheTokens = sessionTotalCacheCreationTokens + sessionTotalCacheReadTokens;
         const contextWindowSize = input.context_window?.context_window_size || 0;
 
-        // Use per-message accumulated effective total (already includes input + cache + output)
-        // Fallback to context_window total_input_tokens when transcript has no data
-        const effectiveTotalTokens = sessionTotalEffectiveTokens || input.context_window?.total_input_tokens || 0;
+        // effectiveTotalTokens = input + output (mirrors the context_window convention).
+        // Use context_window as primary source, fall back to transcript accumulation.
+        const effectiveTotalTokens = hasCwTotals
+            ? (cwTotalInput + cwTotalOutput)
+            : sessionTotalEffectiveTokens;
 
         // Process cost data
         const totalCost = input.cost?.total_cost_usd || 0;

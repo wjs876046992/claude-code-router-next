@@ -24,6 +24,82 @@ import type { Provider, ProviderHealthState, ProviderQuotaUsage } from "@/types"
 
 interface ProviderType extends Provider {}
 
+// Helper function to clean up references to deleted models in Router configurations and fallback lists
+function cleanUpConfigModels(config: any, deletedModels: string[]): any {
+  if (!deletedModels || deletedModels.length === 0) return config;
+
+  // Deep copy to avoid mutating state directly
+  const newConfig = JSON.parse(JSON.stringify(config));
+
+  const cleanModelField = (field: any) => {
+    if (typeof field === 'string' && deletedModels.includes(field)) {
+      return '';
+    }
+    return field;
+  };
+
+  const cleanModelArray = (arr: any) => {
+    if (Array.isArray(arr)) {
+      return arr.filter(model => !deletedModels.includes(model));
+    }
+    return arr;
+  };
+
+  // 1. Clean Router configurations
+  if (newConfig.Router) {
+    const router = newConfig.Router;
+    const scenarioFields = ['default', 'think', 'longContext', 'extendedContext', 'webSearch', 'image'];
+    scenarioFields.forEach(field => {
+      if (router[field] !== undefined) {
+        router[field] = cleanModelField(router[field]);
+      }
+    });
+
+    // 2. Clean Router family configurations
+    if (router.families && typeof router.families === 'object') {
+      Object.keys(router.families).forEach(familyName => {
+        const family = router.families[familyName];
+        if (family) {
+          if (family.default !== undefined) {
+            family.default = cleanModelField(family.default);
+          }
+          if (family.fallback && typeof family.fallback === 'object') {
+            Object.keys(family.fallback).forEach(scenario => {
+              const cleaned = cleanModelArray(family.fallback[scenario]);
+              if (cleaned.length === 0) {
+                delete family.fallback[scenario];
+              } else {
+                family.fallback[scenario] = cleaned;
+              }
+            });
+            if (Object.keys(family.fallback).length === 0) {
+              delete family.fallback;
+            }
+          }
+        }
+      });
+    }
+  }
+
+  // 3. Clean fallback scenarios
+  if (newConfig.fallback && typeof newConfig.fallback === 'object') {
+    const fallback = newConfig.fallback;
+    Object.keys(fallback).forEach(scenario => {
+      const cleaned = cleanModelArray(fallback[scenario]);
+      if (cleaned.length === 0) {
+        delete fallback[scenario];
+      } else {
+        fallback[scenario] = cleaned;
+      }
+    });
+    if (Object.keys(fallback).length === 0) {
+      delete newConfig.fallback;
+    }
+  }
+
+  return newConfig;
+}
+
 export function Providers() {
   const { t } = useTranslation();
   const { config, setConfig } = useConfig();
@@ -193,12 +269,19 @@ export function Providers() {
     
     if (editingProviderIndex !== null && editingProviderData) {
       const newProviders = [...config.Providers];
+      let deletedModels: string[] = [];
       if (isNewProvider) {
         newProviders.push(editingProviderData);
       } else {
+        const oldModels = config.Providers[editingProviderIndex]?.models || [];
+        const newModels = editingProviderData.models || [];
+        deletedModels = oldModels.filter((m: string) => !newModels.includes(m));
         newProviders[editingProviderIndex] = editingProviderData;
       }
-      const newConfig = { ...config, Providers: newProviders };
+      let newConfig = { ...config, Providers: newProviders };
+      if (deletedModels.length > 0) {
+        newConfig = cleanUpConfigModels(newConfig, deletedModels);
+      }
       setConfig(newConfig);
       // Persist to server immediately
       setIsSaving(true);
@@ -254,9 +337,13 @@ export function Providers() {
   const handleRemoveProvider = async (filteredIndex: number) => {
     // Find the actual index in the original providers array
     const actualIndex = validProviders.indexOf(filteredProviders[filteredIndex]);
+    const deletedModels = config.Providers[actualIndex]?.models || [];
     const newProviders = [...config.Providers];
     newProviders.splice(actualIndex, 1);
-    const newConfig = { ...config, Providers: newProviders };
+    let newConfig = { ...config, Providers: newProviders };
+    if (deletedModels.length > 0) {
+      newConfig = cleanUpConfigModels(newConfig, deletedModels);
+    }
     setConfig(newConfig);
     setDeletingProviderIndex(null);
     // Persist to server immediately
