@@ -424,10 +424,10 @@ const FULL_THEME: StatusLineThemeConfig = {
 // Format token count with fixed-width units for stable display
 function formatTokenCount(count: number): string {
     if (!Number.isFinite(count) || count < 0) {
-        return '0tok';
+        return '0';
     }
     if (count < 1000) {
-        return `${Math.round(count)}tok`;
+        return `${Math.round(count)}`;
     }
     if (count < 1_000_000) {
         const val = count / 1000;
