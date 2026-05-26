@@ -1,4 +1,4 @@
-import Server, { calculateTokenCount, TokenizerService, getAllRateLimitInfo, getAllQuotaResults, setRuntimeDebugLog, getRuntimeDebugLog } from "@wengine-ai/llms";
+import Server, { calculateTokenCount, TokenizerService, getAllRateLimitInfo, getAllQuotaResults, setRuntimeDebugLog, getRuntimeDebugLog, getHealthStore } from "@wengine-ai/llms";
 import { readConfigFile, writeConfigFile, backupConfigFile } from "./utils";
 import { join } from "path";
 import fastifyStatic from "@fastify/static";
@@ -345,7 +345,30 @@ export const createServer = async (config: any): Promise<any> => {
     }
   });
 
-  // ========== Provider Quota API ==========
+  // ========== Provider Quota & Health API ==========
+
+  // Get provider health status
+  app.get("/api/providers/health", async (req: any, reply: any) => {
+    try {
+      const healthStore = getHealthStore();
+      const states = healthStore.getAllStates();
+      return {
+        states: states.map(s => ({
+          provider: s.provider,
+          model: s.model,
+          status: s.status,
+          failureCount: s.failureCount,
+          successCount: s.successCount,
+          lastFailureTime: s.lastFailureTime,
+          lastError: s.lastError,
+        })),
+        timestamp: new Date().toISOString()
+      };
+    } catch (error) {
+      console.error("Failed to get provider health:", error);
+      reply.status(500).send({ error: "Failed to get provider health" });
+    }
+  });
 
   // Get provider quota usage (5h and 7d windows)
   app.get("/api/providers/quota", async (req: any, reply: any) => {
