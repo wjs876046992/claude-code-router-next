@@ -164,10 +164,9 @@ export class AnthropicTransformer implements Transformer {
               (c: any) => c.type === "thinking"
             );
             if (thinkingPart) {
-              // Only preserve thinking content, strip signature
-              // Signatures are provider-specific and invalid when forwarded to other providers (e.g., Gemini)
               assistantMessage.thinking = {
                 content: thinkingPart.thinking,
+                signature: thinkingPart.signature,
               };
             }
 
