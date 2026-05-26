@@ -67,8 +67,8 @@ importers:
   packages/cli:
     dependencies:
       '@wengine-ai/llms':
-        specifier: ^2.0.86
-        version: 2.0.86(ws@8.18.3)
+        specifier: workspace:*
+        version: link:../core
       lru-cache:
         specifier: ^11.2.2
         version: 11.2.2
@@ -3325,9 +3325,6 @@ packages:
 
   '@webassemblyjs/wast-printer@1.14.1':
     resolution: {integrity: sha512-kPSSXE6De1XOR820C90RIo2ogvZG+c3KiHzqUoO/F34Y2shGzesfqv7o57xrxovZJH/MetF5UjroJ/R/3isoiw==}
-
-  '@wengine-ai/llms@2.0.86':
-    resolution: {integrity: sha512-UAVOv/b1ZpxI6p6ix/FOV5BNcm3k/Dzeo+u/HMUiEq4Kq9h/9VLUN3vivoAxTxeeuX8y3DB94ZE1yUkxwHIHEA==}
 
   '@xtuc/ieee754@1.2.0':
     resolution: {integrity: sha512-DX8nKgqcGwsc0eJSqYt5lwP4DH5FlHnmuWWBRy7X0NcaGR0ZtuyeESgMwTYVEtxmsNGY+qit4QYT/MIYTOTPeA==}
@@ -11539,32 +11536,6 @@ snapshots:
     dependencies:
       '@webassemblyjs/ast': 1.14.1
       '@xtuc/long': 4.2.2
-
-  '@wengine-ai/llms@2.0.86(ws@8.18.3)':
-    dependencies:
-      '@anthropic-ai/sdk': 0.54.0
-      '@fastify/cors': 11.1.0
-      '@google/genai': 1.24.0
-      '@huggingface/tokenizers': 0.0.6
-      dotenv: 16.6.1
-      fastify: 5.6.1
-      fastify-plugin: 5.1.0
-      google-auth-library: 10.4.0
-      json5: 2.2.3
-      jsonrepair: 3.13.1
-      lru-cache: 11.2.2
-      openai: 5.23.2(ws@8.18.3)
-      tiktoken: 1.0.22
-      undici: 7.16.0
-      uuid: 11.1.0
-    transitivePeerDependencies:
-      - '@modelcontextprotocol/sdk'
-      - bufferutil
-      - encoding
-      - supports-color
-      - utf-8-validate
-      - ws
-      - zod
 
   '@xtuc/ieee754@1.2.0': {}
 

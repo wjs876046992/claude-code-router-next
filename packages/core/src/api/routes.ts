@@ -7,6 +7,13 @@ import {
 import { RegisterProviderRequest, LLMProvider } from "@/types/llm";
 import { sendUnifiedRequest } from "@/utils/request";
 import { createApiError } from "./middleware";
+import {
+  isDebugLogEnabled,
+  getDebugLogOptions,
+  logProviderRequest,
+  logProviderResponse,
+  readStreamForDebug,
+} from "@/utils/debug-log";
 import { version } from "../../package.json";
 import { ConfigService } from "@/services/config";
 import { ProviderService } from "@/services/provider";
@@ -99,7 +106,7 @@ async function handleTransformerEndpoint(
     );
 
     // Format and return response
-    return formatResponse(finalResponse, reply, body);
+    return formatResponse(finalResponse, reply, body, fastify);
   } catch (error: any) {
     // Handle fallback for any request error (timeout, network, API errors)
     const fallbackResult = await handleFallback(req, reply, fastify, transformer, error);
@@ -311,7 +318,7 @@ async function handleFallback(
         req.body = newBody;
 
         // Format and return response
-        return formatResponse(finalResponse, reply, newBody);
+        return formatResponse(finalResponse, reply, newBody, fastify);
       } catch (fallbackError: any) {
         healthStore.recordFailure(fallbackProvider, model, fallbackError.message);
         req.log.warn(`Fallback model ${fallbackRoute.key} failed: ${fallbackError.message}`);
@@ -504,6 +511,15 @@ async function sendRequestToProvider(
     }
   }
 
+  // Debug: log outgoing request to provider
+  if (isDebugLogEnabled(fastify.configService)) {
+    logProviderRequest(fastify.log, context.req.id, {
+      url: String(url),
+      headers: requestHeaders,
+      body: requestBody,
+    });
+  }
+
   const response = await sendUnifiedRequest(
     url,
     requestBody,
@@ -522,11 +538,24 @@ async function sendRequestToProvider(
     fastify.log.error(
       `[provider_response_error] Error from provider(${provider.name},${requestBody.model}: ${response.status}): ${errorText}`,
     );
-    throw createApiError(
+    const error = createApiError(
       `Error from provider(${provider.name},${requestBody.model}: ${response.status}): ${errorText}`,
       response.status,
       "provider_response_error"
     );
+    error.rawBody = errorText;
+    throw error;
+  }
+
+  // Debug: log non-stream response from provider
+  if (!requestBody.stream && isDebugLogEnabled(fastify.configService)) {
+    const cloned = response.clone();
+    const bodyText = await cloned.text();
+    logProviderResponse(fastify.log, context.req.id, {
+      status: response.status,
+      headers: Object.fromEntries(response.headers.entries()),
+      body: bodyText,
+    });
   }
 
   return response;
@@ -597,7 +626,7 @@ async function processResponseTransformers(
  * Format and return response
  * Handle HTTP status codes, format streaming and regular responses
  */
-function formatResponse(response: any, reply: FastifyReply, body: any) {
+function formatResponse(response: any, reply: FastifyReply, body: any, fastify?: FastifyInstance) {
   // Set HTTP status code
   if (!response.ok) {
     reply.code(response.status);
@@ -609,6 +638,15 @@ function formatResponse(response: any, reply: FastifyReply, body: any) {
     reply.header("Content-Type", "text/event-stream");
     reply.header("Cache-Control", "no-cache");
     reply.header("Connection", "keep-alive");
+
+    // Debug: tee stream to log SSE chunks
+    if (fastify && isDebugLogEnabled(fastify.configService)) {
+      const [debugStream, clientStream] = response.body.tee();
+      const options = getDebugLogOptions(fastify.configService);
+      readStreamForDebug(debugStream, fastify.log, reply.request.id, options);
+      return reply.send(clientStream);
+    }
+
     return reply.send(response.body);
   } else {
     // Handle regular JSON response

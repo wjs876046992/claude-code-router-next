@@ -4,6 +4,7 @@ export interface ApiError extends Error {
   statusCode?: number;
   code?: string;
   type?: string;
+  rawBody?: string;
 }
 
 export function createApiError(
@@ -27,9 +28,20 @@ export async function errorHandler(
   request.log.error(error);
 
   const statusCode = error.statusCode || 500;
+
+  // When provider raw response body is available, pass it through directly
+  if (error.rawBody) {
+    try {
+      const parsed = JSON.parse(error.rawBody);
+      return reply.code(statusCode).send(parsed);
+    } catch {
+      return reply.code(statusCode).send(error.rawBody);
+    }
+  }
+
   const response = {
     error: {
-      message: error.message + error.stack || "Internal Server Error",
+      message: error.message + (error.stack || "Internal Server Error"),
       type: error.type || "api_error",
       code: error.code || "internal_error",
     },

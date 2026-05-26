@@ -310,3 +310,4 @@ export type { QuotaAdapter, ProviderQuotaResult } from "./services/quota-adapter
 export { getAllQuotaResults, getQuotaResult, storeQuotaResult } from "./services/quota-store";
 export type { StoredQuotaResult } from "./services/quota-store";
 export { getActiveProbeService, startActiveProbe, stopActiveProbe, resetActiveProbeService, ActiveProbeService, ActiveProbeConfig } from "./services/active-probe";
+export { setRuntimeDebugLog, getRuntimeDebugLog } from "./utils/debug-log";

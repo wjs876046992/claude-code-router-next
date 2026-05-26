@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { api } from '@/lib/api';
 import { useTranslation } from 'react-i18next';
-import { X, RefreshCw, Download, Trash2, ArrowLeft, File, Layers } from 'lucide-react';
+import { X, RefreshCw, Download, Trash2, ArrowLeft, File, Layers, Bug } from 'lucide-react';
 
 interface LogViewerProps {
   open: boolean;
@@ -61,6 +61,7 @@ export function LogViewer({ open, onOpenChange, showToast }: LogViewerProps) {
   const [groupedLogs, setGroupedLogs] = useState<GroupedLogsResponse | null>(null);
   const [selectedReqId, setSelectedReqId] = useState<string | null>(null);
   const [expandedLogIndex, setExpandedLogIndex] = useState<number | null>(null);
+  const [debugLogEnabled, setDebugLogEnabled] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const refreshInterval = useRef<NodeJS.Timeout | null>(null);
   const workerRef = useRef<Worker | null>(null);
@@ -68,6 +69,7 @@ export function LogViewer({ open, onOpenChange, showToast }: LogViewerProps) {
   useEffect(() => {
     if (open) {
       loadLogFiles();
+      api.getDebugLogStatus().then(res => setDebugLogEnabled(res.enabled)).catch(() => {});
     }
   }, [open]);
 
@@ -345,7 +347,6 @@ export function LogViewer({ open, onOpenChange, showToast }: LogViewerProps) {
     setGroupByReqId(newValue);
 
     if (newValue && selectedFile && logs.length > 0) {
-      // 启用聚合时，如果已有日志，则使用Worker进行聚合
       if (workerRef.current) {
         workerRef.current.postMessage({
           type: 'groupLogsByReqId',
@@ -353,9 +354,24 @@ export function LogViewer({ open, onOpenChange, showToast }: LogViewerProps) {
         });
       }
     } else if (!newValue) {
-      // 禁用聚合时，清除聚合结果
       setGroupedLogs(null);
       setSelectedReqId(null);
+    }
+  };
+
+  const toggleDebugLog = async () => {
+    try {
+      const newState = !debugLogEnabled;
+      const res = await api.setDebugLogStatus(newState);
+      setDebugLogEnabled(res.enabled);
+      if (showToast) {
+        showToast(
+          res.enabled ? t('log_viewer.debug_log_enabled', 'Debug logging enabled') : t('log_viewer.debug_log_disabled', 'Debug logging disabled'),
+          res.enabled ? 'success' : 'warning'
+        );
+      }
+    } catch {
+      if (showToast) showToast(t('log_viewer.debug_log_error', 'Failed to toggle debug log'), 'error');
     }
   };
 
@@ -585,6 +601,16 @@ export function LogViewer({ open, onOpenChange, showToast }: LogViewerProps) {
                 >
                   <RefreshCw className={`h-4 w-4 mr-2 ${autoRefresh ? 'animate-spin' : ''}`} />
                   {autoRefresh ? t('log_viewer.auto_refresh_on') : t('log_viewer.auto_refresh_off')}
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={toggleDebugLog}
+                  className={debugLogEnabled ? 'bg-orange-100 text-orange-700' : ''}
+                  title={debugLogEnabled ? t('log_viewer.debug_log_disable_tooltip', 'Disable provider debug logging') : t('log_viewer.debug_log_enable_tooltip', 'Enable provider debug logging')}
+                >
+                  <Bug className={`h-4 w-4 mr-2`} />
+                  {debugLogEnabled ? t('log_viewer.debug_log_on', 'Debug ON') : t('log_viewer.debug_log_off', 'Debug OFF')}
                 </Button>
                 <Button
                   variant="outline"

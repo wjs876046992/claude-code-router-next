@@ -247,6 +247,16 @@ class ApiClient {
     return this.delete<void>(`/logs?file=${encodeURIComponent(filePath)}`);
   }
 
+  // Get debug log status
+  async getDebugLogStatus(): Promise<{ enabled: boolean }> {
+    return this.get<{ enabled: boolean }>('/debug-log');
+  }
+
+  // Toggle debug log
+  async setDebugLogStatus(enabled: boolean): Promise<{ enabled: boolean }> {
+    return this.put<{ enabled: boolean }>('/debug-log', { enabled });
+  }
+
   // ========== Usage Statistics API methods ==========
 
   // Get usage records with summary

@@ -131,6 +131,10 @@ declare module "@wengine-ai/llms" {
   export const stopActiveProbe: () => void;
   export const resetActiveProbeService: () => void;
 
+  // Runtime debug log toggle
+  export const setRuntimeDebugLog: (enabled: boolean) => void;
+  export const getRuntimeDebugLog: () => boolean;
+
   // Export services
   export class ConfigService {
     constructor(options?: any);

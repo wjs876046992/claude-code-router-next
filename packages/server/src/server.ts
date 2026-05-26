@@ -1,4 +1,4 @@
-import Server, { calculateTokenCount, TokenizerService, getAllRateLimitInfo, getAllQuotaResults } from "@wengine-ai/llms";
+import Server, { calculateTokenCount, TokenizerService, getAllRateLimitInfo, getAllQuotaResults, setRuntimeDebugLog, getRuntimeDebugLog } from "@wengine-ai/llms";
 import { readConfigFile, writeConfigFile, backupConfigFile } from "./utils";
 import { join } from "path";
 import fastifyStatic from "@fastify/static";
@@ -282,6 +282,20 @@ export const createServer = async (config: any): Promise<any> => {
       console.error("Failed to clear logs:", error);
       reply.status(500).send({ error: "Failed to clear logs" });
     }
+  });
+
+  // ========== Debug Log Toggle ==========
+
+  // Get debug log status
+  app.get("/api/debug-log", async () => {
+    return { enabled: getRuntimeDebugLog() };
+  });
+
+  // Toggle debug log on/off
+  app.put("/api/debug-log", async (req: any) => {
+    const { enabled } = req.body as { enabled: boolean };
+    setRuntimeDebugLog(enabled);
+    return { enabled: getRuntimeDebugLog() };
   });
 
   // ========== Usage Statistics API ==========
