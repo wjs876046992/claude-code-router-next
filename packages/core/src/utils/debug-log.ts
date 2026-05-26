@@ -3,6 +3,7 @@ import { FastifyInstance } from "fastify";
 const SENSITIVE_HEADERS = new Set([
   "authorization",
   "x-api-key",
+  "x-goog-api-key",
   "cookie",
   "set-cookie",
 ]);

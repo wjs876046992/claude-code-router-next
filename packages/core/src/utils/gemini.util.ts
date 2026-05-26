@@ -271,9 +271,6 @@ export function buildRequestBody(
   const contents: any[] = [];
   const toolResponses = request.messages.filter((item) => item.role === "tool");
 
-  // Check if thinking mode is enabled for this request
-  const isThinkingEnabled = request.reasoning?.enabled ||
-    request.messages.some(m => m.thinking?.content);
 
   request.messages
     .filter((item) => item.role !== "tool")
@@ -286,21 +283,11 @@ export function buildRequestBody(
       } else {
         role = "user"; // Default to user if role is not recognized
       }
-      const parts = [];
-
-      // When thinking is enabled, generate a stable fake signature for this message
-      // to avoid forwarding cross-provider signatures that cause "Corrupted thought signature"
-      const fakeSignature = isThinkingEnabled
-        ? `ccr_sig_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`
-        : undefined;
-
+      const parts: any[] = [];
       if (typeof message.content === "string") {
-        const part: any = {
-          text: message.content,
-        };
-        // Use fake signature for text parts when thinking is enabled
-        if (isThinkingEnabled) {
-          part.thoughtSignature = fakeSignature;
+        const part: any = { text: message.content };
+        if (message.thinking?.signature) {
+          part.thoughtSignature = message.thinking.signature;
         }
         parts.push(part);
       } else if (Array.isArray(message.content)) {
@@ -344,7 +331,7 @@ export function buildRequestBody(
       if (Array.isArray(message.tool_calls)) {
         parts.push(
           ...message.tool_calls.map((toolCall) => {
-            return {
+            const part: any = {
               functionCall: {
                 id:
                   toolCall.id ||
@@ -352,10 +339,11 @@ export function buildRequestBody(
                 name: toolCall.function.name,
                 args: JSON.parse(toolCall.function.arguments || "{}"),
               },
-              // Use the same fake signature as the text part for this message
-              // to maintain consistency within the same turn
-              thoughtSignature: fakeSignature,
             };
+            if (message.thinking?.signature) {
+              part.thoughtSignature = message.thinking.signature;
+            }
+            return part;
           })
         );
       }
