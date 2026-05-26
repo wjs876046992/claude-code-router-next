@@ -164,9 +164,10 @@ export class AnthropicTransformer implements Transformer {
               (c: any) => c.type === "thinking"
             );
             if (thinkingPart) {
+              // Only preserve thinking content, strip signature
+              // Signatures are provider-specific and invalid when forwarded to other providers (e.g., Gemini)
               assistantMessage.thinking = {
                 content: thinkingPart.thinking,
-                signature: thinkingPart.signature,
               };
             }
 
@@ -513,83 +514,72 @@ export class AnthropicTransformer implements Transformer {
                 }
 
                 if (choice?.delta?.thinking && !isClosed && !hasFinished) {
-                  // Close any previous content block if open
-                  // if (currentContentBlockIndex >= 0) {
-                  //   const contentBlockStop = {
-                  //     type: "content_block_stop",
-                  //     index: currentContentBlockIndex,
-                  //   };
-                  //   safeEnqueue(
-                  //     encoder.encode(
-                  //       `event: content_block_stop\ndata: ${JSON.stringify(
-                  //         contentBlockStop
-                  //       )}\n\n`
-                  //     )
-                  //   );
-                  //   currentContentBlockIndex = -1;
-                  // }
-
-                  if (!isThinkingStarted) {
-                    const thinkingBlockIndex = assignContentBlockIndex();
-                    const contentBlockStart = {
-                      type: "content_block_start",
-                      index: thinkingBlockIndex,
-                      content_block: { type: "thinking", thinking: "" },
-                    };
-                    safeEnqueue(
-                      encoder.encode(
-                        `event: content_block_start\ndata: ${JSON.stringify(
-                          contentBlockStart
-                        )}\n\n`
-                      )
-                    );
-                    currentContentBlockIndex = thinkingBlockIndex;
-                    isThinkingStarted = true;
-                  }
-                  if (choice.delta.thinking.signature) {
-                    const thinkingSignature = {
-                      type: "content_block_delta",
-                      index: currentContentBlockIndex,
-                      delta: {
-                        type: "signature_delta",
-                        signature: choice.delta.thinking.signature,
-                      },
-                    };
-                    safeEnqueue(
-                      encoder.encode(
-                        `event: content_block_delta\ndata: ${JSON.stringify(
-                          thinkingSignature
-                        )}\n\n`
-                      )
-                    );
-                    const contentBlockStop = {
-                      type: "content_block_stop",
-                      index: currentContentBlockIndex,
-                    };
-                    safeEnqueue(
-                      encoder.encode(
-                        `event: content_block_stop\ndata: ${JSON.stringify(
-                          contentBlockStop
-                        )}\n\n`
-                      )
-                    );
-                    currentContentBlockIndex = -1;
-                  } else if (choice.delta.thinking.content) {
-                    const thinkingChunk = {
-                      type: "content_block_delta",
-                      index: currentContentBlockIndex,
-                      delta: {
-                        type: "thinking_delta",
-                        thinking: choice.delta.thinking.content || "",
-                      },
-                    };
-                    safeEnqueue(
-                      encoder.encode(
-                        `event: content_block_delta\ndata: ${JSON.stringify(
-                          thinkingChunk
-                        )}\n\n`
-                      )
-                    );
+                  if (hasTextContentStarted) {
+                    // Anthropic protocol requires thinking blocks to appear BEFORE any text blocks.
+                    // Ignore late-arriving thinking blocks (e.g. from Gemini fake signatures).
+                  } else {
+                    if (!isThinkingStarted) {
+                      const thinkingBlockIndex = assignContentBlockIndex();
+                      const contentBlockStart = {
+                        type: "content_block_start",
+                        index: thinkingBlockIndex,
+                        content_block: { type: "thinking", thinking: "" },
+                      };
+                      safeEnqueue(
+                        encoder.encode(
+                          `event: content_block_start\ndata: ${JSON.stringify(
+                            contentBlockStart
+                          )}\n\n`
+                        )
+                      );
+                      currentContentBlockIndex = thinkingBlockIndex;
+                      isThinkingStarted = true;
+                    }
+                    if (choice.delta.thinking.signature) {
+                      const thinkingSignature = {
+                        type: "content_block_delta",
+                        index: currentContentBlockIndex,
+                        delta: {
+                          type: "signature_delta",
+                          signature: choice.delta.thinking.signature,
+                        },
+                      };
+                      safeEnqueue(
+                        encoder.encode(
+                          `event: content_block_delta\ndata: ${JSON.stringify(
+                            thinkingSignature
+                          )}\n\n`
+                        )
+                      );
+                      const contentBlockStop = {
+                        type: "content_block_stop",
+                        index: currentContentBlockIndex,
+                      };
+                      safeEnqueue(
+                        encoder.encode(
+                          `event: content_block_stop\ndata: ${JSON.stringify(
+                            contentBlockStop
+                          )}\n\n`
+                        )
+                      );
+                      currentContentBlockIndex = -1;
+                    } else if (choice.delta.thinking.content) {
+                      const thinkingChunk = {
+                        type: "content_block_delta",
+                        index: currentContentBlockIndex,
+                        delta: {
+                          type: "thinking_delta",
+                          thinking: choice.delta.thinking.content || "",
+                        },
+                      };
+                      safeEnqueue(
+                        encoder.encode(
+                          `event: content_block_delta\ndata: ${JSON.stringify(
+                            thinkingChunk
+                          )}\n\n`
+                        )
+                      );
+                    }
                   }
                 }
 
