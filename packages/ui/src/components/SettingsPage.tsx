@@ -10,7 +10,7 @@ import { MultiCombobox } from "@/components/ui/multi-combobox";
 import { useConfig } from "./ConfigProvider";
 import { StatusLineConfigDialog } from "./StatusLineConfigDialog";
 import { UsageStats } from "./UsageStats";
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import { LogViewer } from '@/components/LogViewer';
 import type { StatusLineConfig, FallbackConfig } from "@/types";
 import { FileJson, FileText, CircleArrowUp, FileCog, ArrowLeft, Save, RefreshCw, Trash2 } from "lucide-react";
@@ -30,6 +30,8 @@ export function SettingsPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [isRestarting, setIsRestarting] = useState(false);
   const [isLogViewerOpen, setIsLogViewerOpen] = useState(false);
+  const [isNewVersionAvailable, setIsNewVersionAvailable] = useState(false);
+  const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
   const [expandedFamily, setExpandedFamily] = useState<string | null>(null);
 
   // Auto-expand first family on initial load so the section is not empty
@@ -175,6 +177,23 @@ export function SettingsPage() {
     setConfig({ ...config, StatusLine: newStatusLineConfig });
   };
 
+  const checkForUpdates = useCallback(async () => {
+    setIsCheckingUpdate(true);
+    try {
+      const updateInfo = await api.checkForUpdates();
+      if (updateInfo.hasUpdate && updateInfo.latestVersion) {
+        setIsNewVersionAvailable(true);
+        setToast({ message: `${t('app.new_version_available')}: v${updateInfo.latestVersion}`, type: 'success' });
+      } else {
+        setToast({ message: t('app.no_updates_available'), type: 'success' });
+      }
+    } catch (error) {
+      setToast({ message: t('app.update_check_failed') + ': ' + (error as Error).message, type: 'error' });
+    } finally {
+      setIsCheckingUpdate(false);
+    }
+  }, [t]);
+
   const saveConfig = async () => {
     setIsSaving(true);
     try {
@@ -214,6 +233,7 @@ export function SettingsPage() {
     { icon: FileJson, label: t("settings.tools.json_editor"), desc: t("settings.tools.json_editor_desc"), href: "/debug" },
     // LogViewer opens via overlay
     { icon: FileText, label: t("settings.tools.log_viewer"), desc: t("settings.tools.log_viewer_desc"), onClick: () => setIsLogViewerOpen(true) },
+    { icon: CircleArrowUp, label: t("settings.tools.check_updates"), desc: t("settings.tools.check_updates_desc"), onClick: checkForUpdates },
     { icon: FileCog, label: t("settings.tools.presets"), desc: t("settings.tools.presets_desc"), href: "/presets" },
   ];
 

@@ -143,6 +143,28 @@ async function handleFallback(
   const globalFallback = fastify.configService.get<any>('fallback');
   const healthStore = getHealthStore();
 
+  const originalProvider = req.provider || "";
+  const originalModel = (req.body as any).model || "";
+  const attemptedFallbacks = new Set<string>();
+
+  if (originalProvider && originalModel) {
+    healthStore.recordFailure(originalProvider, originalModel, error?.message);
+    attemptedFallbacks.add(`${originalProvider},${originalModel}`);
+
+    // Record failed primary model attempt in usage stats
+    fastify.recordUsage?.({
+      provider: originalProvider,
+      model: originalModel,
+      originalModel: (req as any).originalModel || originalModel,
+      scenarioType,
+      modelFamily: (req as any).modelFamily,
+      errorMessage: error?.message || String(error),
+      sessionId: (req as any).usageSessionId || req.id,
+      stream: (req.body as any).stream,
+      inputTokens: (req as any).tokenCount || 0,
+    });
+  }
+
   // Check if fallback is enabled (default: false - disabled when not set)
   const Router = fastify.configService.get<any>('Router');
   if (!Router?.enableFallback) {
@@ -186,27 +208,7 @@ async function handleFallback(
     });
   }
 
-  const originalProvider = req.provider || "";
-  const originalModel = (req.body as any).model || "";
-  const attemptedFallbacks = new Set<string>();
 
-  if (originalProvider && originalModel) {
-    healthStore.recordFailure(originalProvider, originalModel, error?.message);
-    attemptedFallbacks.add(`${originalProvider},${originalModel}`);
-
-    // Record failed primary model attempt in usage stats
-    fastify.recordUsage?.({
-      provider: originalProvider,
-      model: originalModel,
-      originalModel: (req as any).originalModel || originalModel,
-      scenarioType,
-      modelFamily: (req as any).modelFamily,
-      errorMessage: error?.message || String(error),
-      sessionId: (req as any).usageSessionId || req.id,
-      stream: (req.body as any).stream,
-      inputTokens: (req as any).tokenCount || 0,
-    });
-  }
 
   if (fallbackStages.length === 0) {
     return null;

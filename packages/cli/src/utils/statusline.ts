@@ -990,10 +990,11 @@ async function renderDefaultStyle(
             text = replaceVariables(module.text, variables);
         }
 
-        // Build display text
+        // Build display text with icon isolation to prevent display issues
+        // U+FEFF (ZERO WIDTH NO-BREAK SPACE) acts as a transparent barrier before icons
         let displayText = "";
         if (icon) {
-            displayText += `${icon} `;
+            displayText += `﻿${icon} `;
         }
         displayText += text;
 
@@ -1148,10 +1149,11 @@ async function renderPowerlineStyle(
             text = replaceVariables(module.text, variables);
         }
 
-        // Build display text
+        // Build display text with icon isolation to prevent display issues
+        // U+FEFF (ZERO WIDTH NO-BREAK SPACE) acts as a transparent barrier before icons
         let displayText = "";
         if (icon) {
-            displayText += `${icon} `;
+            displayText += `﻿${icon} `;
         }
         displayText += text;
 

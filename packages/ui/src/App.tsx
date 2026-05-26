@@ -9,7 +9,7 @@ import { LogViewer } from "@/components/LogViewer";
 import { Button } from "@/components/ui/button";
 import { useConfig } from "@/components/ConfigProvider";
 import { api } from "@/lib/api";
-import { Settings, Save, RefreshCw, LayoutDashboard } from "lucide-react";
+import { Settings, Save, RefreshCw, LayoutDashboard, CircleArrowUp } from "lucide-react";
 import { Toast } from "@/components/ui/toast";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Background } from "@/components/ui/Background";
@@ -225,7 +225,23 @@ function App() {
                 <p>{t('app.settings')}</p>
               </TooltipContent>
             </Tooltip>
-            
+
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <div className="relative">
+                  <Button variant="ghost" size="icon" onClick={() => checkForUpdates()} disabled={isCheckingUpdate} className="rounded-xl hover:bg-white/10">
+                    <CircleArrowUp className="h-5 w-5" />
+                  </Button>
+                  {isNewVersionAvailable && (
+                    <span className="absolute -top-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-red-500 ring-2 ring-background" />
+                  )}
+                </div>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>{t('app.check_updates')}</p>
+              </TooltipContent>
+            </Tooltip>
+
             <div className="h-8 w-[1px] bg-white/10 mx-2" />
             
             <Button onClick={saveConfig} variant="outline" className="rounded-xl border-white/10 bg-white/5 hover:bg-white/10">
