@@ -105,8 +105,16 @@ async function handleTransformerEndpoint(
       }
     );
 
-    // Format and return response
-    return formatResponse(finalResponse, reply, body, fastify);
+    const result = formatResponse(finalResponse, reply, body, fastify);
+
+    try {
+      const model = body.model || (req as any).originalModel;
+      if (providerName && model) {
+        getHealthStore().recordSuccess(providerName, model);
+      }
+    } catch {}
+
+    return result;
   } catch (error: any) {
     // Handle fallback for any request error (timeout, network, API errors)
     const fallbackResult = await handleFallback(req, reply, fastify, transformer, error);
@@ -178,10 +186,6 @@ async function handleFallback(
     });
   }
 
-  if (fallbackStages.length === 0) {
-    return null;
-  }
-
   const originalProvider = req.provider || "";
   const originalModel = (req.body as any).model || "";
   const attemptedFallbacks = new Set<string>();
@@ -202,6 +206,10 @@ async function handleFallback(
       stream: (req.body as any).stream,
       inputTokens: (req as any).tokenCount || 0,
     });
+  }
+
+  if (fallbackStages.length === 0) {
+    return null;
   }
 
   const totalFallbacks = fallbackStages.reduce((total, stage) => total + stage.models.length, 0);
