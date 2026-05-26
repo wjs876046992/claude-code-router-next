@@ -880,7 +880,7 @@ export async function parseStatusLineData(input: StatusLineInput, presetName?: s
             }
         }
 
-        const formattedTokenSpeed = tokenSpeed > 0 ? tokenSpeed.toString() : '';
+        const formattedTokenSpeed = tokenSpeed > 0 ? Math.min(tokenSpeed, 999).toString() : '';
         const streamingIndicator = isStreaming ? '[Streaming]' : '';
 
         // Format time to first token
@@ -899,7 +899,8 @@ export async function parseStatusLineData(input: StatusLineInput, presetName?: s
         // candidate, then floor it at the historical peak for this session.
         const cwTotalInput = input.context_window?.total_input_tokens ?? 0;
         const cwTotalOutput = input.context_window?.total_output_tokens ?? 0;
-        const totalInputTokens = Math.max(sessionTotalInputTokens, cwTotalInput);
+        const sessionTotalInputWithCache = sessionTotalInputTokens + sessionTotalCacheCreationTokens + sessionTotalCacheReadTokens;
+        const totalInputTokens = Math.max(sessionTotalInputWithCache, cwTotalInput);
         const totalOutputTokens = Math.max(sessionTotalOutputTokens, cwTotalOutput);
         const effectiveTotalTokens = await getSessionPeakTotal(
             input.session_id,

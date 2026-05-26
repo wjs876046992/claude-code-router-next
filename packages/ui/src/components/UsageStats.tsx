@@ -111,7 +111,7 @@ function formatMs(ms: number | null): string {
 
 function formatSpeed(speed: number | null): string {
   if (speed == null) return "-";
-  return speed + " t/s";
+  return Math.min(speed, 999) + " t/s";
 }
 
 function formatDuration(ms: number): string {

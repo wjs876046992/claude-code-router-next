@@ -82,6 +82,12 @@ npm install -g @wengine-ai/claude-code-router-next
 
 > **说明**：卸载旧包**不会影响**您已有的配置文件 `~/.claude-code-router/config.json`，新版本会自动读取原有配置。
 
+### 升级
+
+```shell
+npm install -g @wengine-ai/claude-code-router-next@latest && ccr restart
+```
+
 ### 2. 配置
 
 创建并配置您的 `~/.claude-code-router/config.json` 文件。有关更多详细信息，您可以参考 `config.example.json`。
