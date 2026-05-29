@@ -92,6 +92,9 @@ function saveConfig(config: Config): void {
 function getAllModels(config: Config) {
   const models: any[] = [];
   for (const provider of config.Providers) {
+    if (provider.enabled === false) {
+      continue;
+    }
     for (const model of provider.models) {
       models.push({
         name: `${BOLDCYAN}${provider.name}${RESET} → ${CYAN} ${model}`,

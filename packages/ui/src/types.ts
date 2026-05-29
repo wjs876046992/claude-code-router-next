@@ -11,6 +11,7 @@ export interface Provider {
   transformer?: ProviderTransformer;
   // Optional quota configuration for rate limiting display
   quota?: ProviderQuotaConfig;
+  enabled?: boolean;
   // Allow for additional custom fields
   [key: string]: any;
 }

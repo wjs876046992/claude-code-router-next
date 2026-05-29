@@ -90,6 +90,10 @@ export class ProviderService {
           models: providerConfig.models || [],
           quotaToken: (providerConfig as any).quota_token,
           transformer: providerConfig.transformer ? transformer : undefined,
+          enabled: providerConfig.enabled !== false,
+          wakeupEnabled: providerConfig.wakeup_enabled === true,
+          wakeupTime: providerConfig.wakeup_time || "06:00",
+          wakeupModel: providerConfig.wakeup_model || "",
         });
 
         this.logger.info(`${providerConfig.name} provider registered`);
@@ -102,6 +106,10 @@ export class ProviderService {
   registerProvider(request: RegisterProviderRequest): LLMProvider {
     const provider: LLMProvider = {
       ...request,
+      enabled: request.enabled !== false,
+      wakeupEnabled: request.wakeupEnabled === true,
+      wakeupTime: request.wakeupTime || "06:00",
+      wakeupModel: request.wakeupModel || "",
     };
 
     this.providers.set(provider.name, provider);
@@ -192,6 +200,16 @@ export class ProviderService {
     if (!provider) {
       return false;
     }
+    provider.enabled = enabled;
+
+    const providersConfig = this.configService.get<ConfigProvider[]>("providers");
+    if (providersConfig && Array.isArray(providersConfig)) {
+      const target = providersConfig.find(p => p.name === name);
+      if (target) {
+        target.enabled = enabled;
+      }
+    }
+
     return true;
   }
 
@@ -216,6 +234,7 @@ export class ProviderService {
   getAvailableModelNames(): string[] {
     const modelNames: string[] = [];
     this.providers.forEach((provider) => {
+      if (provider.enabled === false) return;
       provider.models.forEach((model) => {
         modelNames.push(model);
         modelNames.push(`${provider.name},${model}`);
@@ -263,6 +282,7 @@ export class ProviderService {
     }> = [];
 
     this.providers.forEach((provider) => {
+      if (provider.enabled === false) return;
       provider.models.forEach((model) => {
         models.push({
           id: model,

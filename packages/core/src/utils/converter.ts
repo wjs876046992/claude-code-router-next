@@ -83,8 +83,36 @@ export function convertToOpenAI(
     }
   });
 
-  for (let i = 0; i < request.messages.length; i++) {
-    const msg = request.messages[i];
+  const otherMessages: any[] = [];
+  const systemContents: string[] = [];
+
+  request.messages.forEach((msg) => {
+    if (msg.role === "system") {
+      if (typeof msg.content === "string") {
+        systemContents.push(msg.content);
+      } else if (Array.isArray(msg.content)) {
+        msg.content.forEach((block: any) => {
+          if (block && typeof block === "object" && block.type === "text" && block.text) {
+            systemContents.push(block.text);
+          } else if (typeof block === "string") {
+            systemContents.push(block);
+          }
+        });
+      }
+    } else {
+      otherMessages.push(msg);
+    }
+  });
+
+  if (systemContents.length > 0) {
+    messages.push({
+      role: "system",
+      content: systemContents.join("\n\n"),
+    } as any);
+  }
+
+  for (let i = 0; i < otherMessages.length; i++) {
+    const msg = otherMessages[i];
 
     if (msg.role === "tool") {
       continue;
@@ -456,6 +484,190 @@ export function convertFromAnthropic(
   return result;
 }
 
+export function convertToAnthropic(
+  request: UnifiedChatRequest
+): AnthropicChatRequest {
+  const otherMessages: UnifiedMessage[] = [];
+  const systemContents: string[] = [];
+
+  request.messages.forEach((msg) => {
+    if (msg.role === "system") {
+      if (typeof msg.content === "string") {
+        systemContents.push(msg.content);
+      } else if (Array.isArray(msg.content)) {
+        msg.content.forEach((block: any) => {
+          if (block && typeof block === "object" && block.type === "text" && block.text) {
+            systemContents.push(block.text);
+          } else if (typeof block === "string") {
+            systemContents.push(block);
+          }
+        });
+      }
+    } else {
+      otherMessages.push(msg);
+    }
+  });
+
+  const messages: AnthropicMessage[] = [];
+
+  for (let i = 0; i < otherMessages.length; i++) {
+    const msg = otherMessages[i];
+
+    if (msg.role === "tool") {
+      let content: any = msg.content;
+      try {
+        if (typeof msg.content === "string") {
+          content = JSON.parse(msg.content);
+        }
+      } catch {}
+
+      const toolResultBlock: any = {
+        type: "tool_result",
+        tool_use_id: msg.tool_call_id,
+        content: content,
+      };
+
+      if (msg.cache_control) {
+        toolResultBlock.cache_control = msg.cache_control;
+      }
+
+      const lastMsg = messages[messages.length - 1];
+      if (
+        lastMsg &&
+        lastMsg.role === "user" &&
+        Array.isArray(lastMsg.content)
+      ) {
+        lastMsg.content.push(toolResultBlock);
+      } else {
+        messages.push({
+          role: "user",
+          content: [toolResultBlock],
+        });
+      }
+    } else if (msg.role === "user") {
+      const contentBlocks: any[] = [];
+      if (typeof msg.content === "string") {
+        contentBlocks.push({ type: "text", text: msg.content });
+      } else if (Array.isArray(msg.content)) {
+        msg.content.forEach((block: any) => {
+          if (block && typeof block === "object") {
+            if (block.type === "image_url" && block.image_url?.url) {
+              contentBlocks.push({
+                type: "image",
+                source: {
+                  type: "base64",
+                  media_type: block.media_type || "image/jpeg",
+                  data: block.image_url.url.split(",")[1] || block.image_url.url,
+                },
+              });
+            } else {
+              contentBlocks.push(block);
+            }
+          } else {
+            contentBlocks.push(block);
+          }
+        });
+      }
+
+      const lastMsg = messages[messages.length - 1];
+      if (
+        lastMsg &&
+        lastMsg.role === "user" &&
+        Array.isArray(lastMsg.content)
+      ) {
+        lastMsg.content.push(...contentBlocks);
+      } else {
+        messages.push({
+          role: "user",
+          content: contentBlocks.length > 0 ? contentBlocks : [{ type: "text", text: " " }],
+        });
+      }
+    } else if (msg.role === "assistant") {
+      const contentBlocks: any[] = [];
+      if (msg.content) {
+        if (typeof msg.content === "string") {
+          contentBlocks.push({ type: "text", text: msg.content });
+        } else if (Array.isArray(msg.content)) {
+          contentBlocks.push(...msg.content);
+        }
+      }
+      if (msg.tool_calls && msg.tool_calls.length > 0) {
+        msg.tool_calls.forEach((call) => {
+          let input = {};
+          try {
+            input = JSON.parse(call.function.arguments);
+          } catch (e) {
+            input = call.function.arguments;
+          }
+          contentBlocks.push({
+            type: "tool_use",
+            id: call.id,
+            name: call.function.name,
+            input: input,
+          });
+        });
+      }
+
+      if (msg.thinking) {
+        contentBlocks.unshift({
+          type: "thinking",
+          thinking: msg.thinking.content,
+          signature: msg.thinking.signature,
+        });
+      }
+
+      const lastMsg = messages[messages.length - 1];
+      if (
+        lastMsg &&
+        lastMsg.role === "assistant" &&
+        Array.isArray(lastMsg.content)
+      ) {
+        lastMsg.content.push(...contentBlocks);
+      } else {
+        messages.push({
+          role: "assistant",
+          content: contentBlocks.length > 0 ? contentBlocks : [{ type: "text", text: " " }],
+        });
+      }
+    }
+  }
+
+  const result: any = {
+    messages,
+    model: request.model,
+    max_tokens: request.max_tokens || 4096,
+    temperature: request.temperature,
+    stream: request.stream,
+  };
+
+  if (systemContents.length > 0) {
+    result.system = systemContents.join("\n\n");
+  }
+
+  if (request.tools && request.tools.length > 0) {
+    result.tools = convertToolsToAnthropic(request.tools);
+    if (request.tool_choice) {
+      if (request.tool_choice === "auto") {
+        result.tool_choice = { type: "auto" };
+      } else if (request.tool_choice === "any" || request.tool_choice === "required") {
+        result.tool_choice = { type: "any" };
+      } else if (typeof request.tool_choice === "string") {
+        result.tool_choice = { type: "tool", name: request.tool_choice };
+      } else if (
+        typeof request.tool_choice === "object" &&
+        request.tool_choice.type === "function"
+      ) {
+        result.tool_choice = {
+          type: "tool",
+          name: request.tool_choice.function.name,
+        };
+      }
+    }
+  }
+
+  return result;
+}
+
 export function convertRequest(
   request: OpenAIChatRequest | AnthropicChatRequest | UnifiedChatRequest,
   options: ConversionOptions
@@ -472,7 +684,6 @@ export function convertRequest(
   if (options.targetProvider === "openai") {
     return convertToOpenAI(unifiedRequest);
   } else {
-    // For now, return unified request since Anthropic format is similar
-    return unifiedRequest as any;
+    return convertToAnthropic(unifiedRequest);
   }
 }

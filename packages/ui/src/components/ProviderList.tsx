@@ -2,6 +2,7 @@ import { useTranslation } from "react-i18next";
 import { Pencil, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
 import type { Provider, ProviderHealthState, ProviderQuotaUsage } from "@/types";
 
 interface ProviderListProps {
@@ -10,6 +11,7 @@ interface ProviderListProps {
   quotaUsages?: ProviderQuotaUsage[];
   onEdit: (index: number) => void;
   onRemove: (index: number) => void;
+  onToggle?: (index: number, enabled: boolean) => void;
 }
 
 // Get health status for a provider
@@ -123,7 +125,21 @@ function QuotaProgressBar({
   currency?: string;
   t: (key: string, options?: Record<string, unknown>) => string;
 }) {
-  if (limit === undefined || (!isBalance && limit <= 0)) {
+  if (limit === undefined) {
+    return (
+      <div className="flex items-center gap-2 text-xs text-muted-foreground/80">
+        <span className="w-12 shrink-0 font-medium">{label}</span>
+        <div className="flex-1 h-2 bg-white/5 rounded-full overflow-hidden">
+          <div className="h-full rounded-full bg-white/5 w-0" />
+        </div>
+        <span className="shrink-0 min-w-[70px] text-right text-muted-foreground/40 tabular-nums">
+          {t("providers.quota_no_data", { defaultValue: "--" })}
+        </span>
+      </div>
+    );
+  }
+
+  if (!isBalance && limit <= 0) {
     return null;
   }
 
@@ -201,7 +217,7 @@ function QuotaProgressBar({
   );
 }
 
-export function ProviderList({ providers, healthStates, quotaUsages, onEdit, onRemove }: ProviderListProps) {
+export function ProviderList({ providers, healthStates, quotaUsages, onEdit, onRemove, onToggle }: ProviderListProps) {
   const { t } = useTranslation();
 
   if (!providers || !Array.isArray(providers)) {
@@ -239,7 +255,7 @@ export function ProviderList({ providers, healthStates, quotaUsages, onEdit, onR
                 </div>
               )}
               
-              {quota && (quota.limit5h !== undefined || quota.limit7d !== undefined) && (
+              {quota && (quota.used5h > 0 || quota.used7d > 0 || quota.limit5h !== undefined || quota.limit7d !== undefined) && (
                 <div className="space-y-2 py-1 max-w-md">
                   <QuotaProgressBar
                     label={quota.type5h === 'balance' ? t("providers.quota_balance") : t("providers.quota_5h")}
@@ -271,8 +287,17 @@ export function ProviderList({ providers, healthStates, quotaUsages, onEdit, onR
               </div>
             </div>
             
-            <div className="ml-4 flex flex-col items-end gap-4">
-              <HealthIndicator status={health.status} />
+            <div className="ml-4 flex flex-col items-end gap-4 shrink-0">
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider">
+                  {provider.enabled !== false ? t("providers.enabled", { defaultValue: "Active" }) : t("providers.disabled", { defaultValue: "Disabled" })}
+                </span>
+                <Switch
+                  checked={provider.enabled !== false}
+                  onCheckedChange={(checked) => onToggle?.(index, checked)}
+                />
+              </div>
+              <HealthIndicator status={provider.enabled !== false ? health.status : 'unknown'} />
               <div className="flex flex-col gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                 <Button variant="ghost" size="icon" onClick={() => onEdit(index)} className="h-9 w-9 rounded-lg hover:bg-primary/20 hover:text-primary">
                   <Pencil className="h-4 w-4" />

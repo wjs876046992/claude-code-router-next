@@ -265,7 +265,8 @@ class Server {
           () => this.providerService.getProviders(),
           probeConfig,
           () => this.configService.getHttpsProxy(),
-          this.app.log
+          this.app.log,
+          (key: string) => this.configService.get(key)
         );
       } catch (probeError: any) {
         this.app.log.warn?.(`Failed to start active probe service: ${probeError.message}`);
@@ -304,10 +305,10 @@ export { TokenizerService } from "./services/tokenizer";
 export { pluginManager, tokenSpeedPlugin, getTokenSpeedStats, getGlobalTokenSpeedStats, CCRPlugin, CCRPluginOptions, PluginMetadata } from "./plugins";
 export { SSEParserTransform, SSESerializerTransform, rewriteStream } from "./utils/sse";
 export { getHealthStore, ProviderHealthStore, ProviderHealthState, HealthPoolConfig } from "./services/provider-health";
-export { getAllRateLimitInfo, getRateLimitInfo, RateLimitInfo } from "./services/rate-limit";
+export { getAllRateLimitInfo, getRateLimitInfo, RateLimitInfo, initRateLimitPersistence } from "./services/rate-limit";
 export { getQuotaAdapter } from "./services/quota-adapters";
 export type { QuotaAdapter, ProviderQuotaResult } from "./services/quota-adapters";
-export { getAllQuotaResults, getQuotaResult, storeQuotaResult } from "./services/quota-store";
+export { getAllQuotaResults, getQuotaResult, storeQuotaResult, initQuotaStorePersistence } from "./services/quota-store";
 export type { StoredQuotaResult } from "./services/quota-store";
 export { getActiveProbeService, startActiveProbe, stopActiveProbe, resetActiveProbeService, ActiveProbeService, ActiveProbeConfig } from "./services/active-probe";
 export { setRuntimeDebugLog, getRuntimeDebugLog } from "./utils/debug-log";

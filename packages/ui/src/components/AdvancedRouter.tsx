@@ -29,6 +29,10 @@ export function AdvancedRouter() {
   const modelOptions = useMemo(
     () => providers.flatMap((provider) => {
       if (!provider) return [];
+
+      // Skip disabled providers
+      if (provider.enabled === false) return [];
+
       const models = Array.isArray(provider.models) ? provider.models : [];
       const providerName = provider.name || "Unknown Provider";
       return models.map((model) => ({

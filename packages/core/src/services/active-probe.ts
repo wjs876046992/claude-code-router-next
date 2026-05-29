@@ -154,27 +154,103 @@ async function probeProvider(
 }
 
 /**
+ * Perform a scheduled wake-up call to a provider to trigger their quota cycle start.
+ * Sends a dummy chat completion / messages request.
+ */
+async function wakeupProvider(
+  provider: LLMProvider,
+  timeoutMs: number,
+  proxyUrl?: string,
+  logger?: any
+): Promise<{ success: boolean; error?: string }> {
+  const modelToWakeup = provider.wakeupModel || (Array.isArray(provider.models) ? provider.models[0] : undefined);
+  if (!modelToWakeup) {
+    return { success: false, error: 'No models configured for provider' };
+  }
+
+  const isAnthropic = provider.baseUrl.includes('anthropic') || modelToWakeup.includes('claude');
+  const chatUrl = isAnthropic
+    ? (provider.baseUrl.includes('/messages') ? provider.baseUrl : `${provider.baseUrl.replace(/\/$/, '')}/v1/messages`)
+    : (provider.baseUrl.includes('/chat/completions') ? provider.baseUrl : `${provider.baseUrl.replace(/\/$/, '')}/chat/completions`);
+
+  try {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+
+    if (isAnthropic) {
+      headers['x-api-key'] = provider.apiKey;
+      headers['anthropic-version'] = '2023-06-01';
+    } else {
+      headers['Authorization'] = `Bearer ${provider.apiKey}`;
+    }
+
+    const fetchOptions: RequestInit = {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        model: modelToWakeup,
+        messages: [{ role: 'user', content: 'ping' }],
+        max_tokens: 1,
+      }),
+      signal: AbortSignal.timeout(timeoutMs),
+    };
+
+    // Add proxy if configured
+    if (proxyUrl) {
+      try {
+        const { ProxyAgent } = await import('undici');
+        (fetchOptions as any).dispatcher = new ProxyAgent(new URL(proxyUrl).toString());
+      } catch {
+        // Proxy agent not available, continue without proxy
+      }
+    }
+
+    logger?.info(`Sending scheduled wake-up call to provider ${provider.name} using model ${modelToWakeup}...`);
+    const response = await fetch(chatUrl, fetchOptions);
+
+    if (response.ok) {
+      return { success: true };
+    }
+
+    const errorText = await response.text().catch(() => '');
+    return {
+      success: false,
+      error: `HTTP ${response.status}: ${errorText.slice(0, 200) || 'Unknown error'}`,
+    };
+  } catch (err: any) {
+    const errorMessage = err?.message || err?.toString() || 'Unknown wake-up error';
+    return { success: false, error: errorMessage };
+  }
+}
+
+/**
  * Active probe scheduler
  */
 export class ActiveProbeService {
   private config: Required<ActiveProbeConfig>;
   private quotaProbeTimer?: NodeJS.Timeout;
   private healthProbeTimer?: NodeJS.Timeout;
+  private wakeupTimer?: NodeJS.Timeout;
+  private lastWakeupDate: Map<string, string> = new Map(); // key: providerName, value: YYYY-MM-DD
   private getProviders: () => LLMProvider[];
   private getHttpsProxy?: () => string | undefined;
   private logger?: any;
+  private getConfig?: (key: string) => any;
   private running = false;
 
   constructor(
     getProviders: () => LLMProvider[],
     config?: ActiveProbeConfig,
     getHttpsProxy?: () => string | undefined,
-    logger?: any
+    logger?: any,
+    getConfig?: (key: string) => any
   ) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.getProviders = getProviders;
     this.getHttpsProxy = getHttpsProxy;
     this.logger = logger;
+    this.getConfig = getConfig;
   }
 
   /**
@@ -190,6 +266,7 @@ export class ActiveProbeService {
       if (!this.running) return;
       this.runQuotaProbe();
       this.runHealthProbe();
+      this.runScheduledWakeup();
     }, this.config.initialDelayMs);
 
     // Periodic quota probe
@@ -203,6 +280,12 @@ export class ActiveProbeService {
     this.healthProbeTimer = setInterval(
       () => this.runHealthProbe(),
       5 * 60 * 1000
+    );
+
+    // Periodic scheduled wake-up check every minute
+    this.wakeupTimer = setInterval(
+      () => this.runScheduledWakeup(),
+      60 * 1000
     );
 
     this.logger?.info('Active probe service started');
@@ -224,6 +307,11 @@ export class ActiveProbeService {
       this.healthProbeTimer = undefined;
     }
 
+    if (this.wakeupTimer) {
+      clearInterval(this.wakeupTimer);
+      this.wakeupTimer = undefined;
+    }
+
     this.logger?.info('Active probe service stopped');
   }
 
@@ -235,7 +323,7 @@ export class ActiveProbeService {
    */
   private async runQuotaProbe(): Promise<void> {
     const providers = this.getProviders().filter(
-      p => p?.name && !this.config.excludeProviders.includes(p.name)
+      p => p?.name && p.enabled !== false && !this.config.excludeProviders.includes(p.name)
     );
     const proxy = this.getHttpsProxy?.();
     const healthStore = getHealthStore();
@@ -327,7 +415,7 @@ export class ActiveProbeService {
   private async runHealthProbe(): Promise<void> {
     const healthStore = getHealthStore();
     const providers = this.getProviders().filter(
-      p => p?.name && !this.config.excludeProviders.includes(p.name)
+      p => p?.name && p.enabled !== false && !this.config.excludeProviders.includes(p.name)
     );
     const proxy = this.getHttpsProxy?.();
 
@@ -379,6 +467,56 @@ export class ActiveProbeService {
   }
 
   /**
+   * Run scheduled wake-up for configured providers
+   */
+  private async runScheduledWakeup(): Promise<void> {
+    const globalWakeupEnabled = this.getConfig ? this.getConfig('WAKEUP_ENABLED') === true : false;
+    if (!globalWakeupEnabled) {
+      return;
+    }
+
+    const providers = this.getProviders().filter(
+      p => p?.name && p.enabled !== false && p.wakeupEnabled === true
+    );
+    if (providers.length === 0) return;
+
+    const now = new Date();
+    const currentHour = now.getHours();
+    const currentMinute = now.getMinutes();
+    const currentDateStr = now.toISOString().split('T')[0];
+    const proxy = this.getHttpsProxy?.();
+    const globalWakeupTime = this.getConfig ? this.getConfig('WAKEUP_TIME') || '06:00' : '06:00';
+
+    for (const provider of providers) {
+      const wakeupTime = provider.wakeupTime || globalWakeupTime;
+      const [targetHourStr, targetMinuteStr] = wakeupTime.split(':');
+      const targetHour = parseInt(targetHourStr, 10);
+      const targetMinute = parseInt(targetMinuteStr, 10);
+
+      if (isNaN(targetHour) || isNaN(targetMinute)) {
+        continue;
+      }
+
+      if (currentHour === targetHour && currentMinute === targetMinute) {
+        if (this.lastWakeupDate.get(provider.name) !== currentDateStr) {
+          this.lastWakeupDate.set(provider.name, currentDateStr);
+          this.logger?.info?.(`Scheduled wake-up triggered for provider ${provider.name} at ${wakeupTime}`);
+
+          wakeupProvider(provider, 30000, proxy, this.logger).then(res => {
+            if (res.success) {
+              this.logger?.info?.(`Successfully woke up provider ${provider.name}`);
+            } else {
+              this.logger?.error?.(`Failed to wake up provider ${provider.name}: ${res.error}`);
+            }
+          }).catch(err => {
+             this.logger?.error?.(`Error in wake-up task for ${provider.name}: ${err}`);
+          });
+        }
+      }
+    }
+  }
+
+  /**
    * Trigger a manual probe for a specific provider
    */
   async probeProviderManually(providerName: string): Promise<boolean> {
@@ -387,6 +525,11 @@ export class ActiveProbeService {
 
     if (!provider) {
       this.logger?.warn?.(`Provider ${providerName} not found for manual probe`);
+      return false;
+    }
+
+    if (provider.enabled === false) {
+      this.logger?.warn?.(`Provider ${providerName} is disabled, skipping manual probe`);
       return false;
     }
 
@@ -419,10 +562,11 @@ export function getActiveProbeService(
   getProviders: () => LLMProvider[],
   config?: ActiveProbeConfig,
   getHttpsProxy?: () => string | undefined,
-  logger?: any
+  logger?: any,
+  getConfig?: (key: string) => any
 ): ActiveProbeService {
   if (!activeProbeService) {
-    activeProbeService = new ActiveProbeService(getProviders, config, getHttpsProxy, logger);
+    activeProbeService = new ActiveProbeService(getProviders, config, getHttpsProxy, logger, getConfig);
   }
   return activeProbeService;
 }
@@ -434,9 +578,10 @@ export function startActiveProbe(
   getProviders: () => LLMProvider[],
   config?: ActiveProbeConfig,
   getHttpsProxy?: () => string | undefined,
-  logger?: any
+  logger?: any,
+  getConfig?: (key: string) => any
 ): ActiveProbeService {
-  const service = getActiveProbeService(getProviders, config, getHttpsProxy, logger);
+  const service = getActiveProbeService(getProviders, config, getHttpsProxy, logger, getConfig);
   service.start();
   return service;
 }

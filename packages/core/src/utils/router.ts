@@ -228,6 +228,15 @@ function resolveConfiguredModel(
 
   const { providerName, routeModel } = route;
 
+  const finalProvider = providers.find(
+    (p: any) => p.name.toLowerCase() === providerName.toLowerCase()
+  );
+
+  // Switch has the highest priority. If disabled, return null immediately.
+  if (finalProvider && finalProvider.enabled === false) {
+    return null;
+  }
+
   // Check if there is an active fallback promotion for this primary model
   // If a fallback succeeded globally, use the promoted model instead
   if (scenarioType && !skipHealthCheck) {
@@ -275,9 +284,6 @@ function resolveConfiguredModel(
     }
   }
 
-  const finalProvider = providers.find(
-    (p: any) => p.name.toLowerCase() === providerName.toLowerCase()
-  );
   const finalModel = finalProvider?.models?.find(
     (m: any) => String(m).toLowerCase() === routeModel.toLowerCase()
   );

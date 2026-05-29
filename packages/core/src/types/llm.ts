@@ -211,6 +211,10 @@ export interface LLMProvider {
   } & {
     use?: Transformer[];
   };
+  enabled?: boolean;
+  wakeupEnabled?: boolean;
+  wakeupTime?: string;
+  wakeupModel?: string;
 }
 
 export type RegisterProviderRequest = LLMProvider;
@@ -248,4 +252,8 @@ export interface ConfigProvider {
    * - 'inclusive': input_tokens already includes cache tokens, total = input + output
    */
   cache_mode?: 'exclusive' | 'inclusive';
+  enabled?: boolean;
+  wakeup_enabled?: boolean;
+  wakeup_time?: string;
+  wakeup_model?: string;
 }

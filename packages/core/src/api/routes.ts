@@ -262,6 +262,11 @@ async function handleFallback(
           continue;
         }
 
+        if (provider.enabled === false) {
+          req.log.warn(`Fallback provider '${fallbackProvider}' is disabled, skipping`);
+          continue;
+        }
+
         // Process request transformer chain
         const { requestBody, config, bypass } = await processRequestTransformers(
           newBody,
@@ -447,6 +452,13 @@ function shouldBypassTransformers(
   transformer: any,
   body: any
 ): boolean {
+  // If the request contains system messages in the messages array, we cannot bypass
+  // because Anthropic-compatible targets do not support system messages in the messages array.
+  const hasSystemMessage = body?.messages?.some((msg: any) => msg.role === "system");
+  if (hasSystemMessage) {
+    return false;
+  }
+
   return (
     provider.transformer?.use?.length === 1 &&
     provider.transformer.use[0].name === transformer.name &&
@@ -555,6 +567,41 @@ async function sendRequestToProvider(
     );
     error.rawBody = errorText;
     throw error;
+  }
+
+  // Handle hidden errors in HTTP 200 OK responses (e.g. Zhipu rate limits)
+  if (response.ok) {
+    const contentType = response.headers.get("content-type") || "";
+    if (contentType.includes("application/json")) {
+      const cloned = response.clone();
+      try {
+        const bodyText = await cloned.text();
+        const bodyJson = JSON.parse(bodyText);
+        // Check if the response contains an error object
+        if (bodyJson && typeof bodyJson === 'object' && bodyJson.error) {
+          // If error is null or explicitly empty, it might not be a real error
+          const hasRealError =
+            typeof bodyJson.error === 'string' ||
+            (typeof bodyJson.error === 'object' && Object.keys(bodyJson.error).length > 0);
+
+          if (hasRealError) {
+            fastify.log.error(
+              `[provider_response_error] Hidden error from provider(${provider.name},${requestBody.model}: ${response.status}): ${bodyText}`,
+            );
+            const error = createApiError(
+              `Error from provider(${provider.name},${requestBody.model}: ${response.status}): ${bodyText}`,
+              // Promote to 400 to trigger fallback and correct usage logging
+              400,
+              "provider_response_error"
+            );
+            error.rawBody = bodyText;
+            throw error;
+          }
+        }
+      } catch (e) {
+        // Ignore JSON parse errors or other issues, let it pass through
+      }
+    }
   }
 
   // Debug: log non-stream response from provider

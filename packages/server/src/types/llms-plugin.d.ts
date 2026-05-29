@@ -59,4 +59,7 @@ declare module '@wengine-ai/llms' {
     stream: ReadableStream,
     processor: (data: any, controller: ReadableStreamController<any>) => Promise<any>
   ): ReadableStream;
+
+  export function getHealthStore(config?: any): any;
+  export function getAllQuotaResults(): any;
 }

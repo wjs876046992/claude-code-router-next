@@ -14,6 +14,7 @@ import { v4 as uuidv4 } from "uuid";
 import { getThinkLevel } from "@/utils/thinking";
 import { createApiError } from "@/api/middleware";
 import { formatBase64 } from "@/utils/image";
+import { convertToAnthropic } from "@/utils/converter";
 
 export class AnthropicTransformer implements Transformer {
   name = "Anthropic";
@@ -73,6 +74,14 @@ export class AnthropicTransformer implements Transformer {
     const requestMessages = JSON.parse(JSON.stringify(request.messages || []));
 
     requestMessages?.forEach((msg: any) => {
+      if (msg.role === "system") {
+        messages.push({
+          role: "system",
+          content: msg.content,
+        });
+        return;
+      }
+
       if (msg.role === "user" || msg.role === "assistant") {
         if (typeof msg.content === "string") {
           messages.push({
@@ -208,10 +217,56 @@ export class AnthropicTransformer implements Transformer {
     return result;
   }
 
+  async transformRequestIn(
+    request: UnifiedChatRequest,
+    provider: LLMProvider,
+    context: TransformerContext
+  ): Promise<any> {
+    if (!this.isAnthropicMessagesEndpoint(provider.baseUrl)) {
+      return request;
+    }
+
+    if (context && context.req) {
+      context.req.isTargetAnthropic = true;
+    }
+    const body = convertToAnthropic(request);
+
+    const headers: Record<string, string | undefined> = {};
+    if (this.useBearer) {
+      headers["authorization"] = `Bearer ${provider.apiKey}`;
+      headers["x-api-key"] = undefined;
+    } else {
+      headers["x-api-key"] = provider.apiKey;
+      headers["authorization"] = undefined;
+    }
+    headers["anthropic-version"] = "2023-06-01";
+    headers["content-type"] = "application/json";
+
+    return {
+      body,
+      config: {
+        headers,
+      },
+    };
+  }
+
+  private isAnthropicMessagesEndpoint(baseUrl: string): boolean {
+    try {
+      const url = new URL(baseUrl.trim());
+      const pathname = url.pathname.replace(/\/+$/, "");
+      return pathname.endsWith("/messages");
+    } catch {
+      return false;
+    }
+  }
+
   async transformResponseIn(
     response: Response,
     context?: TransformerContext
   ): Promise<Response> {
+    if (context?.req?.isTargetAnthropic) {
+      return response;
+    }
     const isStream = response.headers
       .get("Content-Type")
       ?.includes("text/event-stream");

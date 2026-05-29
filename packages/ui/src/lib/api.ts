@@ -148,6 +148,14 @@ class ApiClient {
     });
   }
 
+  // PATCH request
+  async patch<T>(endpoint: string, data: unknown): Promise<T> {
+    return this.apiFetch<T>(endpoint, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+  }
+
   // DELETE request
   async delete<T>(endpoint: string, body?: any): Promise<T> {
     return this.apiFetch<T>(endpoint, {
@@ -185,6 +193,11 @@ class ApiClient {
   // Delete a provider
   async deleteProvider(index: number): Promise<void> {
     return this.delete<void>(`/api/providers/${index}`);
+  }
+
+  // Toggle a provider
+  async toggleProvider(name: string, enabled: boolean): Promise<{ success: boolean; message: string }> {
+    return this.patch<{ success: boolean; message: string }>(`/providers/${encodeURIComponent(name)}/toggle`, { enabled });
   }
 
   // Get transformers

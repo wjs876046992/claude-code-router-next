@@ -17,22 +17,37 @@ import {
 import { X, Trash2, Plus, Eye, EyeOff, Search, XCircle, HelpCircle } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Combobox } from "@/components/ui/combobox";
 import { ComboInput } from "@/components/ui/combo-input";
 import { api } from "@/lib/api";
+import { Toast } from "@/components/ui/toast";
 import type { Provider, ProviderHealthState, ProviderQuotaUsage } from "@/types";
 
 interface ProviderType extends Provider {}
 
 // Helper function to clean up references to deleted models in Router configurations and fallback lists
-function cleanUpConfigModels(config: any, deletedModels: string[]): any {
+function cleanUpConfigModels(config: any, deletedModels: string[], providerName?: string): any {
   if (!deletedModels || deletedModels.length === 0) return config;
 
   // Deep copy to avoid mutating state directly
   const newConfig = JSON.parse(JSON.stringify(config));
 
+  // Build a set containing both bare model names and "provider,model" format IDs for matching
+  const deletedModelIds = new Set(deletedModels);
+  if (providerName) {
+    deletedModels.forEach(m => deletedModelIds.add(`${providerName},${m}`));
+  }
+
   const cleanModelField = (field: any) => {
-    if (typeof field === 'string' && deletedModels.includes(field)) {
+    if (typeof field === 'string' && deletedModelIds.has(field)) {
       return '';
     }
     return field;
@@ -40,7 +55,7 @@ function cleanUpConfigModels(config: any, deletedModels: string[]): any {
 
   const cleanModelArray = (arr: any) => {
     if (Array.isArray(arr)) {
-      return arr.filter(model => !deletedModels.includes(model));
+      return arr.filter(model => !deletedModelIds.has(model));
     }
     return arr;
   };
@@ -119,6 +134,7 @@ export function Providers() {
   const [searchTerm, setSearchTerm] = useState<string>("");
   const [healthStates, setHealthStates] = useState<ProviderHealthState[]>([]);
   const [quotaUsages, setQuotaUsages] = useState<ProviderQuotaUsage[]>([]);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'warning' } | null>(null);
   const comboInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -233,6 +249,35 @@ export function Providers() {
     setNameError(null);
   };
 
+  const handleToggleProvider = async (index: number, enabled: boolean) => {
+    const actualIndex = validProviders.indexOf(filteredProviders[index]);
+    if (actualIndex === -1) return;
+
+    const newProviders = [...config.Providers];
+    newProviders[actualIndex] = {
+      ...newProviders[actualIndex],
+      enabled,
+    };
+
+    const newConfig = { ...config, Providers: newProviders };
+    setConfig(newConfig);
+
+    setIsSaving(true);
+    try {
+      const response = await api.updateConfig(newConfig);
+      if (response.success) {
+        setToast({ message: t('app.config_saved_success'), type: 'success' });
+      } else {
+        setToast({ message: response.message || t('app.config_saved_failed'), type: 'error' });
+      }
+    } catch (e) {
+      console.error("Failed to toggle provider:", e);
+      setToast({ message: t('app.config_saved_failed') + ': ' + (e as Error).message, type: 'error' });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   const handleEditProvider = (index: number) => {
     // Find the actual index in the original providers array
     const actualIndex = validProviders.indexOf(filteredProviders[index]);
@@ -286,6 +331,7 @@ export function Providers() {
     if (editingProviderIndex !== null && editingProviderData) {
       const newProviders = [...config.Providers];
       let deletedModels: string[] = [];
+      const editingProviderName = editingProviderData.name;
       if (isNewProvider) {
         newProviders.push(editingProviderData);
       } else {
@@ -296,15 +342,21 @@ export function Providers() {
       }
       let newConfig = { ...config, Providers: newProviders };
       if (deletedModels.length > 0) {
-        newConfig = cleanUpConfigModels(newConfig, deletedModels);
+        newConfig = cleanUpConfigModels(newConfig, deletedModels, editingProviderName);
       }
       setConfig(newConfig);
       // Persist to server immediately
       setIsSaving(true);
       try {
-        await api.updateConfig(newConfig);
+        const response = await api.updateConfig(newConfig);
+        if (response.success) {
+          setToast({ message: t('app.config_saved_success'), type: 'success' });
+        } else {
+          setToast({ message: response.message || t('app.config_saved_failed'), type: 'error' });
+        }
       } catch (e) {
         console.error('Failed to persist provider changes:', e);
+        setToast({ message: t('app.config_saved_failed') + ': ' + (e as Error).message, type: 'error' });
       } finally {
         setIsSaving(false);
       }
@@ -353,24 +405,32 @@ export function Providers() {
   const handleRemoveProvider = async (filteredIndex: number) => {
     // Find the actual index in the original providers array
     const actualIndex = validProviders.indexOf(filteredProviders[filteredIndex]);
-    const deletedModels = config.Providers[actualIndex]?.models || [];
+    const deletedProvider = config.Providers[actualIndex];
+    const deletedModels = deletedProvider?.models || [];
+    const deletedProviderName = deletedProvider?.name;
     const newProviders = [...config.Providers];
     newProviders.splice(actualIndex, 1);
     let newConfig = { ...config, Providers: newProviders };
     if (deletedModels.length > 0) {
-      newConfig = cleanUpConfigModels(newConfig, deletedModels);
+      newConfig = cleanUpConfigModels(newConfig, deletedModels, deletedProviderName);
     }
     setConfig(newConfig);
     setDeletingProviderIndex(null);
     // Persist to server immediately
     try {
-      await api.updateConfig(newConfig);
+      const response = await api.updateConfig(newConfig);
+      if (response.success) {
+        setToast({ message: t('app.config_saved_success'), type: 'success' });
+      } else {
+        setToast({ message: response.message || t('app.config_saved_failed'), type: 'error' });
+      }
     } catch (e) {
       console.error('Failed to persist provider removal:', e);
+      setToast({ message: t('app.config_saved_failed') + ': ' + (e as Error).message, type: 'error' });
     }
   };
 
-  const handleProviderChange = (_index: number, field: string, value: string) => {
+  const handleProviderChange = (_index: number, field: string, value: any) => {
     if (editingProviderData) {
       const updatedProvider = { ...editingProviderData, [field]: value };
       setEditingProviderData(updatedProvider);
@@ -718,6 +778,7 @@ export function Providers() {
           quotaUsages={quotaUsages}
           onEdit={handleEditProvider}
           onRemove={handleSetDeletingProviderIndex}
+          onToggle={handleToggleProvider}
         />
       </CardContent>
 
@@ -727,7 +788,7 @@ export function Providers() {
           handleCancelAddProvider();
         }
       }}>
-        <DialogContent className="max-h-[80vh] flex flex-col sm:max-w-2xl">
+        <DialogContent className="max-h-[80vh] flex flex-col sm:max-w-2xl" onPointerDownOutside={(e) => e.preventDefault()}>
           <DialogHeader>
             <DialogTitle>{t("providers.edit")}</DialogTitle>
           </DialogHeader>
@@ -825,6 +886,62 @@ export function Providers() {
                 />
               </div>
               )}
+              {/* Wakeup configuration */}
+              <div className="space-y-4 rounded-lg border bg-slate-50/50 p-3">
+                <div className="flex items-center justify-between">
+                  <div className="space-y-0.5 pr-2">
+                    <Label htmlFor="wakeup_enabled" className="text-sm font-medium">
+                      {t("providers.wakeup_enabled")}
+                    </Label>
+                    <p className="text-[11px] text-muted-foreground leading-normal">
+                      {t("providers.wakeup_desc")}
+                    </p>
+                  </div>
+                  <Switch
+                    id="wakeup_enabled"
+                    checked={editingProvider.wakeup_enabled === true}
+                    onCheckedChange={(checked) =>
+                      handleProviderChange(editingProviderIndex, 'wakeup_enabled', checked)
+                    }
+                  />
+                </div>
+
+                {editingProvider.wakeup_enabled && (
+                  <div className="grid grid-cols-2 gap-3 pt-1">
+                    <div className="space-y-2">
+                      <Label htmlFor="wakeup_time">{t("providers.wakeup_time")}</Label>
+                      <Input
+                        id="wakeup_time"
+                        type="time"
+                        value={editingProvider.wakeup_time || '06:00'}
+                        onChange={(e) =>
+                          handleProviderChange(editingProviderIndex, 'wakeup_time', e.target.value)
+                        }
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="wakeup_model">{t("providers.wakeup_model")}</Label>
+                      <Select
+                        value={editingProvider.wakeup_model || ''}
+                        onValueChange={(val) =>
+                          handleProviderChange(editingProviderIndex, 'wakeup_model', val)
+                        }
+                      >
+                        <SelectTrigger id="wakeup_model" className="bg-white">
+                          <SelectValue placeholder={t("providers.select_models")} />
+                        </SelectTrigger>
+                        <SelectContent className="max-h-[200px]">
+                          {(editingProvider.models || []).map((model: string) => (
+                            <SelectItem key={model} value={model}>
+                              {model}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                )}
+              </div>
               <div className="space-y-2">
                 <Label htmlFor="models">{t("providers.models")}</Label>
                 <div className="space-y-2">
@@ -1245,6 +1362,14 @@ export function Providers() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {toast && (
+        <Toast
+          message={toast.message}
+          type={toast.type}
+          onClose={() => setToast(null)}
+        />
+      )}
     </Card>
   );
 }

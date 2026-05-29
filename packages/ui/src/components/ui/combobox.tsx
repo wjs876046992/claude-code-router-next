@@ -49,7 +49,7 @@ export function Combobox({
           aria-expanded={open}
           className="w-full justify-between transition-all-ease hover:scale-[1.02] active:scale-[0.98]"
         >
-          {selectedOption ? selectedOption.label : placeholder}
+          {selectedOption ? selectedOption.label : (value ? value : placeholder)}
           <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50 transition-transform duration-200 group-data-[state=open]:rotate-180" />
         </Button>
       </PopoverTrigger>

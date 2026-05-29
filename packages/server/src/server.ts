@@ -1,4 +1,8 @@
-import Server, { calculateTokenCount, TokenizerService, getAllRateLimitInfo, getAllQuotaResults, setRuntimeDebugLog, getRuntimeDebugLog, getHealthStore } from "@wengine-ai/llms";
+import Server, { calculateTokenCount, TokenizerService, getAllRateLimitInfo, getAllQuotaResults, setRuntimeDebugLog, getRuntimeDebugLog } from "@wengine-ai/llms";
+const _llmsModule = require("@wengine-ai/llms") as any;
+const initRateLimitPersistence: () => void = _llmsModule.initRateLimitPersistence;
+const initQuotaStorePersistence: () => void = _llmsModule.initQuotaStorePersistence;
+import { getHealthStore } from "@wengine-ai/llms";
 import { readConfigFile, writeConfigFile, backupConfigFile } from "./utils";
 import { join } from "path";
 import fastifyStatic from "@fastify/static";
@@ -100,6 +104,10 @@ function computeProviderQuota(providers: any[]): ProviderQuotaUsage[] {
 export const createServer = async (config: any): Promise<any> => {
   const server = new Server(config);
   const app = server.app;
+
+  // Restore persisted rate-limit and quota data from disk
+  initRateLimitPersistence();
+  initQuotaStorePersistence();
 
   app.register(fastifyMultipart, {
     limits: {
@@ -353,7 +361,7 @@ export const createServer = async (config: any): Promise<any> => {
       const healthStore = getHealthStore();
       const states = healthStore.getAllStates();
       return {
-        states: states.map(s => ({
+        states: states.map((s: any) => ({
           provider: s.provider,
           model: s.model,
           status: s.status,

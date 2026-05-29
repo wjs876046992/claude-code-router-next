@@ -82,9 +82,32 @@ If you are currently using the upstream community version `@musistudio/claude-co
 
 > **Note**: Your existing configuration at `~/.claude-code-router/config.json` is **not affected** by uninstalling the old package. The new version will automatically read your existing configuration.
 
+### Upgrade
+
+```shell
+npm install -g @wengine-ai/claude-code-router-next@latest && ccr restart
+```
+
+### 📅 Changelog (Release History)
+
+| Version | Release Details |
+| --- | --- |
+| **v2.1.26** | <ul><li>**Fix Anthropic Transformer URI Override**: When `Anthropic` is combined with DeepSeek/OpenAI-compatible providers, it no longer rewrites `chat/completions` endpoints to `/v1/messages`, preventing DeepSeek 404 responses.</li><li>**Tighter Protocol Conversion Boundary**: Request bodies are converted to Anthropic messages format only when the provider `api_base_url` explicitly points to a `/messages` endpoint.</li></ul> |
+| **v2.1.25** | <ul><li>**Fix Claude Code (v2.1.154+) 422 Error**: Solves the 400/422 validation errors when calling Anthropic-compatible `/v1/messages` target providers due to `role: "system"` appearing in the messages array.</li><li>**Self-Healing Passthrough Protection**: Blocks passthrough bypass for requests containing system messages, enforcing symmetric protocol normalization and system parameter extraction.</li><li>**Response Passthrough Fix**: Passes original Anthropic-compatible responses through unchanged, resolving the issue where requests succeeded but returned empty/no content.</li></ul> |
+| **v2.1.22** | <ul><li>**Provider Scheduled Wake-up**: Introduces a global and provider-level scheduled reset/wake-up mechanism to activate provider quotas early in the morning by sending dummy requests.</li><li>**Symmetric Web UI Grid**: Upgraded the usage statistics grid on the dashboard from 8 cards to a symmetric 10-card layout.</li><li>**Advanced Usage Metrics**: Added real-time displays and calculations for Cache Hit Rate and Average Speed (tok/s).</li></ul> |
+| **v2.1.7** | <ul><li>**Gemini Thinking Mode & Signature Support**: Cleanly supports Gemini thinking mode and handles thought signatures, preventing 400 validation failures and blocking API key leaks.</li><li>**Runtime Debug Logging**: Introduced a system debug logging system with one-click toggles and Web UI integration for easier troubleshooting.</li></ul> |
+| **v2.1.2** | <ul><li>**Status Bar Cache Tokens**: Fixed the CLI statusline token count display to correctly account for cache hits, and implemented multiple visual/speed optimizations.</li></ul> |
+| **v2.0.87** | <ul><li>**Web Console Quota Display**: Fully integrated and displayed real-time Web console quota usage details for Zhipu GLM and Aliyun Qwen.</li><li>**Health Store Failure Tracking**: Correctly recorded HTTP 429 Rate Limit responses as health check failures to trigger fallback mechanism early.</li></ul> |
+
 ### 2. Configuration
 
 Create and configure your `~/.claude-code-router/config.json` file. For more details, you can refer to `config.example.json`.
+
+> [!IMPORTANT]
+> **Important Note**: After manually modifying the `config.json` file (such as updating API keys, Aliyun console cookies, etc.), **you must restart the service for the changes to take effect**. After saving your changes, run the following command in your terminal:
+> ```shell
+> ccr restart
+> ```
 
 The `config.json` file has several key sections:
 
@@ -747,13 +770,19 @@ When a primary model fails, Router automatically tries fallback models in the ch
    - `open` (fail pool) → Red indicator, auto skipped
    - `half-open` (recovering) → Yellow indicator
 
-2. **Failure Detection**: After 3 consecutive failures, enters `open` status
+2. **Provider Master Toggle**: In the control panel, each provider has an independent enable/disable switch:
+   - **Highest Priority**: When a provider is turned off, all its models are immediately disabled and cannot be selected. The health indicator is grayed out.
+   - **Smart Fallback**: If a primary routing model's provider is disabled, the router immediately initiates fallback logic. If any backup model in the fallback chain belongs to a disabled provider, it is skipped automatically.
+   - **Probe Exemption**: Disabled providers are completely excluded from active health check probes, preventing redundant upstream network calls.
+   - **Warning Warnings**: If any currently configured main routing model (e.g. `default`) belongs to a disabled provider, a warning message is displayed below the select dropdown to alert the administrator.
 
-3. **Drag Ordering**: The UI supports dragging fallback models to adjust priority. Models higher in the list are tried first.
+3. **Failure Detection**: After 3 consecutive failures, enters `open` status
 
-4. **Fallback Promotion**: When primary fails and fallback succeeds, the fallback model is temporarily "promoted" (TTL 10 min). Subsequent requests use the promoted model directly, avoiding repeated attempts on the failed primary.
+4. **Drag Ordering**: The UI supports dragging fallback models to adjust priority. Models higher in the list are tried first.
 
-5. **Auto Recovery**: Every 5 minutes, probe failed models. On success → `half-open`, then 2 more successes → `closed`.
+5. **Fallback Promotion**: When primary fails and fallback succeeds, the fallback model is temporarily "promoted" (TTL 10 min). Subsequent requests use the promoted model directly, avoiding repeated attempts on the failed primary.
+
+6. **Auto Recovery**: Every 5 minutes, probe failed models. On success → `half-open`, then 2 more successes → `closed`.
 
 ![Provider health status](/blog/images/provider-health-healthy.png)
 
@@ -823,6 +852,5 @@ Each request logs detailed statistics:
 | `status` | success / error |
 
 Data location: `~/.claude-code-router/data/usage.jsonl`
-
 
 

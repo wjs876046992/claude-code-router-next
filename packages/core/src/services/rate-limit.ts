@@ -2,6 +2,10 @@
  * Rate limit info captured from upstream provider response headers
  */
 
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { join } from "path";
+import { HOME_DIR } from "@wengine-ai/claude-code-router-shared";
+
 export interface RateLimitInfo {
   provider: string;
   remaining: number | null;
@@ -10,7 +14,12 @@ export interface RateLimitInfo {
   capturedAt: number;
 }
 
+const RUNTIME_DIR = join(HOME_DIR, "runtime");
+const PERSIST_FILE = join(RUNTIME_DIR, "rate-limit.json");
+
 const store = new Map<string, RateLimitInfo>();
+let persistenceInitialized = false;
+let saveTimer: ReturnType<typeof setInterval> | null = null;
 
 const REMAINING_HEADERS = [
   'x-ratelimit-remaining-tokens',
@@ -156,4 +165,47 @@ function parseDurationToMs(value: string): number | null {
   }
 
   return matched ? totalMs : null;
+}
+
+// --- Persistence ---
+
+function loadFromDisk(): void {
+  try {
+    if (!existsSync(PERSIST_FILE)) return;
+    const data = JSON.parse(readFileSync(PERSIST_FILE, "utf-8"));
+    if (!Array.isArray(data)) return;
+    const now = Date.now();
+    for (const item of data) {
+      if (item && item.provider) {
+        // Skip entries older than 1 hour — rate limit data goes stale quickly
+        if (item.capturedAt && now - item.capturedAt > 60 * 60 * 1000) continue;
+        store.set(item.provider, item);
+      }
+    }
+  } catch {
+    // Corrupted file — start fresh
+  }
+}
+
+function saveToDisk(): void {
+  try {
+    if (store.size === 0) return;
+    if (!existsSync(RUNTIME_DIR)) {
+      mkdirSync(RUNTIME_DIR, { recursive: true });
+    }
+    writeFileSync(PERSIST_FILE, JSON.stringify(Array.from(store.values()), null, 2), "utf-8");
+  } catch {
+    // Best-effort persistence
+  }
+}
+
+/**
+ * Initialize persistence: load from disk and set up periodic save.
+ */
+export function initRateLimitPersistence(): void {
+  if (persistenceInitialized) return;
+  persistenceInitialized = true;
+  loadFromDisk();
+  saveTimer = setInterval(saveToDisk, 60_000);
+  process.on("exit", saveToDisk);
 }

@@ -51,10 +51,13 @@ export function Router() {
   const modelOptions = providers.flatMap((provider) => {
     // Handle case where individual provider might be null or undefined
     if (!provider) return [];
-    
+
+    // Skip disabled providers
+    if (provider.enabled === false) return [];
+
     // Handle case where provider.models might be null or undefined
     const models = Array.isArray(provider.models) ? provider.models : [];
-    
+
     // Handle case where provider.name might be null or undefined
     const providerName = provider.name || "Unknown Provider";
     
@@ -63,6 +66,13 @@ export function Router() {
       label: `${providerName}, ${model || "Unknown Model"}`,
     }));
   });
+
+  const isProviderDisabled = (modelValue?: string) => {
+    if (!modelValue || !modelValue.includes(",")) return false;
+    const providerName = modelValue.split(",")[0].trim();
+    const provider = providers.find(p => p && p.name && p.name.toLowerCase() === providerName.toLowerCase());
+    return provider ? provider.enabled === false : false;
+  };
 
   return (
     <Card className="flex h-full flex-col glass-card border-white/10 shadow-xl overflow-hidden">
@@ -82,6 +92,11 @@ export function Router() {
             searchPlaceholder={t("router.searchModel")}
             emptyPlaceholder={t("router.noModelFound")}
           />
+          {isProviderDisabled(routerConfig.default) && (
+            <p className="text-xs text-red-500 font-medium mt-1">
+              ⚠️ 该模型供应商已关闭，请及时更换模型配置
+            </p>
+          )}
         </div>
 
         <div className="space-y-3 animate-in" style={{ animationDelay: '0.2s' }}>
@@ -96,6 +111,11 @@ export function Router() {
                 searchPlaceholder={t("router.searchModel")}
                 emptyPlaceholder={t("router.noModelFound")}
               />
+              {isProviderDisabled(routerConfig.longContext) && (
+                <p className="text-xs text-red-500 font-medium mt-1">
+                  ⚠️ 该模型供应商已关闭，请及时更换模型配置
+                </p>
+              )}
             </div>
             <div className="w-40 space-y-3">
               <Label className="text-sm font-bold ml-1 text-muted-foreground/80 uppercase tracking-wider">{t("router.threshold")}</Label>
@@ -137,6 +157,11 @@ export function Router() {
                   onChange={(value) => handleRouterChange("extendedContext", value)}
                   placeholder={t("router.selectModel")}
                 />
+                {isProviderDisabled(routerConfig.extendedContext) && (
+                  <p className="text-xs text-red-500 font-medium mt-1">
+                    ⚠️ 该模型供应商已关闭，请及时更换模型配置
+                  </p>
+                )}
               </div>
               <div className="w-40 space-y-3">
                 <Label className="text-sm font-bold ml-1 text-muted-foreground/80 uppercase tracking-wider">{t("router.threshold")}</Label>
@@ -160,6 +185,11 @@ export function Router() {
               onChange={(value) => handleRouterChange("think", value)}
               placeholder={t("router.selectModel")}
             />
+            {isProviderDisabled(routerConfig.think) && (
+              <p className="text-xs text-red-500 font-medium mt-1">
+                ⚠️ 该模型供应商已关闭，请及时更换模型配置
+              </p>
+            )}
           </div>
 
           <div className="space-y-3 animate-in" style={{ animationDelay: '0.5s' }}>
@@ -170,6 +200,11 @@ export function Router() {
               onChange={(value) => handleRouterChange("webSearch", value)}
               placeholder={t("router.selectModel")}
             />
+            {isProviderDisabled(routerConfig.webSearch) && (
+              <p className="text-xs text-red-500 font-medium mt-1">
+                ⚠️ 该模型供应商已关闭，请及时更换模型配置
+              </p>
+            )}
           </div>
 
           <div className="space-y-3 animate-in" style={{ animationDelay: '0.6s' }}>
@@ -182,6 +217,11 @@ export function Router() {
                   onChange={(value) => handleRouterChange("image", value)}
                   placeholder={t("router.selectModel")}
                 />
+                {isProviderDisabled(routerConfig.image) && (
+                  <p className="text-xs text-red-500 font-medium mt-1">
+                    ⚠️ 该模型供应商已关闭，请及时更换模型配置
+                  </p>
+                )}
               </div>
               <div className="w-40 space-y-3">
                 <Label className="text-sm font-bold ml-1 text-muted-foreground/80 uppercase tracking-wider">{t("router.forceAgent")}</Label>

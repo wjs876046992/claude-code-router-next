@@ -127,7 +127,11 @@
     "quota_token": "限额查询 Token",
     "quota_token_placeholder": "可选，填入后可自动查询5小时/7天限额",
     "quota_token_desc": "部分供应商需要额外的 Token/Cookie 来查询限额。",
-    "quota_token_tooltip": "阿里云 Coding Plan：登录 bailian.console.aliyun.com，在 Network 复制 Cookie 请求头的完整 Cookie 值。"
+    "quota_token_tooltip": "阿里云 Coding Plan：登录 bailian.console.aliyun.com，在 Network 复制 Cookie 请求头的完整 Cookie 值。",
+    "wakeup_enabled": "定时唤醒",
+    "wakeup_desc": "每天定时向模型发送微型调用以提前激活/重置 5 小时限额周期",
+    "wakeup_time": "唤醒时间",
+    "wakeup_model": "唤醒模型"
   },
   "router": {
     "title": "路由",
@@ -167,6 +171,8 @@
     },
     "language": "语言",
     "token_speed": "Token 速度与 TTFT 追踪",
+    "wakeup_enabled_global": "启用定时唤醒 (全局开关)",
+    "wakeup_time_global": "全局默认唤醒时间",
     "fallback_title": "备用配置",
     "fallback_description": "当主模型请求失败时，按顺序尝试以下备用模型。",
     "tools": {
@@ -377,6 +383,7 @@
     "cache_creation": "缓存创建",
     "avg_ttft": "平均 TTFT",
     "avg_speed": "平均速度",
+    "cache_hit_rate": "缓存命中率",
     "success_rate": "成功率",
     "daily_chart": "每日用量",
     "provider_chart": "供应商用量",

@@ -73,6 +73,10 @@ export function SettingsPage() {
     () =>
       providers.flatMap((provider) => {
         if (!provider) return [];
+
+        // Skip disabled providers
+        if (provider.enabled === false) return [];
+
         const models = Array.isArray(provider.models) ? provider.models : [];
         const providerName = provider.name || "Unknown Provider";
         return models.map((model) => ({
@@ -310,6 +314,30 @@ export function SettingsPage() {
                   }}
                 />
                 <Label htmlFor="token-speed">{t("settings.token_speed")}</Label>
+              </div>
+
+              <div className="space-y-4 border-t pt-4">
+                <div className="flex items-center space-x-2">
+                  <Switch
+                    id="wakeup-enabled-global"
+                    checked={config.WAKEUP_ENABLED ?? false}
+                    onCheckedChange={(checked) => setConfig({ ...config, WAKEUP_ENABLED: checked })}
+                  />
+                  <Label htmlFor="wakeup-enabled-global">{t("settings.wakeup_enabled_global")}</Label>
+                </div>
+                {config.WAKEUP_ENABLED && (
+                  <div className="grid grid-cols-2 gap-4 pt-1 animate-in fade-in slide-in-from-top-1 duration-200">
+                    <div className="space-y-2">
+                      <Label htmlFor="wakeup-time-global">{t("settings.wakeup_time_global")}</Label>
+                      <Input
+                        id="wakeup-time-global"
+                        type="time"
+                        value={config.WAKEUP_TIME || "06:00"}
+                        onChange={(e) => setConfig({ ...config, WAKEUP_TIME: e.target.value })}
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="space-y-2">

@@ -114,8 +114,8 @@ class FallbackPromotionStore {
       (m: any) => String(m).toLowerCase() === promotedModelName.toLowerCase()
     );
 
-    if (!finalProvider || !finalModel) {
-      // Provider/model no longer exists, clear promotion
+    if (!finalProvider || !finalModel || finalProvider.enabled === false) {
+      // Provider/model no longer exists or is disabled, clear promotion
       this.promotions.delete(key);
       return null;
     }

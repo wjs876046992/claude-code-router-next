@@ -344,11 +344,17 @@ export function UsageStats() {
             );
             const effectiveTotalTokens = effectiveInputTokens + summary.totalOutputTokens;
             return (
-              <div className="grid grid-cols-4 gap-2 mb-3">
+              <div className="grid grid-cols-5 gap-2 mb-3">
               <div className="rounded-lg border bg-blue-50 p-2 text-center">
                 <div className="text-lg font-bold text-blue-600">{summary.totalRequests}</div>
                 <div className="text-xs text-gray-500">{t("usage.total_requests")}</div>
                 <div className="text-xs text-green-500">{summary.successCount} ok / <span className="text-red-500">{summary.errorCount} err</span></div>
+              </div>
+              <div className="rounded-lg border bg-gray-50 p-2 text-center">
+                <div className="text-lg font-bold text-gray-700">
+                  {summary.totalRequests > 0 ? ((summary.successCount / summary.totalRequests) * 100).toFixed(1) + "%" : "-"}
+                </div>
+                <div className="text-xs text-gray-500">{t("usage.success_rate")}</div>
               </div>
               <div className="rounded-lg border bg-green-50 p-2 text-center">
                 <div className="text-lg font-bold text-green-600">{formatTokens(effectiveInputTokens)}</div>
@@ -362,12 +368,6 @@ export function UsageStats() {
                 <div className="text-lg font-bold text-indigo-600">{formatTokens(effectiveTotalTokens)}</div>
                 <div className="text-xs text-gray-500">{t("usage.total_tokens")}</div>
               </div>
-              <div className="rounded-lg border bg-gray-50 p-2 text-center">
-                <div className="text-lg font-bold text-gray-700">
-                  {summary.totalRequests > 0 ? ((summary.successCount / summary.totalRequests) * 100).toFixed(1) + "%" : "-"}
-                </div>
-                <div className="text-xs text-gray-500">{t("usage.success_rate")}</div>
-              </div>
               <div className="rounded-lg border bg-emerald-50 p-2 text-center">
                 <div className="text-lg font-bold text-emerald-600">{formatTokens(summary.totalCacheReadInputTokens || 0)}</div>
                 <div className="text-xs text-gray-500">{t("usage.cache_read")}</div>
@@ -376,9 +376,19 @@ export function UsageStats() {
                 <div className="text-lg font-bold text-teal-600">{formatTokens(summary.totalCacheCreationInputTokens || 0)}</div>
                 <div className="text-xs text-gray-500">{t("usage.cache_creation")}</div>
               </div>
+              <div className="rounded-lg border bg-cyan-50 p-2 text-center">
+                <div className="text-lg font-bold text-cyan-600">
+                  {effectiveInputTokens > 0 ? ((summary.totalCacheReadInputTokens / effectiveInputTokens) * 100).toFixed(1) + "%" : "-"}
+                </div>
+                <div className="text-xs text-gray-500">{t("usage.cache_hit_rate")}</div>
+              </div>
               <div className="rounded-lg border bg-purple-50 p-2 text-center">
                 <div className="text-lg font-bold text-purple-600">{formatMs(summary.avgTtft)}</div>
                 <div className="text-xs text-gray-500">{t("usage.avg_ttft")}</div>
+              </div>
+              <div className="rounded-lg border bg-pink-50 p-2 text-center">
+                <div className="text-lg font-bold text-pink-600">{formatSpeed(summary.avgTokensPerSecond)}</div>
+                <div className="text-xs text-gray-500">{t("usage.avg_speed")}</div>
               </div>
             </div>
             );
