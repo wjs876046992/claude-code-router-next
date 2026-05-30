@@ -94,7 +94,7 @@ export function Router() {
           />
           {isProviderDisabled(routerConfig.default) && (
             <p className="text-xs text-red-500 font-medium mt-1">
-              ⚠️ 该模型供应商已关闭，请及时更换模型配置
+              {t("router.provider_disabled_warning")}
             </p>
           )}
         </div>
@@ -113,7 +113,7 @@ export function Router() {
               />
               {isProviderDisabled(routerConfig.longContext) && (
                 <p className="text-xs text-red-500 font-medium mt-1">
-                  ⚠️ 该模型供应商已关闭，请及时更换模型配置
+                  {t("router.provider_disabled_warning")}
                 </p>
               )}
             </div>
@@ -159,7 +159,7 @@ export function Router() {
                 />
                 {isProviderDisabled(routerConfig.extendedContext) && (
                   <p className="text-xs text-red-500 font-medium mt-1">
-                    ⚠️ 该模型供应商已关闭，请及时更换模型配置
+                    {t("router.provider_disabled_warning")}
                   </p>
                 )}
               </div>
@@ -187,7 +187,7 @@ export function Router() {
             />
             {isProviderDisabled(routerConfig.think) && (
               <p className="text-xs text-red-500 font-medium mt-1">
-                ⚠️ 该模型供应商已关闭，请及时更换模型配置
+                {t("router.provider_disabled_warning")}
               </p>
             )}
           </div>
@@ -202,7 +202,7 @@ export function Router() {
             />
             {isProviderDisabled(routerConfig.webSearch) && (
               <p className="text-xs text-red-500 font-medium mt-1">
-                ⚠️ 该模型供应商已关闭，请及时更换模型配置
+                {t("router.provider_disabled_warning")}
               </p>
             )}
           </div>
@@ -210,7 +210,7 @@ export function Router() {
           <div className="space-y-3 animate-in" style={{ animationDelay: '0.6s' }}>
             <div className="flex items-center gap-4">
               <div className="flex-1 space-y-3">
-                <Label className="text-sm font-bold ml-1 text-muted-foreground/80 uppercase tracking-wider">{t("router.image")} <span className="text-[10px] bg-primary/20 text-primary px-1.5 py-0.5 rounded-full ml-1">BETA</span></Label>
+                <Label className="text-sm font-bold ml-1 text-muted-foreground/80 uppercase tracking-wider">{t("router.image")} <span className="text-[10px] bg-primary/20 text-primary px-1.5 py-0.5 rounded-full ml-1">{t("router.beta")}</span></Label>
                 <Combobox
                   options={modelOptions}
                   value={routerConfig.image || ""}
@@ -219,7 +219,7 @@ export function Router() {
                 />
                 {isProviderDisabled(routerConfig.image) && (
                   <p className="text-xs text-red-500 font-medium mt-1">
-                    ⚠️ 该模型供应商已关闭，请及时更换模型配置
+                    {t("router.provider_disabled_warning")}
                   </p>
                 )}
               </div>

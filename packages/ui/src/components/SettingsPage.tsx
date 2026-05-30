@@ -12,7 +12,7 @@ import { StatusLineConfigDialog } from "./StatusLineConfigDialog";
 import { UsageStats } from "./UsageStats";
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { LogViewer } from '@/components/LogViewer';
-import type { StatusLineConfig, FallbackConfig } from "@/types";
+import type { ClientApplyResponse, ClientId, ClientStatus, StatusLineConfig, FallbackConfig } from "@/types";
 import { FileJson, FileText, CircleArrowUp, FileCog, ArrowLeft, Save, RefreshCw, Trash2 } from "lucide-react";
 import { Toast } from "@/components/ui/toast";
 import { api } from "@/lib/api";
@@ -33,6 +33,11 @@ export function SettingsPage() {
   const [isNewVersionAvailable, setIsNewVersionAvailable] = useState(false);
   const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
   const [expandedFamily, setExpandedFamily] = useState<string | null>(null);
+  const [clients, setClients] = useState<ClientStatus[]>([]);
+  const [selectedClientIds, setSelectedClientIds] = useState<ClientId[]>([]);
+  const [isLoadingClients, setIsLoadingClients] = useState(false);
+  const [isApplyingClients, setIsApplyingClients] = useState(false);
+  const [restoringClientId, setRestoringClientId] = useState<ClientId | null>(null);
 
   // Auto-expand first family on initial load so the section is not empty
   // Use useEffect without ref guard - React StrictMode runs effects twice in dev
@@ -86,6 +91,44 @@ export function SettingsPage() {
       }),
     [providers]
   );
+
+  const syncClientResponse = useCallback((response: ClientApplyResponse) => {
+    setClients(response.clients || []);
+    setSelectedClientIds((response.clients || []).filter((client) => client.enabled).map((client) => client.id));
+    if (response.config) {
+      setConfig((current) => {
+        if (!current) return response.config;
+        return {
+          ...current,
+          Clients: response.config.Clients,
+          Router: {
+            ...(current.Router || {}),
+            models: {
+              ...(current.Router?.models || {}),
+              ...(response.config.Router?.models || {}),
+            },
+          },
+        };
+      });
+    }
+  }, [setConfig]);
+
+  const loadClients = useCallback(async () => {
+    setIsLoadingClients(true);
+    try {
+      const response = await api.getClients();
+      setClients(response.clients || []);
+      setSelectedClientIds((response.clients || []).filter((client) => client.enabled).map((client) => client.id));
+    } catch (error) {
+      setToast({ message: t("clients.load_failed") + ': ' + (error as Error).message, type: 'error' });
+    } finally {
+      setIsLoadingClients(false);
+    }
+  }, [t]);
+
+  useEffect(() => {
+    loadClients();
+  }, [loadClients]);
 
   if (!config) {
     return (
@@ -181,6 +224,54 @@ export function SettingsPage() {
     setConfig({ ...config, StatusLine: newStatusLineConfig });
   };
 
+  const handleClientSelectionChange = (id: ClientId, checked: boolean) => {
+    setSelectedClientIds((current) => {
+      if (checked) {
+        return current.includes(id) ? current : [...current, id];
+      }
+      return current.filter((clientId) => clientId !== id);
+    });
+  };
+
+  const applyClientSelection = async () => {
+    setIsApplyingClients(true);
+    try {
+      const response = await api.applyClients(selectedClientIds);
+      syncClientResponse(response);
+      if (response.success) {
+        setToast({ message: t("clients.apply_success"), type: 'success' });
+      } else {
+        const failed = response.results
+          .filter((result) => !result.success)
+          .map((result) => `${result.id}: ${result.error || t("clients.operation_failed")}`)
+          .join("; ");
+        setToast({ message: `${t("clients.apply_failed")}: ${failed}`, type: 'error' });
+      }
+    } catch (error) {
+      setToast({ message: t("clients.apply_failed") + ': ' + (error as Error).message, type: 'error' });
+    } finally {
+      setIsApplyingClients(false);
+    }
+  };
+
+  const restoreClientOfficial = async (id: ClientId) => {
+    setRestoringClientId(id);
+    try {
+      const response = await api.restoreClient(id);
+      syncClientResponse(response);
+      if (response.success) {
+        setToast({ message: t("clients.restore_success"), type: 'success' });
+      } else {
+        const failure = response.results.find((result) => !result.success);
+        setToast({ message: `${t("clients.restore_failed")}: ${failure?.error || t("clients.operation_failed")}`, type: 'error' });
+      }
+    } catch (error) {
+      setToast({ message: t("clients.restore_failed") + ': ' + (error as Error).message, type: 'error' });
+    } finally {
+      setRestoringClientId(null);
+    }
+  };
+
   const checkForUpdates = useCallback(async () => {
     setIsCheckingUpdate(true);
     try {
@@ -268,6 +359,7 @@ export function SettingsPage() {
           <Tabs defaultValue="general" className="w-full">
             <TabsList className="w-full justify-start mb-4">
               <TabsTrigger value="general">{t("settings.tabs.general")}</TabsTrigger>
+              <TabsTrigger value="clients">{t("settings.tabs.clients")}</TabsTrigger>
               <TabsTrigger value="router">{t("settings.tabs.router")}</TabsTrigger>
               <TabsTrigger value="usage">{t("settings.tabs.usage")}</TabsTrigger>
               <TabsTrigger value="tools">{t("settings.tabs.tools")}</TabsTrigger>
@@ -442,6 +534,92 @@ export function SettingsPage() {
               </div>
             </TabsContent>
 
+            {/* Clients Tab */}
+            <TabsContent value="clients" className="space-y-4">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <h3 className="text-sm font-medium text-gray-700">{t("clients.title")}</h3>
+                  <p className="text-xs text-gray-500">{t("clients.description")}</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button variant="outline" size="sm" onClick={loadClients} disabled={isLoadingClients || isApplyingClients}>
+                    <RefreshCw className="mr-2 h-4 w-4" />
+                    {t("clients.refresh")}
+                  </Button>
+                  <Button size="sm" onClick={applyClientSelection} disabled={isLoadingClients || isApplyingClients}>
+                    <Save className="mr-2 h-4 w-4" />
+                    {t("clients.apply")}
+                  </Button>
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                {clients.length === 0 && (
+                  <div className="rounded-lg border border-dashed p-6 text-sm text-gray-500">
+                    {isLoadingClients ? t("clients.loading") : t("clients.empty")}
+                  </div>
+                )}
+                {clients.map((client) => {
+                  const selected = selectedClientIds.includes(client.id);
+                  return (
+                    <div key={client.id} className="rounded-lg border bg-white/40 p-4">
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="flex items-start gap-3">
+                          <Switch
+                            id={`client-${client.id}`}
+                            checked={selected}
+                            onCheckedChange={(checked) => handleClientSelectionChange(client.id, checked)}
+                          />
+                          <div className="space-y-1">
+                            <Label htmlFor={`client-${client.id}`} className="text-sm font-medium">
+                              {client.name}
+                            </Label>
+                            <div className="flex flex-wrap items-center gap-2 text-xs">
+                              <span className={client.enabled ? "rounded-full bg-green-100 px-2 py-0.5 text-green-700" : "rounded-full bg-gray-100 px-2 py-0.5 text-gray-600"}>
+                                {client.enabled ? t("clients.enabled") : t("clients.disabled")}
+                              </span>
+                              <span className={client.managed ? "rounded-full bg-blue-100 px-2 py-0.5 text-blue-700" : "rounded-full bg-gray-100 px-2 py-0.5 text-gray-600"}>
+                                {client.managed ? t("clients.managed") : t("clients.official")}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => restoreClientOfficial(client.id)}
+                          disabled={restoringClientId === client.id || isApplyingClients}
+                        >
+                          <RefreshCw className="mr-2 h-4 w-4" />
+                          {t("clients.restore_official")}
+                        </Button>
+                      </div>
+
+                      <div className="mt-4 grid grid-cols-1 gap-3 text-xs text-gray-600 md:grid-cols-3">
+                        <div>
+                          <div className="font-medium text-gray-500">{t("clients.config_path")}</div>
+                          <div className="break-all text-gray-800">{client.configPath}</div>
+                        </div>
+                        <div>
+                          <div className="font-medium text-gray-500">{t("clients.active_model")}</div>
+                          <div className="break-all text-gray-800">{client.activeModel || "-"}</div>
+                        </div>
+                        <div>
+                          <div className="font-medium text-gray-500">{t("clients.model_alias")}</div>
+                          <div className="break-all text-gray-800">{client.modelAlias || "-"}</div>
+                        </div>
+                      </div>
+                      {client.details && (
+                        <div className="mt-3 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                          {client.details}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </TabsContent>
+
             {/* Router Tab */}
             <TabsContent value="router" className="space-y-6">
               <div>
@@ -548,7 +726,7 @@ export function SettingsPage() {
                   {/* Image */}
                   <div className="space-y-1.5">
                     <div className="flex items-center justify-between">
-                      <Label>{t("router.image")} (beta)</Label>
+                      <Label>{t("router.image_beta")}</Label>
                       <div className="flex items-center gap-1">
                         <span className="text-[10px] text-gray-400">{t("router.forceUseImageAgent")}:</span>
                         <select

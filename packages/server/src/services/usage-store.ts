@@ -15,6 +15,7 @@ export interface UsageRecord {
   model: string; // Actual routed model
   modelFamily: string;
   scenarioType: string;
+  clientType?: string; // "claude-code" | "codex" | "api" | "unknown"
   stream: boolean;
   inputTokens: number;
   outputTokens: number;
@@ -43,6 +44,7 @@ export interface UsageSummary {
   byScenario: Record<string, { count: number; inputTokens: number; outputTokens: number; cacheReadInputTokens: number; cacheCreationInputTokens: number }>;
   byFamily: Record<string, { count: number; inputTokens: number; outputTokens: number; cacheReadInputTokens: number; cacheCreationInputTokens: number }>;
   byDay: Record<string, { count: number; inputTokens: number; outputTokens: number; cacheReadInputTokens: number; cacheCreationInputTokens: number }>;
+  byClient: Record<string, { count: number; inputTokens: number; outputTokens: number; cacheReadInputTokens: number; cacheCreationInputTokens: number }>;
 }
 
 export interface UsageQueryFilters {
@@ -51,6 +53,7 @@ export interface UsageQueryFilters {
   model?: string;
   provider?: string;
   scenario?: string;
+  clientType?: string;
   sessionId?: string;
   status?: "success" | "error";
   page?: number;
@@ -140,6 +143,7 @@ function computeSummary(records: UsageRecord[]): UsageSummary {
     byScenario: {},
     byFamily: {},
     byDay: {},
+    byClient: {},
   };
 
   let ttftSum = 0;
@@ -184,6 +188,7 @@ function computeSummary(records: UsageRecord[]): UsageSummary {
       aggregateInto(summary.byFamily, familyScenario, inputTokens, outputTokens, cacheReadInputTokens, cacheCreationInputTokens);
     }
     aggregateInto(summary.byDay, day, inputTokens, outputTokens, cacheReadInputTokens, cacheCreationInputTokens);
+    aggregateInto(summary.byClient, r.clientType || "unknown", inputTokens, outputTokens, cacheReadInputTokens, cacheCreationInputTokens);
   }
 
   if (ttftCount > 0) summary.avgTtft = Math.round(ttftSum / ttftCount);
@@ -233,6 +238,9 @@ export function query(filters: UsageQueryFilters): UsageQueryResult {
   }
   if (filters.scenario) {
     records = records.filter((r) => r.scenarioType === filters.scenario);
+  }
+  if (filters.clientType) {
+    records = records.filter((r) => (r.clientType || "unknown") === filters.clientType);
   }
   if (filters.sessionId) {
     records = records.filter((r) => r.sessionId === filters.sessionId);

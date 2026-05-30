@@ -22,6 +22,12 @@ import {
   getTempDir,
   findMarketPresetByName,
   getMarketPresets,
+  applyClientSelection,
+  disableClient,
+  enableClient,
+  isClientId,
+  listClientStatuses,
+  restoreClient,
   type PresetFile,
   type ManifestFile,
   type PresetMetadata,
@@ -193,6 +199,74 @@ export const createServer = async (config: any): Promise<any> => {
     return { success: true, message: "Config saved successfully" };
   });
 
+  // ========== Client Integrations API ==========
+
+  app.get("/api/clients", async (_req: any, reply: any) => {
+    try {
+      const config = await readConfigFile();
+      return { clients: listClientStatuses(config) };
+    } catch (error: any) {
+      console.error("Failed to get client integrations:", error);
+      reply.status(500).send({ error: error.message || "Failed to get client integrations" });
+    }
+  });
+
+  app.post("/api/clients/apply", async (req: any, reply: any) => {
+    try {
+      const body = req.body as { enabled?: string[] };
+      const enabled = Array.isArray(body?.enabled) ? body.enabled : [];
+      const config = await readConfigFile();
+      const result = applyClientSelection(config, enabled);
+      await writeConfigFile(result.config);
+      return result;
+    } catch (error: any) {
+      console.error("Failed to apply client integrations:", error);
+      reply.status(500).send({ error: error.message || "Failed to apply client integrations" });
+    }
+  });
+
+  async function runClientAction(req: any, reply: any, action: "enable" | "disable" | "restore") {
+    try {
+      const { id } = req.params as { id: string };
+      if (!isClientId(id)) {
+        reply.status(404).send({ error: `Unknown client: ${id}` });
+        return;
+      }
+
+      const config = await readConfigFile();
+      const result =
+        action === "enable"
+          ? enableClient(config, id)
+          : action === "restore"
+            ? restoreClient(config, id)
+            : disableClient(config, id);
+      await writeConfigFile(config);
+
+      return {
+        success: result.success,
+        result,
+        results: [result],
+        clients: listClientStatuses(config),
+        config,
+      };
+    } catch (error: any) {
+      console.error(`Failed to ${action} client integration:`, error);
+      reply.status(500).send({ error: error.message || `Failed to ${action} client integration` });
+    }
+  }
+
+  app.post("/api/clients/:id/enable", async (req: any, reply: any) => {
+    return runClientAction(req, reply, "enable");
+  });
+
+  app.post("/api/clients/:id/disable", async (req: any, reply: any) => {
+    return runClientAction(req, reply, "disable");
+  });
+
+  app.post("/api/clients/:id/restore", async (req: any, reply: any) => {
+    return runClientAction(req, reply, "restore");
+  });
+
   // Register static file serving with caching
   app.register(fastifyStatic, {
     root: join(__dirname, "..", "dist"),
@@ -318,6 +392,7 @@ export const createServer = async (config: any): Promise<any> => {
         model: q.model,
         provider: q.provider,
         scenario: q.scenario,
+        clientType: q.clientType,
         sessionId: q.sessionId,
         status: q.status,
         page: q.page ? parseInt(q.page, 10) : undefined,

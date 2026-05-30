@@ -131,7 +131,9 @@
     "wakeup_enabled": "Scheduled Wake-up",
     "wakeup_desc": "Send a daily dummy call to start/reset the 5h quota cycle early",
     "wakeup_time": "Wake-up Time",
-    "wakeup_model": "Wake-up Model"
+    "wakeup_model": "Wake-up Model",
+    "enabled": "Active",
+    "disabled": "Disabled"
   },
   "router": {
     "title": "Router",
@@ -160,11 +162,15 @@
     "family_name": "Family Name",
     "family_name_placeholder": "e.g. opus, sonnet, haiku",
     "remove_family": "Remove Family",
-    "family_fallback_title": "Family Fallback"
+    "family_fallback_title": "Family Fallback",
+    "provider_disabled_warning": "⚠️ This provider is disabled. Please select a different model.",
+    "beta": "BETA",
+    "image_beta": "Image (beta)"
   },
   "settings": {
     "tabs": {
       "general": "General",
+      "clients": "Clients",
       "router": "Advanced Router",
       "tools": "Tools",
       "usage": "Usage"
@@ -187,6 +193,28 @@
       "presets": "Presets",
       "presets_desc": "Manage configuration presets"
     }
+  },
+  "clients": {
+    "title": "Client Integrations",
+    "description": "Choose which local clients should use Claude Code Router through their official config files.",
+    "refresh": "Refresh",
+    "apply": "Apply",
+    "loading": "Loading client integrations...",
+    "empty": "No client integrations were found.",
+    "enabled": "Enabled",
+    "disabled": "Disabled",
+    "managed": "Managed by CCR",
+    "official": "Official config",
+    "config_path": "Config Path",
+    "active_model": "Active Model",
+    "model_alias": "Model Alias",
+    "restore_official": "Restore Official",
+    "load_failed": "Failed to load client integrations",
+    "apply_success": "Client integrations updated",
+    "apply_failed": "Failed to update client integrations",
+    "restore_success": "Official client config restored",
+    "restore_failed": "Failed to restore official client config",
+    "operation_failed": "operation failed"
   },
   "json_editor": {
     "title": "JSON Editor",
@@ -312,7 +340,14 @@
     "col_request_id": "Request ID",
     "col_message": "Message",
     "col_model": "Model",
-    "detail_title": "Log Detail"
+    "detail_title": "Log Detail",
+    "debug_log_on": "Debug ON",
+    "debug_log_off": "Debug OFF",
+    "debug_log_enabled": "Debug logging enabled",
+    "debug_log_disabled": "Debug logging disabled",
+    "debug_log_error": "Failed to toggle debug log",
+    "debug_log_enable_tooltip": "Enable provider debug logging",
+    "debug_log_disable_tooltip": "Disable provider debug logging"
   },
   "presets": {
     "title": "Presets",
@@ -409,6 +444,13 @@
     "page": "Page",
     "records": "records",
     "no_data": "No usage data available",
-    "clear_confirm": "Are you sure you want to clear all usage data?"
+    "clear_confirm": "Are you sure you want to clear all usage data?",
+    "refresh": "Refresh",
+    "clear": "Clear",
+    "client": "Client",
+    "client_claude_code": "Claude Code",
+    "client_codex": "Codex",
+    "client_api": "API",
+    "client_unknown": "Other"
   }
 }

@@ -162,6 +162,7 @@ async function handleFallback(
       sessionId: (req as any).usageSessionId || req.id,
       stream: (req.body as any).stream,
       inputTokens: (req as any).tokenCount || 0,
+      req,
     });
   }
 
@@ -348,6 +349,7 @@ async function handleFallback(
           errorMessage: fallbackError.message,
           sessionId: (req as any).usageSessionId || req.id,
           stream: (req.body as any).stream,
+          req,
         });
 
         continue;

@@ -131,7 +131,9 @@
     "wakeup_enabled": "定时唤醒",
     "wakeup_desc": "每天定时向模型发送微型调用以提前激活/重置 5 小时限额周期",
     "wakeup_time": "唤醒时间",
-    "wakeup_model": "唤醒模型"
+    "wakeup_model": "唤醒模型",
+    "enabled": "已启用",
+    "disabled": "已关闭"
   },
   "router": {
     "title": "路由",
@@ -160,11 +162,15 @@
     "family_name": "模型族名称",
     "family_name_placeholder": "例如: opus, sonnet, haiku",
     "remove_family": "移除模型族",
-    "family_fallback_title": "模型族备用配置"
+    "family_fallback_title": "模型族备用配置",
+    "provider_disabled_warning": "⚠️ 该模型供应商已关闭，请及时更换模型配置",
+    "beta": "测试版",
+    "image_beta": "图像 (测试版)"
   },
   "settings": {
     "tabs": {
       "general": "通用",
+      "clients": "客户端配置",
       "router": "路由高级配置",
       "tools": "工具",
       "usage": "用量统计"
@@ -187,6 +193,28 @@
       "presets": "预设管理",
       "presets_desc": "管理配置预设"
     }
+  },
+  "clients": {
+    "title": "客户端配置",
+    "description": "选择哪些本地客户端通过官方配置文件接入 Claude Code Router。",
+    "refresh": "刷新",
+    "apply": "应用",
+    "loading": "正在加载客户端配置...",
+    "empty": "未找到客户端配置。",
+    "enabled": "已启用",
+    "disabled": "已关闭",
+    "managed": "由 CCR 管理",
+    "official": "官方配置",
+    "config_path": "配置路径",
+    "active_model": "当前模型",
+    "model_alias": "模型别名",
+    "restore_official": "恢复官方配置",
+    "load_failed": "加载客户端配置失败",
+    "apply_success": "客户端配置已更新",
+    "apply_failed": "更新客户端配置失败",
+    "restore_success": "已恢复官方客户端配置",
+    "restore_failed": "恢复官方客户端配置失败",
+    "operation_failed": "操作失败"
   },
   "json_editor": {
     "title": "JSON 编辑器",
@@ -312,7 +340,14 @@
     "col_request_id": "请求ID",
     "col_message": "消息",
     "col_model": "模型",
-    "detail_title": "日志详情"
+    "detail_title": "日志详情",
+    "debug_log_on": "调试开启",
+    "debug_log_off": "调试关闭",
+    "debug_log_enabled": "调试日志已开启",
+    "debug_log_disabled": "调试日志已关闭",
+    "debug_log_error": "切换调试日志失败",
+    "debug_log_enable_tooltip": "开启供应商调试日志",
+    "debug_log_disable_tooltip": "关闭供应商调试日志"
   },
   "presets": {
     "title": "预设",
@@ -409,6 +444,13 @@
     "page": "第",
     "records": "条记录",
     "no_data": "暂无用量数据",
-    "clear_confirm": "确定要清除所有用量数据吗？"
+    "clear_confirm": "确定要清除所有用量数据吗？",
+    "refresh": "刷新",
+    "clear": "清除",
+    "client": "客户端",
+    "client_claude_code": "Claude Code",
+    "client_codex": "Codex",
+    "client_api": "API",
+    "client_unknown": "其他"
   }
 }

@@ -10,6 +10,7 @@ import {
   PLUGINS_DIR,
   PRESETS_DIR,
   REFERENCE_COUNT_FILE,
+  getDefaultClientsConfig,
   readPresetFile,
 } from "@wengine-ai/claude-code-router-shared";
 import { getServer } from "@wengine-ai/claude-code-router-server";
@@ -108,6 +109,7 @@ export const readConfigFile = async () => {
           PORT: 3456,
           Providers: [],
           Router: {},
+          Clients: getDefaultClientsConfig(),
         }
         // Create a minimal default config file
         await writeConfigFile(config);

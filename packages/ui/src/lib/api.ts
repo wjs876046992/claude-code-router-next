@@ -1,4 +1,4 @@
-import type { Config, Provider, Transformer, ProviderQuotaResponse } from '@/types';
+import type { ClientApplyResponse, ClientId, ClientStatus, Config, Provider, Transformer, ProviderQuotaResponse } from '@/types';
 
 // 日志聚合响应类型
 interface GroupedLogsResponse {
@@ -270,12 +270,34 @@ class ApiClient {
     return this.put<{ enabled: boolean }>('/debug-log', { enabled });
   }
 
+  // ========== Client Integrations API methods ==========
+
+  async getClients(): Promise<{ clients: ClientStatus[] }> {
+    return this.get<{ clients: ClientStatus[] }>('/clients');
+  }
+
+  async applyClients(enabled: ClientId[]): Promise<ClientApplyResponse> {
+    return this.post<ClientApplyResponse>('/clients/apply', { enabled });
+  }
+
+  async enableClient(id: ClientId): Promise<ClientApplyResponse> {
+    return this.post<ClientApplyResponse>(`/clients/${encodeURIComponent(id)}/enable`, {});
+  }
+
+  async disableClient(id: ClientId): Promise<ClientApplyResponse> {
+    return this.post<ClientApplyResponse>(`/clients/${encodeURIComponent(id)}/disable`, {});
+  }
+
+  async restoreClient(id: ClientId): Promise<ClientApplyResponse> {
+    return this.post<ClientApplyResponse>(`/clients/${encodeURIComponent(id)}/restore`, {});
+  }
+
   // ========== Usage Statistics API methods ==========
 
   // Get usage records with summary
   async getUsage(params?: {
     startDate?: string; endDate?: string; model?: string;
-    provider?: string; scenario?: string; sessionId?: string;
+    provider?: string; scenario?: string; clientType?: string; sessionId?: string;
     status?: "success" | "error";
     page?: number; pageSize?: number;
   }): Promise<{ records: any[]; summary: any; total: number; page: number; pageSize: number }> {

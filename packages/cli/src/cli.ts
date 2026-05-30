@@ -16,9 +16,13 @@ import {getPresetDir, loadConfigFromManifest, PID_FILE, readPresetFile, REFERENC
 import fs, { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import { parseStatusLineData, StatusLineInput } from "./utils/statusline";
-import { injectStatusLine, removeStatusLine, injectModelFamilies, removeModelFamilies } from "./utils/claudeSettings";
 import {handlePresetCommand} from "./utils/preset";
 import { handleInstallCommand } from "./utils/installCommand";
+import {
+  disableConfiguredClientsForStop,
+  enableConfiguredClientsForStart,
+  handleClientsCommand,
+} from "./utils/clients";
 
 
 const command = process.argv[2];
@@ -34,6 +38,7 @@ const KNOWN_COMMANDS = [
   "model",
   "preset",
   "install",
+  "clients",
   "activate",
   "env",
   "ui",
@@ -56,6 +61,7 @@ Commands:
   model         Interactive model selection and configuration
   preset        Manage presets (export, install, list, delete)
   install       Install preset from GitHub marketplace
+  clients       Manage client integrations (Claude Code, Codex)
   activate      Output environment variables for shell integration
   ui            Open the web UI in browser
   -v, version   Show version information
@@ -73,6 +79,8 @@ Examples:
   ccr preset install /path/to/preset     # Install a preset from directory
   ccr preset list                        # List all presets
   ccr install my-preset                  # Install preset from marketplace
+  ccr clients list
+  ccr clients enable claudeCode codex
   eval "$(ccr activate)"  # Set environment variables globally
   ccr ui
 `;
@@ -212,15 +220,10 @@ async function main() {
   switch (command) {
     case "start":
       await run();
-      try {
-        const cfg = await readConfigFile();
-        injectStatusLine(cfg);
-        injectModelFamilies(cfg);
-      } catch {}
+      try { await enableConfiguredClientsForStart(); } catch {}
       break;
     case "stop":
-      try { removeStatusLine(); } catch {}
-      try { removeModelFamilies(); } catch {}
+      try { await disableConfiguredClientsForStop(); } catch {}
       try {
         const pid = parseInt(readFileSync(PID_FILE, "utf-8"));
         process.kill(pid);
@@ -279,6 +282,9 @@ async function main() {
     case "install":
       const presetName = process.argv[3];
       await handleInstallCommand(presetName);
+      break;
+    case "clients":
+      await handleClientsCommand(process.argv.slice(3));
       break;
     case "activate":
     case "env":
@@ -341,6 +347,7 @@ async function main() {
             writeConfigFile,
             backupConfigFile,
           } = require("./utils");
+          const { getDefaultClientsConfig } = require("@wengine-ai/claude-code-router-shared");
 
           try {
             // Initialize directories
@@ -359,6 +366,7 @@ async function main() {
               PORT: 3456,
               Providers: [],
               Router: {},
+              Clients: getDefaultClientsConfig(),
             });
             console.log(
               "Created minimal default configuration file at ~/.claude-code-router/config.json"
@@ -438,14 +446,9 @@ async function main() {
       console.log(`claude-code-router version: ${version}`);
       break;
     case "restart":
-      try { removeStatusLine(); } catch {}
-      try { removeModelFamilies(); } catch {}
+      try { await disableConfiguredClientsForStop(); } catch {}
       await restartService();
-      try {
-        const cfg = await readConfigFile();
-        injectStatusLine(cfg);
-        injectModelFamilies(cfg);
-      } catch {}
+      try { await enableConfiguredClientsForStart(); } catch {}
       break;
     case "-h":
     case "help":

@@ -28,6 +28,7 @@ interface UsageRecord {
   model: string; // Actual routed model
   modelFamily: string;
   scenarioType: string;
+  clientType?: string; // "claude-code" | "codex" | "api" | "unknown"
   stream: boolean;
   inputTokens: number;
   cacheReadInputTokens?: number | null;
@@ -64,6 +65,7 @@ interface UsageSummary {
   byScenario: Record<string, ModelDayData>;
   byFamily: Record<string, ModelDayData>;
   byDay: Record<string, ModelDayData>;
+  byClient: Record<string, ModelDayData>;
 }
 
 /**
@@ -120,6 +122,15 @@ function formatDuration(ms: number): string {
   return ms + "ms";
 }
 
+function clientDisplayName(type: string | undefined, t: (key: string) => string): string {
+  switch (type || "unknown") {
+    case "claude-code": return t("usage.client_claude_code");
+    case "codex": return t("usage.client_codex");
+    case "api": return t("usage.client_api");
+    default: return t("usage.client_unknown");
+  }
+}
+
 function formatTime(ts: string): string {
   const d = new Date(ts);
   return d.toLocaleString(undefined, {
@@ -154,6 +165,7 @@ export function UsageStats() {
   const [filterModel, setFilterModel] = useState("");
   const [filterProvider, setFilterProvider] = useState("");
   const [filterScenario, setFilterScenario] = useState("");
+  const [filterClient, setFilterClient] = useState("");
   const [filterStatus, setFilterStatus] = useState<"success" | "error" | "">("");
   const [activeView, setActiveView] = useState<"records" | "model">("records");
 
@@ -168,6 +180,7 @@ export function UsageStats() {
       if (filterModel) params.model = filterModel;
       if (filterProvider) params.provider = filterProvider;
       if (filterScenario) params.scenario = filterScenario;
+      if (filterClient) params.clientType = filterClient;
       if (filterStatus) params.status = filterStatus;
 
       const result = await api.getUsage(params);
@@ -179,7 +192,7 @@ export function UsageStats() {
     } finally {
       setLoading(false);
     }
-  }, [page, startDate, endDate, filterModel, filterProvider, filterScenario, filterStatus]);
+  }, [page, startDate, endDate, filterModel, filterProvider, filterScenario, filterClient, filterStatus]);
 
   useEffect(() => {
     loadData();
@@ -208,6 +221,7 @@ export function UsageStats() {
   const models = summary ? Object.keys(summary.byModel) : [];
   const providers = summary ? Object.keys(summary.byProvider) : [];
   const scenarios = summary ? Object.keys(summary.byScenario) : [];
+  const clients = summary?.byClient ? Object.keys(summary.byClient) : [];
 
   // Daily chart data (last 14 days)
   const dailyData = summary?.byDay ? Object.entries(summary.byDay)
@@ -311,6 +325,15 @@ export function UsageStats() {
               {scenarios.filter(Boolean).map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
             </SelectContent>
           </Select>
+          <Select value={filterClient || "__all__"} onValueChange={(v) => { setFilterClient(v === "__all__" ? "" : v); setPage(1); }}>
+            <SelectTrigger className="h-8 text-xs w-[120px] bg-white shadow-sm">
+              <SelectValue placeholder={t("usage.client")} />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all__">{t("usage.client")}: {t("usage.all")}</SelectItem>
+              {clients.filter(Boolean).map((c) => <SelectItem key={c} value={c}>{clientDisplayName(c, t)}</SelectItem>)}
+            </SelectContent>
+          </Select>
           <Select value={filterStatus || "__all__"} onValueChange={(v) => { setFilterStatus(v === "__all__" ? "" : v as "success" | "error"); setPage(1); }}>
             <SelectTrigger className="h-8 text-xs w-[100px] bg-white shadow-sm">
               <SelectValue placeholder={t("usage.status")} />
@@ -324,10 +347,10 @@ export function UsageStats() {
 
           {/* Action buttons */}
           <div className="ml-auto flex items-center gap-1">
-            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={loadData} disabled={loading} title="Refresh">
+            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={loadData} disabled={loading} title={t("usage.refresh")}>
               <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
             </Button>
-            <Button variant="ghost" size="icon" className="h-8 w-8 text-red-400 hover:text-red-600 hover:bg-red-50" onClick={handleClear} title="Clear">
+            <Button variant="ghost" size="icon" className="h-8 w-8 text-red-400 hover:text-red-600 hover:bg-red-50" onClick={handleClear} title={t("usage.clear")}>
               <Trash2 className="h-4 w-4" />
             </Button>
           </div>
@@ -469,6 +492,7 @@ export function UsageStats() {
               <thead>
                 <tr className="bg-gray-50 border-b">
                   <th className="text-left p-1.5">{t("usage.time")}</th>
+                  <th className="text-left p-1.5">{t("usage.client")}</th>
                   <th className="text-left p-1.5">{t("usage.provider")}</th>
                   <th className="text-left p-1.5">{t("usage.model")}</th>
                   <th className="text-left p-1.5">{t("usage.route")}</th>
@@ -484,7 +508,7 @@ export function UsageStats() {
               </thead>
               <tbody>
                 {records.length === 0 ? (
-                  <tr><td colSpan={12} className="text-center p-4 text-gray-400">{t("usage.no_data")}</td></tr>
+                  <tr><td colSpan={13} className="text-center p-4 text-gray-400">{t("usage.no_data")}</td></tr>
                 ) : records.map((r) => {
                   // Show model mapping: original → routed
                   const modelDisplay = r.originalModel && r.originalModel !== r.model
@@ -493,6 +517,7 @@ export function UsageStats() {
                   return (
                   <tr key={r.id} className="border-b hover:bg-gray-50">
                     <td className="p-1.5 whitespace-nowrap">{formatTime(r.timestamp)}</td>
+                    <td className="p-1.5">{clientDisplayName(r.clientType, t)}</td>
                     <td className="p-1.5">{r.provider}</td>
                     <td className="p-1.5 max-w-[180px] truncate" title={modelDisplay}>{modelDisplay}</td>
                     <td className="p-1.5">{r.modelFamily ? `${r.modelFamily}/${r.scenarioType}` : r.scenarioType}</td>

@@ -64,6 +64,37 @@ function getRequestModel(req: any): string {
   return req.model || "";
 }
 
+function detectClientType(req: any): string {
+  const pathname: string = req.pathname || "";
+  const headers = req.headers || {};
+
+  // Check for explicit client identification headers
+  // Claude Code sends "x-anthropic-billing-header" containing "cc_version="
+  const billingHeader = headers["x-anthropic-billing-header"];
+  if (typeof billingHeader === "string" && billingHeader.includes("cc_version=")) {
+    return "claude-code";
+  }
+
+  // Check User-Agent for known client signatures
+  const userAgent = headers["user-agent"] || "";
+  if (typeof userAgent === "string") {
+    if (userAgent.includes("claude-cli") || userAgent.includes("Claude-CLI")) return "claude-code";
+    if (userAgent.includes("codex") || userAgent.includes("Codex")) return "codex";
+  }
+
+  // Fallback: infer from endpoint path and model name
+  // Codex uses the Responses API endpoint
+  if (pathname.endsWith("/v1/responses")) return "codex";
+  const originalModel = (req.originalModel || req.body?.model || "");
+  // Claude Code sends ccr-opus/sonnet/haiku model family names
+  if (/^ccr-(opus|sonnet|haiku)(\[1m\])?$/i.test(originalModel)) return "claude-code";
+  // Codex sends ccr-codex as its model alias
+  if (originalModel.toLowerCase() === "ccr-codex") return "codex";
+  // Direct /v1/messages call without ccr- prefix → generic API
+  if (pathname.endsWith("/v1/messages")) return "api";
+  return "unknown";
+}
+
 async function initializeClaudeConfig() {
   const homeDir = homedir();
   const configPath = join(homeDir, ".claude.json");
@@ -239,6 +270,7 @@ async function getServer(options: RunOptions = {}) {
         model: data.model || "",
         modelFamily: data.modelFamily || "",
         scenarioType: data.scenarioType || "default",
+        clientType: data.req ? detectClientType(data.req) : "unknown",
         stream: data.stream ?? false,
         inputTokens: data.inputTokens || 0,
         outputTokens: 0,
@@ -266,7 +298,7 @@ async function getServer(options: RunOptions = {}) {
 
   serverInstance.addHook("onRequest", async (req: any) => {
     const url = new URL(`http://127.0.0.1${req.url}`);
-    if (url.pathname.endsWith("/v1/messages") && !req.requestStartTime) {
+    if ((url.pathname.endsWith("/v1/messages") || url.pathname.endsWith("/v1/responses")) && !req.requestStartTime) {
       req.requestStartTime = performance.now();
     }
   });
@@ -298,6 +330,9 @@ async function getServer(options: RunOptions = {}) {
     req.pathname = url.pathname;
     if (req.pathname.endsWith("/v1/messages") && req.pathname !== "/v1/messages") {
       req.preset = req.pathname.replace("/v1/messages", "").replace("/", "");
+    }
+    if (req.pathname.endsWith("/v1/responses") && req.pathname !== "/v1/responses") {
+      req.preset = req.pathname.replace("/v1/responses", "").replace("/", "");
     }
   })
 
@@ -544,7 +579,7 @@ async function getServer(options: RunOptions = {}) {
 
   // Track per-request usage statistics
   serverInstance.addHook("onResponse", async (req: any, reply: any) => {
-    if (!req.pathname?.endsWith("/v1/messages")) return;
+    if (!req.pathname?.endsWith("/v1/messages") && !req.pathname?.endsWith("/v1/responses")) return;
 
     try {
       const sessionId = getUsageSessionId(req);
@@ -585,6 +620,7 @@ async function getServer(options: RunOptions = {}) {
         model: getRequestModel(req),
         modelFamily: req.modelFamily || "",
         scenarioType: req.scenarioType || "default",
+        clientType: detectClientType(req),
         stream: req.body?.stream ?? false,
         inputTokens: usage?.input_tokens || req.tokenCount || 0,
         outputTokens: isFailedRequest ? 0 : (usage?.output_tokens || 0),

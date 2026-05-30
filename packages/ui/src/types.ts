@@ -88,6 +88,42 @@ export interface StatusLineConfig {
   fontFamily?: string;
 }
 
+export type ClientId = 'claudeCode' | 'codex';
+
+export interface ClientConfig {
+  enabled?: boolean;
+  managed?: boolean;
+  configPath?: string;
+  modelAlias?: string;
+}
+
+export interface ClientStatus {
+  id: ClientId;
+  name: string;
+  enabled: boolean;
+  managed: boolean;
+  configPath: string;
+  exists: boolean;
+  activeModel?: string;
+  modelAlias?: string;
+  details?: string;
+}
+
+export interface ClientOperationResult {
+  id: ClientId;
+  action: 'enable' | 'disable' | 'restore';
+  success: boolean;
+  status?: ClientStatus;
+  error?: string;
+}
+
+export interface ClientApplyResponse {
+  success: boolean;
+  results: ClientOperationResult[];
+  clients: ClientStatus[];
+  config: Config;
+}
+
 export interface FallbackConfig {
   default?: string[];
   background?: string[];
@@ -104,6 +140,7 @@ export interface Config {
   Router: RouterConfig;
   transformers: Transformer[];
   StatusLine?: StatusLineConfig;
+  Clients?: Partial<Record<ClientId, ClientConfig>>;
   forceUseImageAgent?: boolean;
   fallback?: FallbackConfig;
   // Top-level settings

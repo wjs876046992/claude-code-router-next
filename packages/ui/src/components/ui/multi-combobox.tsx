@@ -2,6 +2,7 @@
 
 import * as React from "react"
 import { Check, ChevronsUpDown, X } from "lucide-react"
+import { useTranslation } from "react-i18next"
 
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -37,6 +38,7 @@ export function MultiCombobox({
   searchPlaceholder = "Search...",
   emptyPlaceholder = "No options found.",
 }: MultiComboboxProps) {
+  const { t } = useTranslation()
   const [open, setOpen] = React.useState(false)
   const [draggedIndex, setDraggedIndex] = React.useState<number | null>(null);
   
@@ -100,7 +102,7 @@ export function MultiCombobox({
               <button
                 onClick={(e) => removeValue(val, e)}
                 className="ml-1.5 p-0.5 rounded-full hover:bg-blue-100 dark:hover:bg-blue-900/60 text-blue-600/80 dark:text-blue-400/80 hover:text-blue-900 dark:hover:text-blue-200 transition-colors"
-                title="Remove"
+                title={t("app.remove")}
               >
                 <X className="h-3.5 w-3.5" />
               </button>

@@ -429,7 +429,7 @@ export function SettingsDialog({
                 <div className="space-y-1.5">
                   <div className="flex items-end gap-3">
                     <div className="flex-1">
-                      <Label>{t("router.image")} (beta)</Label>
+                      <Label>{t("router.image_beta")}</Label>
                       <Combobox
                         options={modelOptions}
                         value={routerConfig.image || ""}

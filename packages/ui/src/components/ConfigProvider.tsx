@@ -98,6 +98,19 @@ export function ConfigProvider({ children }: ConfigProviderProps) {
             transformers: [],
             Providers: [],
             StatusLine: undefined,
+            Clients: {
+              claudeCode: {
+                enabled: false,
+                managed: false,
+                configPath: '~/.claude/settings.json',
+              },
+              codex: {
+                enabled: false,
+                managed: false,
+                configPath: '~/.codex/config.toml',
+                modelAlias: 'ccr-codex',
+              },
+            },
             Router: {
               default: '',
               background: '',
