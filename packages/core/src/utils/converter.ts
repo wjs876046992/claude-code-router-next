@@ -521,6 +521,12 @@ export function convertToAnthropic(
         }
       } catch {}
 
+      // Anthropic API requires tool_result content to be a string (or array/object).
+      // Coerce non-string primitives (e.g., numbers, booleans) to strings.
+      if (content !== null && content !== undefined && typeof content !== "object" && typeof content !== "string") {
+        content = String(content);
+      }
+
       const toolResultBlock: any = {
         type: "tool_result",
         tool_use_id: msg.tool_call_id,

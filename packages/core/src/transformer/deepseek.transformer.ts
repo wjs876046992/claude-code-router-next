@@ -12,6 +12,13 @@ export class DeepseekTransformer implements Transformer {
     const isReasoningModel = request.model?.includes("reasoner") || request.model?.includes("v4") || request.model?.includes("pro") || request.model?.includes("think");
     const hasThinking = request.thinking || request.reasoning?.enabled || request.messages.some(m => m.thinking?.content) || isReasoningModel;
 
+    // DeepSeek thinking mode does not support tool_choice parameter.
+    // When present, the API returns 400: "Thinking mode does not support this tool_choice".
+    // Strip it so the model can still auto-select tools without the forced constraint.
+    if (hasThinking && request.tool_choice) {
+      delete request.tool_choice;
+    }
+
     // DeepSeek V4 thinking mode requirement:
     // When assistant messages have thinking content from previous turns,
     // we must pass it back as reasoning_content WITH signature.
