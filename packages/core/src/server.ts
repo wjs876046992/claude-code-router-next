@@ -34,6 +34,9 @@ import { TokenizerService } from "./services/tokenizer";
 import { router, calculateTokenCount, searchProjectBySession } from "./utils/router";
 import { sessionUsageCache } from "./utils/cache";
 import { getActiveProbeService, startActiveProbe, stopActiveProbe, resetActiveProbeService, ActiveProbeService, ActiveProbeConfig } from "./services/active-probe";
+import { initProviderHealthPersistence } from "./services/provider-health";
+import { initRateLimitPersistence } from "./services/rate-limit";
+import { initQuotaStorePersistence } from "./services/quota-store";
 
 // Extend FastifyRequest to include custom properties
 declare module "fastify" {
@@ -230,10 +233,19 @@ class Server {
                   .code(400)
                   .send({ error: "Missing model in request body" });
               }
-              const [provider, ...model] = body.model.split(",");
-              body.model = model.join(",");
-              req.provider = provider;
-              req.model = model;
+              // Only split when model contains a comma (e.g. "deepseek,deepseek-chat").
+              // Codex CLI sends bare model names like "gpt-5.x-xhigh" — splitting
+              // those on comma would erase the model (body.model = "") and set
+              // req.provider to the model name, breaking downstream routing.
+              const parts = body.model.split(",");
+              let routedModel = body.model;
+              if (parts.length > 1) {
+                const [provider, ...model] = parts;
+                routedModel = model.join(",");
+                body.model = routedModel;
+                req.provider = provider;
+              }
+              req.model = routedModel;
               return;
             } catch (err) {
               req.log.error({error: err}, "Error in modelProviderMiddleware:");
@@ -250,6 +262,17 @@ class Server {
       });
 
       this.app.log.info(`🚀 LLMs API server listening on ${address}`);
+
+      // Restore persisted runtime state before probes start.
+      try {
+        initRateLimitPersistence();
+      } catch {}
+      try {
+        initQuotaStorePersistence();
+      } catch {}
+      try {
+        initProviderHealthPersistence();
+      } catch {}
 
       // Start active probe service after providers are initialized
       try {
@@ -309,6 +332,7 @@ export { getAllRateLimitInfo, getRateLimitInfo, RateLimitInfo, initRateLimitPers
 export { getQuotaAdapter } from "./services/quota-adapters";
 export type { QuotaAdapter, ProviderQuotaResult } from "./services/quota-adapters";
 export { getAllQuotaResults, getQuotaResult, storeQuotaResult, initQuotaStorePersistence } from "./services/quota-store";
+export { initProviderHealthPersistence } from "./services/provider-health";
 export type { StoredQuotaResult } from "./services/quota-store";
 export { getActiveProbeService, startActiveProbe, stopActiveProbe, resetActiveProbeService, ActiveProbeService, ActiveProbeConfig } from "./services/active-probe";
 export { setRuntimeDebugLog, getRuntimeDebugLog } from "./utils/debug-log";

@@ -1,11 +1,18 @@
-import { existsSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { writeFile } from "fs/promises";
 import { homedir } from "os";
 import { join } from "path";
-import { initConfig, initDir } from "./utils";
+import { initConfig, initDir, readConfigFile, writeConfigFile } from "./utils";
 import { createServer } from "./server";
 import { apiKeyAuth } from "./middleware/auth";
-import { CONFIG_FILE, HOME_DIR, listPresets } from "@wengine-ai/claude-code-router-shared";
+import {
+  CONFIG_FILE,
+  HOME_DIR,
+  getActiveCodexAccount,
+  listCodexAccounts,
+  listPresets,
+  markActiveCodexAccountLimitedAndSwitch,
+} from "@wengine-ai/claude-code-router-shared";
 import { createStream } from 'rotating-file-stream';
 import { sessionUsageCache } from "@wengine-ai/llms";
 const _healthModule = require("@wengine-ai/llms") as any;
@@ -88,11 +95,211 @@ function detectClientType(req: any): string {
   const originalModel = (req.originalModel || req.body?.model || "");
   // Claude Code sends ccr-opus/sonnet/haiku model family names
   if (/^ccr-(opus|sonnet|haiku)(\[1m\])?$/i.test(originalModel)) return "claude-code";
-  // Codex sends ccr-codex as its model alias
+  // Legacy Codex installs may still send ccr-codex as their model alias
   if (originalModel.toLowerCase() === "ccr-codex") return "codex";
   // Direct /v1/messages call without ccr- prefix → generic API
   if (pathname.endsWith("/v1/messages")) return "api";
   return "unknown";
+}
+
+function isRateLimitMessage(statusCode: number, message?: string): boolean {
+  return statusCode === 429 ||
+    Boolean(message && /rate[\s_]limit|too many|限流|频率限制|qps_limit|token_limit|quota exhausted|usage limit|limit reached/i.test(message));
+}
+
+interface CodexUsageWindow {
+  used_percent?: number;
+  reset_after_seconds?: number;
+  reset_at?: number | null;
+}
+
+interface CodexUsageSnapshot {
+  used5h?: number;
+  used7d?: number;
+  resetAfter5h?: number;
+  resetAfter7d?: number;
+}
+
+function getCodexUsageAutoSwitchThreshold(config: Record<string, any>): number {
+  const value = config.Clients?.codex?.autoSwitchUsageThreshold;
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.min(100, Math.max(1, value));
+  }
+  return 95;
+}
+
+function readStoredCodexAccess(accountId: string): { accessToken?: string; chatGptAccountId?: string } {
+  try {
+    const authPath = join(HOME_DIR, "codex-accounts", `${accountId}.auth.json`);
+    if (!existsSync(authPath)) return {};
+    const auth = JSON.parse(readFileSync(authPath, "utf8"));
+    return {
+      accessToken: auth?.tokens?.access_token,
+      chatGptAccountId: auth?.tokens?.account_id || accountId,
+    };
+  } catch {
+    return {};
+  }
+}
+
+function normalizeCodexUsageSnapshot(payload: any): CodexUsageSnapshot | null {
+  const rateLimit = payload?.rate_limit;
+  if (!rateLimit) return null;
+  const primary = rateLimit.primary_window as CodexUsageWindow | undefined;
+  const secondary = rateLimit.secondary_window as CodexUsageWindow | undefined;
+  return {
+    used5h: typeof primary?.used_percent === "number" ? primary.used_percent : undefined,
+    used7d: typeof secondary?.used_percent === "number" ? secondary.used_percent : undefined,
+    resetAfter5h: typeof primary?.reset_after_seconds === "number" ? primary.reset_after_seconds : undefined,
+    resetAfter7d: typeof secondary?.reset_after_seconds === "number" ? secondary.reset_after_seconds : undefined,
+  };
+}
+
+async function readCodexUsageSnapshot(accountId: string): Promise<CodexUsageSnapshot | null> {
+  const { accessToken, chatGptAccountId } = readStoredCodexAccess(accountId);
+  if (!accessToken) return null;
+
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${accessToken}`,
+    "ChatGPT-Account-Id": chatGptAccountId || accountId,
+    originator: "codex_cli_rs",
+    Accept: "application/json",
+    "Accept-Encoding": "gzip, deflate",
+    "User-Agent": "codex_cli_rs/0.0.0",
+  };
+  const urls = [
+    "https://chatgpt.com/backend-api/wham/usage",
+    "https://chatgpt.com/backend-api/codex/usage",
+  ];
+
+  for (const url of urls) {
+    try {
+      const response = await fetch(url, {
+        headers,
+        signal: AbortSignal.timeout(15000),
+      });
+      if (!response.ok) continue;
+      const usage = normalizeCodexUsageSnapshot(await response.json());
+      if (usage) return usage;
+    } catch {
+      // Try the next compatible usage endpoint.
+    }
+  }
+  return null;
+}
+
+function getExceededCodexUsageWindow(
+  usage: CodexUsageSnapshot,
+  threshold: number
+): { window: "5h" | "7d"; used: number; retryAfterSeconds?: number } | null {
+  const weeklyExceeded = typeof usage.used7d === "number" && usage.used7d >= threshold;
+  const shortExceeded = typeof usage.used5h === "number" && usage.used5h >= threshold;
+  if (weeklyExceeded) {
+    return { window: "7d", used: usage.used7d!, retryAfterSeconds: usage.resetAfter7d };
+  }
+  if (shortExceeded) {
+    return { window: "5h", used: usage.used5h!, retryAfterSeconds: usage.resetAfter5h };
+  }
+  return null;
+}
+
+async function getCurrentCodexAccountForUsage(): Promise<{ id?: string; email?: string }> {
+  try {
+    const currentConfig = await readConfigFile();
+    const account = getActiveCodexAccount(currentConfig);
+    return { id: account?.id, email: account?.email };
+  } catch {
+    return {};
+  }
+}
+
+async function switchCodexAccountBeforeUsageLimit(): Promise<void> {
+  try {
+    let currentConfig = await readConfigFile();
+    const clientConfig = currentConfig.Clients?.codex || {};
+    if (clientConfig.autoSwitchAccounts === false) return;
+
+    const threshold = getCodexUsageAutoSwitchThreshold(currentConfig);
+    const maxAttempts = Math.max(1, listCodexAccounts(currentConfig).accounts.length);
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      const activeAccount = getActiveCodexAccount(currentConfig);
+      if (!activeAccount?.id) return;
+
+      const usage = await readCodexUsageSnapshot(activeAccount.id);
+      if (!usage) return;
+
+      const exceeded = getExceededCodexUsageWindow(usage, threshold);
+      if (!exceeded) return;
+
+      const reason = `Codex ${exceeded.window} usage reached ${Math.round(exceeded.used)}% (auto-switch threshold ${threshold}%)`;
+      const result = markActiveCodexAccountLimitedAndSwitch(
+        currentConfig,
+        reason,
+        exceeded.retryAfterSeconds
+      );
+      await writeConfigFile(result.config);
+      if (!result.switchedAccount) {
+        console.warn(`[Codex] ${reason}; no available Codex account could be switched to`);
+        return;
+      }
+
+      console.warn(`[Codex] ${reason}; switched account to ${result.switchedAccount.email || result.switchedAccount.id}`);
+      currentConfig = result.config;
+    }
+  } catch (error) {
+    console.error("Failed to auto-switch Codex account before usage limit:", error);
+  }
+}
+
+async function switchCodexAccountAfterRateLimit(reason?: string): Promise<void> {
+  try {
+    const currentConfig = await readConfigFile();
+    const clientConfig = currentConfig.Clients?.codex || {};
+    if (clientConfig.autoSwitchAccounts === false) return;
+    const result = markActiveCodexAccountLimitedAndSwitch(currentConfig, reason);
+    await writeConfigFile(result.config);
+    if (result.switchedAccount) {
+      console.warn(`[Codex] Rate limit detected; switched account to ${result.switchedAccount.email || result.switchedAccount.id}`);
+    } else {
+      console.warn("[Codex] Rate limit detected, but no available Codex account could be switched to");
+    }
+  } catch (error) {
+    console.error("Failed to auto-switch Codex account after rate limit:", error);
+  }
+}
+
+function extractUsageFromPayload(payload: any): any | undefined {
+  if (!payload) return undefined;
+
+  let body = payload;
+  if (Buffer.isBuffer(payload)) {
+    body = payload.toString("utf8");
+  }
+  if (typeof body === "string") {
+    try {
+      body = JSON.parse(body);
+    } catch {
+      return undefined;
+    }
+  }
+
+  if (typeof body !== "object") return undefined;
+
+  // Anthropic /v1/messages non-stream response.
+  if (body.usage) return body.usage;
+
+  // OpenAI Responses-style non-stream response.
+  if (body.response?.usage) {
+    const usage = body.response.usage;
+    return {
+      input_tokens: usage.input_tokens || 0,
+      output_tokens: usage.output_tokens || 0,
+      cache_read_input_tokens: usage.cache_read_input_tokens || 0,
+      cache_creation_input_tokens: usage.cache_creation_input_tokens || 0,
+    };
+  }
+
+  return undefined;
 }
 
 async function initializeClaudeConfig() {
@@ -261,6 +468,10 @@ async function getServer(options: RunOptions = {}) {
   // Set up usage recording callback for fallback failures in core
   serverInstance.recordUsage = (data: any) => {
     try {
+      const clientType = data.req ? detectClientType(data.req) : "unknown";
+      if (clientType === "codex" && isRateLimitMessage(0, data.errorMessage)) {
+        void switchCodexAccountAfterRateLimit(data.errorMessage);
+      }
       appendUsage({
         id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         timestamp: new Date().toISOString(),
@@ -270,7 +481,9 @@ async function getServer(options: RunOptions = {}) {
         model: data.model || "",
         modelFamily: data.modelFamily || "",
         scenarioType: data.scenarioType || "default",
-        clientType: data.req ? detectClientType(data.req) : "unknown",
+        clientType,
+        codexAccountId: data.req?.codexAccountId,
+        codexAccountEmail: data.req?.codexAccountEmail,
         stream: data.stream ?? false,
         inputTokens: data.inputTokens || 0,
         outputTokens: 0,
@@ -308,7 +521,7 @@ async function getServer(options: RunOptions = {}) {
   // This ensures any usage recorded in onResponse belongs to THIS request, not leaked from previous ones
   serverInstance.addHook("preHandler", async (req: any, reply: any) => {
     const url = new URL(`http://127.0.0.1${req.url}`);
-    if (url.pathname.endsWith("/v1/messages")) {
+    if (url.pathname.endsWith("/v1/messages") || url.pathname.endsWith("/v1/responses")) {
       const usageSessionId = getUsageSessionId(req);
       sessionUsageCache.put(usageSessionId, { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 });
     }
@@ -333,6 +546,12 @@ async function getServer(options: RunOptions = {}) {
     }
     if (req.pathname.endsWith("/v1/responses") && req.pathname !== "/v1/responses") {
       req.preset = req.pathname.replace("/v1/responses", "").replace("/", "");
+    }
+    if ((req.pathname.endsWith("/v1/messages") || req.pathname.endsWith("/v1/responses")) && detectClientType(req) === "codex") {
+      await switchCodexAccountBeforeUsageLimit();
+      const account = await getCurrentCodexAccountForUsage();
+      req.codexAccountId = account.id;
+      req.codexAccountEmail = account.email;
     }
   })
 
@@ -374,10 +593,13 @@ async function getServer(options: RunOptions = {}) {
     event.emit('onError', request, reply, error);
   })
   serverInstance.addHook("onSend", (req: any, reply: any, payload: any, done: any) => {
-    if (req.pathname?.endsWith("/v1/messages")) {
+    const isMessages = req.pathname?.endsWith("/v1/messages");
+    const isResponses = req.pathname?.endsWith("/v1/responses");
+    if (isMessages || isResponses) {
       const usageSessionId = getUsageSessionId(req);
       if (payload instanceof ReadableStream) {
-        if (req.agents) {
+        // /v1/responses doesn't have agents — skip that branch
+        if (isMessages && req.agents) {
           const abortController = new AbortController();
           const eventStream = payload.pipeThrough(new SSEParserTransform())
           let currentAgent: undefined | IAgent;
@@ -516,13 +738,22 @@ async function getServer(options: RunOptions = {}) {
               if (done) break;
               const event = (value as any).event;
               const data = (value as any).data;
-              // Capture usage from message_delta, message_start, or any event with usage
+
+              // Capture usage from Anthropic SSE (message_delta, message_start)
               if (data?.usage) {
                 const existingUsage = sessionUsageCache.get(usageSessionId) || {};
                 // Reset cache on message_start to avoid stale fields from previous requests
                 // (e.g. cache_creation_input_tokens carried over from a different model)
                 const base = event === 'message_start' ? {} : existingUsage;
                 const mergedUsage = { ...base, ...data.usage };
+
+                // Belt-and-suspenders: some Anthropic-compatible providers (e.g. GLM)
+                // may embed OpenAI-style <= cached_tokens inside the SSE usage
+                // object even on the /v1/messages path.
+                if (data.usage?.prompt_tokens_details?.cached_tokens && !data.usage.cache_read_input_tokens) {
+                  mergedUsage.cache_read_input_tokens = data.usage.prompt_tokens_details.cached_tokens;
+                }
+
                 // Debug log for cache tokens
                 if (data.usage.cache_read_input_tokens || data.usage.cache_creation_input_tokens) {
                   console.log('[Usage] Cache tokens:', {
@@ -530,6 +761,25 @@ async function getServer(options: RunOptions = {}) {
                     cache_creation: data.usage.cache_creation_input_tokens
                   });
                 }
+                sessionUsageCache.put(usageSessionId, mergedUsage);
+              }
+
+              // Capture usage from Responses API SSE (response.completed)
+              // The Responses API format has usage nested under response.usage
+              if (data?.response?.usage) {
+                const respUsage = data.response.usage;
+                // Reset base on a fresh response.completed to prevent stale fields
+                // from a previous request leaking into the new one (same as the
+                // message_start sentinel used in the Anthropic path above).
+                const existingUsage = event === 'response.completed'
+                  ? {} : (sessionUsageCache.get(usageSessionId) || {});
+                const mergedUsage = {
+                  ...existingUsage,
+                  input_tokens: respUsage.input_tokens || 0,
+                  output_tokens: respUsage.output_tokens || 0,
+                  cache_read_input_tokens: respUsage.cache_read_input_tokens ?? existingUsage.cache_read_input_tokens ?? 0,
+                  cache_creation_input_tokens: respUsage.cache_creation_input_tokens ?? existingUsage.cache_creation_input_tokens ?? 0,
+                };
                 sessionUsageCache.put(usageSessionId, mergedUsage);
               }
             }
@@ -546,7 +796,10 @@ async function getServer(options: RunOptions = {}) {
         read(clonedStream);
         return done(null, originalStream)
       }
-      sessionUsageCache.put(usageSessionId, payload.usage);
+      const nonStreamUsage = extractUsageFromPayload(payload);
+      if (nonStreamUsage) {
+        sessionUsageCache.put(usageSessionId, nonStreamUsage);
+      }
       if (typeof payload ==='object') {
         if (payload.error) {
           return done(payload.error, null)
@@ -563,7 +816,7 @@ async function getServer(options: RunOptions = {}) {
   serverInstance.addHook("onSend", async (req: any, reply: any, payload: any) => {
     event.emit('onSend', req, reply, payload);
     // Capture error response body for usage stats
-    if (reply.statusCode >= 400 && req.pathname?.endsWith("/v1/messages")) {
+    if (reply.statusCode >= 400 && (req.pathname?.endsWith("/v1/messages") || req.pathname?.endsWith("/v1/responses"))) {
       try {
         if (typeof payload === 'string') {
           req.errorResponseBody = payload;
@@ -604,11 +857,39 @@ async function getServer(options: RunOptions = {}) {
         errorResponseBody = errorResponseBody || req.errorResponseBody;
         // Record failure to health store
         const model = getRequestModel(req);
-        healthStore.recordFailure(req.provider || "", model, errorMessage);
+        // Classify rate-limit errors — use markRateLimited to immediately isolate
+        // (bypasses the 3-failure threshold) with a time-based auto-recover.
+        const isRateLimit = isRateLimitMessage(reply.statusCode, errorMessage);
+        if (isRateLimit) {
+          healthStore.markRateLimited(req.provider || "", model, 120, errorMessage);
+          if (detectClientType(req) === "codex") {
+            await switchCodexAccountAfterRateLimit(errorMessage);
+          }
+        } else {
+          healthStore.recordFailure(req.provider || "", model, errorMessage);
+        }
       } else {
         // Record success to health store
         const model = getRequestModel(req);
         healthStore.recordSuccess(req.provider || "", model);
+      }
+
+      // Compute cache read input tokens.
+      // Anthropic-compatible providers that don't expose cache_read_input_tokens
+      // (e.g. GLM/Zhipu /v1/messages) still report net input_tokens after cache
+      // deduction, so we infer the cache hit from the difference between the
+      // pre-cache tokenCount (computed by the router) and the reported input_tokens.
+      let cacheReadInputTokens = usage?.cache_read_input_tokens ?? 0;
+      const rawInputTokens = usage?.input_tokens ?? req.tokenCount ?? 0;
+      if (!cacheReadInputTokens && req.tokenCount && usage?.input_tokens && usage.input_tokens < req.tokenCount) {
+        cacheReadInputTokens = req.tokenCount - usage.input_tokens;
+        if (cacheReadInputTokens) {
+          console.log('[Usage] Inferred cache tokens:', {
+            tokenCount: req.tokenCount,
+            netInput: usage.input_tokens,
+            impliedCache: cacheReadInputTokens,
+          });
+        }
       }
 
       appendUsage({
@@ -621,10 +902,12 @@ async function getServer(options: RunOptions = {}) {
         modelFamily: req.modelFamily || "",
         scenarioType: req.scenarioType || "default",
         clientType: detectClientType(req),
+        codexAccountId: req.codexAccountId,
+        codexAccountEmail: req.codexAccountEmail,
         stream: req.body?.stream ?? false,
-        inputTokens: usage?.input_tokens || req.tokenCount || 0,
+        inputTokens: rawInputTokens,
         outputTokens: isFailedRequest ? 0 : (usage?.output_tokens || 0),
-        cacheReadInputTokens: usage?.cache_read_input_tokens || 0,
+        cacheReadInputTokens,
         cacheCreationInputTokens: usage?.cache_creation_input_tokens || 0,
         ttft: isFailedRequest ? null : speedStats.ttft,
         tokensPerSecond: isFailedRequest ? null : speedStats.tokensPerSecond,

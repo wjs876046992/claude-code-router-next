@@ -6,6 +6,11 @@ import { HOME_DIR } from "@wengine-ai/claude-code-router-shared";
 const CLAUDE_SETTINGS_PATH = path.join(os.homedir(), ".claude", "settings.json");
 const BACKUP_PATH = path.join(HOME_DIR, ".statusline-backup.json");
 const MODEL_BACKUP_PATH = path.join(HOME_DIR, ".model-env-backup.json");
+const CLAUDE_AUTO_COMPACT_ENV = {
+  CLAUDE_CODE_AUTO_COMPACT_WINDOW: "200000",
+  CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "90",
+  CLAUDE_CODE_SIMPLE: "1",
+};
 
 function readClaudeSettings(): Record<string, any> {
   try {
@@ -94,6 +99,9 @@ export function injectModelFamilies(config: any): void {
   const apiKey = config.APIKEY || "test";
   settings.env.ANTHROPIC_BASE_URL = `http://127.0.0.1:${port}`;
   settings.env.ANTHROPIC_AUTH_TOKEN = apiKey;
+  settings.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = CLAUDE_AUTO_COMPACT_ENV.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
+  settings.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE = CLAUDE_AUTO_COMPACT_ENV.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE;
+  settings.autoCompactEnabled = true;
 
   // Backup original model env vars
   const backup: Record<string, string> = {};

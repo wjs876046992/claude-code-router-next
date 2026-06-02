@@ -770,6 +770,8 @@ export const router = async (req: any, _res: any, context: RouterContext) => {
         req.scenarioType = 'image';
       } else {
         req.log.warn(`Image model ${routerConfig.image} unavailable (fail pool), keeping ${model}`);
+        // Mark scenario as 'image' so that fallback.image is used when this model fails
+        req.scenarioType = 'image';
       }
     }
 

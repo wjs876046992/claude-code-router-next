@@ -108,7 +108,7 @@ export function ConfigProvider({ children }: ConfigProviderProps) {
                 enabled: false,
                 managed: false,
                 configPath: '~/.codex/config.toml',
-                modelAlias: 'ccr-codex',
+                modelAlias: 'ccr-opus',
               },
             },
             Router: {

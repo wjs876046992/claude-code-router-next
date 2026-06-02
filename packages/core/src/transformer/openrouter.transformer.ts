@@ -167,7 +167,7 @@ export class OpenrouterTransformer implements Transformer {
                   !context.isReasoningComplete()
                 ) {
                   context.setReasoningComplete(true);
-                  const signature = Date.now().toString();
+                  const signature = "ccr_think_signature";
                   // Save the original content before we null it for thinking chunk
                   const originalContent = data.choices[0].delta.content;
 

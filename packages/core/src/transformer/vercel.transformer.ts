@@ -167,7 +167,7 @@ export class VercelTransformer implements Transformer {
                   !context.isReasoningComplete()
                 ) {
                   context.setReasoningComplete(true);
-                  const signature = Date.now().toString();
+                  const signature = "ccr_think_signature";
 
                   const thinkingChunk = {
                     ...data,

@@ -16,6 +16,8 @@ export interface UsageRecord {
   modelFamily: string;
   scenarioType: string;
   clientType?: string; // "claude-code" | "codex" | "api" | "unknown"
+  codexAccountId?: string;
+  codexAccountEmail?: string;
   stream: boolean;
   inputTokens: number;
   outputTokens: number;
@@ -365,4 +367,3 @@ export function getOldestRecordTimestamp(provider: string, startTime: string, en
   }
   return oldestTime;
 }
-

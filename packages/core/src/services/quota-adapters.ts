@@ -31,15 +31,17 @@ abstract class BaseQuotaAdapter implements QuotaAdapter {
     endpoint: string,
     provider: LLMProvider,
     timeoutMs: number,
-    proxyUrl?: string
+    proxyUrl?: string,
+    authToken?: string
   ): Promise<any | null> {
-    if (!provider.apiKey) return null;
+    const token = authToken || provider.apiKey;
+    if (!token) return null;
 
     const fetchOptions: RequestInit & { dispatcher?: unknown } = {
       method: "GET",
       headers: {
         Accept: "application/json",
-        Authorization: `Bearer ${provider.apiKey}`,
+        Authorization: `Bearer ${token}`,
       },
       signal: AbortSignal.timeout(timeoutMs),
     };
@@ -504,32 +506,18 @@ class MiniMaxCodingPlanQuotaAdapter extends BaseQuotaAdapter {
       ? "api.minimax.io"
       : "api.minimaxi.com";
 
-    const fetchOptions: RequestInit & { dispatcher?: unknown } = {
-      method: "GET",
-      headers: {
-        Accept: "application/json",
-        Authorization: `Bearer ${authToken.trim()}`,
-      },
-      signal: AbortSignal.timeout(timeoutMs),
-    };
-
-    if (proxyUrl) {
-      try {
-        const { ProxyAgent } = await import("undici");
-        fetchOptions.dispatcher = new ProxyAgent(new URL(proxyUrl).toString());
-      } catch {
-        // Continue without proxy
-      }
-    }
-
     try {
-      const response = await fetch(
+      const endpoints = [
+        `https://${apiDomain}/v1/token_plan/remains`,
         `https://${apiDomain}/v1/api/openplatform/coding_plan/remains`,
-        fetchOptions
-      );
-      if (!response.ok) return null;
+      ];
 
-      const payload = await response.json();
+      let payload: any | null = null;
+      for (const endpoint of endpoints) {
+        payload = await this.fetchJson(endpoint, provider, timeoutMs, proxyUrl, authToken.trim());
+        if (payload) break;
+      }
+      if (!payload) return null;
       
       // Check business level error
       if (payload?.base_resp) {
@@ -548,11 +536,15 @@ class MiniMaxCodingPlanQuotaAdapter extends BaseQuotaAdapter {
       // 5-hour window limit
       const intervalTotal = parseOptionalNumber(item.current_interval_total_count);
       const intervalRemaining = parseOptionalNumber(item.current_interval_usage_count);
+      const intervalRemainingPercent = parseOptionalNumber(item.current_interval_remaining_percent);
       const endTime = parseOptionalNumber(item.end_time); // Unix milliseconds
 
-      if (intervalTotal !== undefined && intervalRemaining !== undefined) {
+      if (intervalTotal !== undefined && intervalRemaining !== undefined && intervalTotal > 0) {
         result.usedDailyBalance = Math.max(0, intervalTotal - intervalRemaining);
         result.limitDaily = intervalTotal;
+      } else if (intervalRemainingPercent !== undefined) {
+        result.limitDaily = 100;
+        result.usedDailyBalance = Math.max(0, 100 - intervalRemainingPercent);
       }
       if (endTime) {
         result.resetTime = new Date(endTime).toISOString();
@@ -561,12 +553,17 @@ class MiniMaxCodingPlanQuotaAdapter extends BaseQuotaAdapter {
       // Weekly limit
       const weeklyTotal = parseOptionalNumber(item.current_weekly_total_count);
       const weeklyRemaining = parseOptionalNumber(item.current_weekly_usage_count);
+      const weeklyRemainingPercent = parseOptionalNumber(item.current_weekly_remaining_percent);
       const weeklyEndTime = parseOptionalNumber(item.weekly_end_time); // Unix milliseconds
 
-      if (weeklyTotal !== undefined && weeklyRemaining !== undefined) {
+      if (weeklyTotal !== undefined && weeklyRemaining !== undefined && weeklyTotal > 0) {
         result.usedBalance = Math.max(0, weeklyTotal - weeklyRemaining);
         result.remainingBalance = weeklyRemaining;
         result.totalBalance = weeklyTotal;
+      } else if (weeklyRemainingPercent !== undefined) {
+        result.totalBalance = 100;
+        result.usedBalance = Math.max(0, 100 - weeklyRemainingPercent);
+        result.remainingBalance = weeklyRemainingPercent;
       }
       if (weeklyEndTime && !result.resetTime) {
         result.resetTime = new Date(weeklyEndTime).toISOString();

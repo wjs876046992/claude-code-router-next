@@ -54,7 +54,7 @@ const MODULE_TYPES = [
   { label: "model", value: "model" },
   { label: "usage", value: "usage" },
   { label: "speed", value: "speed" },
-  { label: "contextCircle", value: "contextCircle" },
+  { label: "contextBar", value: "contextBar" },
   { label: "totalTokens", value: "totalTokens" },
   { label: "script", value: "script" },
 ];
@@ -344,8 +344,8 @@ function renderModulePreview(
 
   const text = replaceVariables(module.text, variables);
   const icon = module.icon || "";
-  const tooltip = module.type === "contextCircle" ? variables.contextUsage : undefined;
-  const effectiveColor = module.type === "contextCircle"
+  const tooltip = module.type === "contextBar" ? variables.contextUsage : undefined;
+  const effectiveColor = module.type === "contextBar"
     ? getContextUsageColor(variables.contextPercent)
     : module.color;
 
@@ -1007,11 +1007,11 @@ export function StatusLineConfigDialog({
                           color: "bright_green",
                         };
                         break;
-                      case "contextCircle":
+                      case "contextBar":
                         newModule = {
-                          type: "contextCircle",
-                          icon: "○",
-                          text: "{{contextPercent}}% {{contextUsage}}",
+                          type: "contextBar",
+                          icon: "",
+                          text: "Context {{contextBar}} {{contextPercent}}%",
                           color: "#22c55e",
                         };
                         break;

@@ -92,6 +92,10 @@ npm install -g @wengine-ai/claude-code-router-next@latest && ccr restart
 
 | Version | Release Details |
 | --- | --- |
+| **v2.1.34** | <ul><li>**Codex Account List Cache**: Codex accounts now load from persisted local account and quota cache first, so page refreshes no longer wait for the official usage API; the active account refreshes in the background every 1 minute and inactive accounts every 30 minutes.</li></ul> |
+| **v2.1.32** | <ul><li>**Provider Refresh Button Placement**: Moves the single-provider refresh button into the top status row beside the enable switch, leaving edit and delete in the hover action area.</li></ul> |
+| **v2.1.31** | <ul><li>**Provider Actions Layout**: Makes the provider card refresh, edit, and delete actions compact and horizontal, avoiding the stretched vertical action column.</li></ul> |
+| **v2.1.30** | <ul><li>**Codex Multi-Account Quota Display**: Adds official quota information to Codex account management, using `chatgpt.com/backend-api/wham/usage` to display 5-hour rate-limit and 7-day weekly-limit usage percentages and reset times.</li><li>**Codex Account Auto-Switching**: Checks official quota before each Codex request and switches to the next available account when any window reaches the default 95% threshold, while keeping the existing 429/rate-limit fallback switch.</li></ul> |
 | **v2.1.26** | <ul><li>**Fix Anthropic Transformer URI Override**: When `Anthropic` is combined with DeepSeek/OpenAI-compatible providers, it no longer rewrites `chat/completions` endpoints to `/v1/messages`, preventing DeepSeek 404 responses.</li><li>**Tighter Protocol Conversion Boundary**: Request bodies are converted to Anthropic messages format only when the provider `api_base_url` explicitly points to a `/messages` endpoint.</li></ul> |
 | **v2.1.25** | <ul><li>**Fix Claude Code (v2.1.154+) 422 Error**: Solves the 400/422 validation errors when calling Anthropic-compatible `/v1/messages` target providers due to `role: "system"` appearing in the messages array.</li><li>**Self-Healing Passthrough Protection**: Blocks passthrough bypass for requests containing system messages, enforcing symmetric protocol normalization and system parameter extraction.</li><li>**Response Passthrough Fix**: Passes original Anthropic-compatible responses through unchanged, resolving the issue where requests succeeded but returned empty/no content.</li></ul> |
 | **v2.1.22** | <ul><li>**Provider Scheduled Wake-up**: Introduces a global and provider-level scheduled reset/wake-up mechanism to activate provider quotas early in the morning by sending dummy requests.</li><li>**Symmetric Web UI Grid**: Upgraded the usage statistics grid on the dashboard from 8 cards to a symmetric 10-card layout.</li><li>**Advanced Usage Metrics**: Added real-time displays and calculations for Cache Hit Rate and Average Speed (tok/s).</li></ul> |
@@ -642,9 +646,9 @@ The status line supports token-related variables such as:
 
 This makes it possible to display input tokens, output tokens, and streaming speed directly in the terminal while requests are running.
 
-The effect is as follows:
+The effect is as follows (featuring the new gradient-colored Context progress bar):
 
-![statusline](/blog/images/statusline.png)
+![statusline](/blog/images/statusline-v2.png)
 
 ## 🤖 GitHub Actions
 
@@ -852,5 +856,3 @@ Each request logs detailed statistics:
 | `status` | success / error |
 
 Data location: `~/.claude-code-router/data/usage.jsonl`
-
-

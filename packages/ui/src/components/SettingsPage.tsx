@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,8 +12,8 @@ import { StatusLineConfigDialog } from "./StatusLineConfigDialog";
 import { UsageStats } from "./UsageStats";
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { LogViewer } from '@/components/LogViewer';
-import type { ClientApplyResponse, ClientId, ClientStatus, StatusLineConfig, FallbackConfig } from "@/types";
-import { FileJson, FileText, CircleArrowUp, FileCog, ArrowLeft, Save, RefreshCw, Trash2 } from "lucide-react";
+import type { ClientApplyResponse, ClientId, ClientStatus, CodexAccount, CodexAccountOperationResponse, CodexAccountsResponse, StatusLineConfig, FallbackConfig } from "@/types";
+import { FileJson, FileText, CircleArrowUp, FileCog, ArrowLeft, Save, RefreshCw, Trash2, UserRound, CheckCircle2, Download } from "lucide-react";
 import { Toast } from "@/components/ui/toast";
 import { api } from "@/lib/api";
 import { MODEL_FAMILIES } from "@/types";
@@ -21,9 +21,30 @@ import type { ModelFamilyConfig } from "@/types";
 
 const FALLBACK_SCENARIOS = ["default", "think", "longContext", "extendedContext", "webSearch", "image"] as const;
 
+function formatTokens(value: number | undefined): string {
+  const n = Number(value) || 0;
+  if (n >= 1_000_000_000) return (n / 1_000_000_000).toFixed(1) + "B";
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + "k";
+  return String(n);
+}
+
+function formatShortTime(value?: string): string {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString(undefined, {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 export function SettingsPage() {
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
+  const location = useLocation();
   const { config, setConfig } = useConfig();
   const [isStatusLineConfigOpen, setIsStatusLineConfigOpen] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
@@ -38,6 +59,17 @@ export function SettingsPage() {
   const [isLoadingClients, setIsLoadingClients] = useState(false);
   const [isApplyingClients, setIsApplyingClients] = useState(false);
   const [restoringClientId, setRestoringClientId] = useState<ClientId | null>(null);
+  const [codexAccounts, setCodexAccounts] = useState<CodexAccount[]>([]);
+  const [codexAuthPath, setCodexAuthPath] = useState("");
+  const [codexAccountLabel, setCodexAccountLabel] = useState("");
+  const [codexRefreshToken, setCodexRefreshToken] = useState("");
+  const [isImportingCodexAccount, setIsImportingCodexAccount] = useState(false);
+  const [isImportingCodexRt, setIsImportingCodexRt] = useState(false);
+  const [codexAccountActionId, setCodexAccountActionId] = useState<string | null>(null);
+  const tabFromUrl = new URLSearchParams(location.search).get("tab");
+  const initialTab = ["general", "codexAccounts", "clients", "router", "usage", "tools"].includes(tabFromUrl || "")
+    ? tabFromUrl || "general"
+    : "general";
 
   // Auto-expand first family on initial load so the section is not empty
   // Use useEffect without ref guard - React StrictMode runs effects twice in dev
@@ -113,21 +145,46 @@ export function SettingsPage() {
     }
   }, [setConfig]);
 
+  const syncCodexAccounts = useCallback((response: CodexAccountsResponse | CodexAccountOperationResponse) => {
+    setCodexAccounts(response.accounts || []);
+    setCodexAuthPath(response.authPath || "");
+    if ("config" in response && response.config) {
+      setConfig((current) => {
+        if (!current) return response.config;
+        return {
+          ...current,
+          Clients: response.config.Clients,
+        };
+      });
+    }
+  }, [setConfig]);
+
   const loadClients = useCallback(async () => {
     setIsLoadingClients(true);
     try {
-      const response = await api.getClients();
-      setClients(response.clients || []);
-      setSelectedClientIds((response.clients || []).filter((client) => client.enabled).map((client) => client.id));
+      const [clientsResponse, accountsResponse] = await Promise.all([
+        api.getClients(),
+        api.getCodexAccounts(),
+      ]);
+      setClients(clientsResponse.clients || []);
+      setSelectedClientIds((clientsResponse.clients || []).filter((client) => client.enabled).map((client) => client.id));
+      syncCodexAccounts(accountsResponse);
     } catch (error) {
       setToast({ message: t("clients.load_failed") + ': ' + (error as Error).message, type: 'error' });
     } finally {
       setIsLoadingClients(false);
     }
-  }, [t]);
+  }, [syncCodexAccounts, t]);
 
   useEffect(() => {
     loadClients();
+  }, [loadClients]);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      loadClients();
+    }, 30000);
+    return () => clearInterval(interval);
   }, [loadClients]);
 
   if (!config) {
@@ -272,6 +329,247 @@ export function SettingsPage() {
     }
   };
 
+  const importCurrentCodexAccount = async () => {
+    setIsImportingCodexAccount(true);
+    try {
+      const response = await api.importCurrentCodexAccount(codexAccountLabel);
+      syncCodexAccounts(response);
+      setCodexAccountLabel("");
+      setToast({ message: t("clients.codex_account_import_success"), type: 'success' });
+    } catch (error) {
+      setToast({ message: t("clients.codex_account_import_failed") + ': ' + (error as Error).message, type: 'error' });
+    } finally {
+      setIsImportingCodexAccount(false);
+    }
+  };
+
+  const importCodexAccountFromRefreshToken = async () => {
+    setIsImportingCodexRt(true);
+    try {
+      const response = await api.importCodexAccountFromRefreshToken(codexRefreshToken, codexAccountLabel);
+      syncCodexAccounts(response);
+      setCodexRefreshToken("");
+      setCodexAccountLabel("");
+      setToast({ message: t("clients.codex_account_import_success"), type: 'success' });
+    } catch (error) {
+      setToast({ message: t("clients.codex_account_import_failed") + ': ' + (error as Error).message, type: 'error' });
+    } finally {
+      setIsImportingCodexRt(false);
+    }
+  };
+
+  const activateCodexAccount = async (accountId: string) => {
+    setCodexAccountActionId(accountId);
+    try {
+      const response = await api.activateCodexAccount(accountId);
+      syncCodexAccounts(response);
+      setToast({ message: t("clients.codex_account_activate_success"), type: 'success' });
+    } catch (error) {
+      setToast({ message: t("clients.codex_account_activate_failed") + ': ' + (error as Error).message, type: 'error' });
+    } finally {
+      setCodexAccountActionId(null);
+    }
+  };
+
+  const deleteCodexAccount = async (accountId: string) => {
+    setCodexAccountActionId(accountId);
+    try {
+      const response = await api.deleteCodexAccount(accountId);
+      syncCodexAccounts(response);
+      setToast({ message: t("clients.codex_account_delete_success"), type: 'success' });
+    } catch (error) {
+      setToast({ message: t("clients.codex_account_delete_failed") + ': ' + (error as Error).message, type: 'error' });
+    } finally {
+      setCodexAccountActionId(null);
+    }
+  };
+
+  const renderUsageBar = (
+    label: string,
+    windowLabel: string,
+    used: number | undefined,
+    limit: number | undefined,
+    resetTime: string | undefined,
+    tone: "green" | "violet"
+  ) => {
+    const hasUsage = typeof used === "number" && Number.isFinite(used);
+    const safeUsed = Number(used) || 0;
+    const safeLimit = Number(limit) || 0;
+    const hasLimit = hasUsage && safeLimit > 0;
+    const percent = hasLimit
+      ? Math.min(100, Math.max(0, (safeUsed / safeLimit) * 100))
+      : 0;
+    const barColor = tone === "green" ? "bg-emerald-600" : "bg-indigo-500";
+    const textColor = tone === "green" ? "text-emerald-700" : "text-indigo-600";
+    const resetText = resetTime
+      ? t("clients.codex_quota_reset", { time: formatShortTime(resetTime) })
+      : t("clients.codex_quota_reset_unknown");
+
+    return (
+      <div className="min-w-[210px] space-y-1">
+        <div className="flex items-center justify-between gap-3 text-xs">
+          <div className="min-w-0 font-medium text-gray-700">
+            {label} <span className="text-xs text-gray-500">({windowLabel})</span>
+          </div>
+          <div className={`shrink-0 font-semibold tabular-nums ${textColor}`}>
+            {!hasUsage
+              ? t("clients.codex_quota_unavailable")
+              : hasLimit
+              ? t("clients.codex_quota_used_percent", { percent: Math.round(percent) })
+              : t("clients.codex_quota_used_tokens", { tokens: formatTokens(safeUsed) })}
+          </div>
+        </div>
+        <div className="h-1.5 overflow-hidden rounded-full bg-gray-100">
+          <div
+            className={`h-full rounded-full ${barColor} transition-all duration-300`}
+            style={{ width: `${hasLimit ? Math.max(2, percent) : 0}%` }}
+          />
+        </div>
+        <div className="flex items-center justify-between gap-3 text-[11px] text-gray-500">
+          <span>{resetText}</span>
+          {hasLimit && (
+            <span className="tabular-nums">{formatTokens(safeUsed)} / {formatTokens(safeLimit)}</span>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  const renderCodexAccountManager = () => (
+    <div className="space-y-4">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 text-sm font-medium text-gray-700">
+            <UserRound className="h-4 w-4" />
+            {t("clients.codex_accounts")}
+          </div>
+          <p className="mt-1 text-xs text-gray-500">{t("clients.codex_accounts_description")}</p>
+          <div className="mt-1 break-all text-xs text-gray-500">
+            {t("clients.codex_auth_path")}: {codexAuthPath || "-"}
+          </div>
+          <p className="mt-2 max-w-2xl text-xs leading-5 text-gray-500">
+            {t("clients.codex_accounts_hint")}
+          </p>
+        </div>
+        <div className="flex flex-col gap-2 lg:min-w-[520px]">
+          <Input
+            name="codex-account-display-label"
+            value={codexAccountLabel}
+            onChange={(event) => setCodexAccountLabel(event.target.value)}
+            placeholder={t("clients.codex_account_label_placeholder")}
+            autoComplete="new-password"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+            className="h-9"
+          />
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <Input
+              type="password"
+              name="codex-refresh-token"
+              value={codexRefreshToken}
+              onChange={(event) => setCodexRefreshToken(event.target.value)}
+              placeholder={t("clients.codex_rt_placeholder")}
+              autoComplete="new-password"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              className="h-9"
+            />
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={importCodexAccountFromRefreshToken}
+              disabled={!codexRefreshToken.trim() || isImportingCodexRt || isImportingCodexAccount || Boolean(codexAccountActionId)}
+              className="shrink-0"
+            >
+              <Download className="mr-2 h-4 w-4" />
+              {t("clients.codex_import_rt")}
+            </Button>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={importCurrentCodexAccount}
+            disabled={isImportingCodexAccount || isImportingCodexRt || Boolean(codexAccountActionId)}
+          >
+            <Download className="mr-2 h-4 w-4" />
+            {t("clients.codex_import_current")}
+          </Button>
+        </div>
+      </div>
+      {codexAccounts.length === 0 ? (
+        <div className="rounded-md border border-dashed px-3 py-3 text-xs text-gray-500">
+          {t("clients.codex_accounts_empty")}
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {codexAccounts.map((account) => (
+            <div key={account.id} className="flex flex-col gap-3 rounded-md border bg-white/50 px-3 py-3 xl:flex-row xl:items-center xl:justify-between">
+              <div className="flex min-w-0 flex-1 flex-col gap-3 lg:flex-row lg:items-center">
+                <div className="min-w-0 lg:w-[320px] lg:shrink-0">
+                  <div className="flex flex-wrap items-center gap-2 text-sm font-medium text-gray-800">
+                    {account.active && <CheckCircle2 className="h-4 w-4 text-green-600" />}
+                    <span className="truncate">{account.label}</span>
+                    {account.plan && (
+                      <span className="rounded-full bg-purple-100 px-2 py-0.5 text-xs text-purple-700">
+                        {account.plan}
+                      </span>
+                    )}
+                    {account.limitedUntil && (
+                      <span className="rounded-full bg-red-50 px-2 py-0.5 text-xs text-red-600">
+                        {t("clients.codex_account_limited", { time: formatShortTime(account.limitedUntil) })}
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-1 truncate text-xs text-gray-500" title={account.email || account.accountId || account.id}>
+                    {account.email || account.accountId || account.id}
+                  </div>
+                </div>
+                <div className="grid min-w-0 flex-1 gap-4 md:grid-cols-2 xl:max-w-2xl">
+                  {renderUsageBar(
+                    t("clients.codex_quota_rate_limit"),
+                    t("clients.codex_quota_5h_window"),
+                    account.usage?.used5h,
+                    account.usage?.limit5h,
+                    account.usage?.reset5h,
+                    "green"
+                  )}
+                  {renderUsageBar(
+                    t("clients.codex_quota_weekly_limit"),
+                    t("clients.codex_quota_7d_window"),
+                    account.usage?.used7d,
+                    account.usage?.limit7d,
+                    account.usage?.reset7d,
+                    "violet"
+                  )}
+                </div>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <Button
+                  variant={account.active ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => activateCodexAccount(account.id)}
+                  disabled={account.active || codexAccountActionId === account.id || isImportingCodexAccount || isImportingCodexRt}
+                >
+                  {account.active ? t("clients.codex_account_active") : t("clients.codex_account_activate")}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => deleteCodexAccount(account.id)}
+                  disabled={codexAccountActionId === account.id || isImportingCodexAccount || isImportingCodexRt}
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+
   const checkForUpdates = useCallback(async () => {
     setIsCheckingUpdate(true);
     try {
@@ -356,9 +654,10 @@ export function SettingsPage() {
 
       <main className="h-[calc(100vh-4rem)] overflow-auto p-6">
         <div className="w-full">
-          <Tabs defaultValue="general" className="w-full">
+          <Tabs defaultValue={initialTab} className="w-full">
             <TabsList className="w-full justify-start mb-4">
               <TabsTrigger value="general">{t("settings.tabs.general")}</TabsTrigger>
+              <TabsTrigger value="codexAccounts">{t("settings.tabs.codex_accounts")}</TabsTrigger>
               <TabsTrigger value="clients">{t("settings.tabs.clients")}</TabsTrigger>
               <TabsTrigger value="router">{t("settings.tabs.router")}</TabsTrigger>
               <TabsTrigger value="usage">{t("settings.tabs.usage")}</TabsTrigger>
@@ -531,6 +830,12 @@ export function SettingsPage() {
                     中文
                   </Button>
                 </div>
+              </div>
+            </TabsContent>
+
+            <TabsContent value="codexAccounts" className="space-y-4">
+              <div className="rounded-lg border bg-white/40 p-4">
+                {renderCodexAccountManager()}
               </div>
             </TabsContent>
 

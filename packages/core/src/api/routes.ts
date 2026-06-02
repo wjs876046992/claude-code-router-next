@@ -22,6 +22,7 @@ import { Transformer } from "@/types/transformer";
 import { getHealthStore } from "@/services/provider-health";
 import { captureRateLimitHeaders } from "@/services/rate-limit";
 import { getFallbackPromotionStore } from "@/utils/fallback-promotion";
+import { OpenAIResponsesTransformer } from "../transformer/openai.responses.transformer";
 
 // Extend FastifyInstance to include custom services
 declare module "fastify" {
@@ -49,8 +50,50 @@ async function handleTransformerEndpoint(
   transformer: any
 ) {
   const body = req.body as any;
-  const providerName = req.provider!;
-  const provider = fastify.providerService.getProvider(providerName);
+  // For /v1/responses (Codex) the modelProviderMiddleware does not run because
+  // it only handles /v1/messages. Parse provider from body.model here.
+  let providerName = req.provider as string | undefined;
+  if (!providerName && body?.model) {
+    const parts = body.model.split(",");
+    if (parts.length > 1) {
+      providerName = parts[0];
+      body.model = parts.slice(1).join(",");
+    }
+  }
+  // If still no provider (e.g. Codex sends a CCR alias without comma), try
+  // resolving via the provider service's model routes which index by model name.
+  let provider = providerName
+    ? fastify.providerService.getProvider(providerName)
+    : undefined;
+  if (!provider && body?.model) {
+    const route = fastify.providerService.resolveModelRoute(body.model);
+    if (route) {
+      provider = route.provider;
+      body.model = route.targetModel;
+    }
+  }
+  // Last resort: use the Router's default config to resolve the model.
+  // This handles Codex-style aliases that don't match any registered model
+  // directly but can be mapped via family/default routing.
+  if (!provider && body?.model) {
+    const routerConfig = fastify.configService.get("Router");
+    const defaultRoute = routerConfig?.default;
+    if (defaultRoute && defaultRoute.includes(",")) {
+      const [pName, ...mParts] = defaultRoute.split(",");
+      const p = fastify.providerService.getProvider(pName);
+      if (p) {
+        provider = p;
+        body.model = mParts.join(",");
+      }
+    }
+  }
+
+  // Save original model BEFORE provider resolution mutates body.model (below).
+  // modelProviderMiddleware may already have set req.originalModel for /v1/messages,
+  // but for /v1/responses (Codex) the middleware doesn't run.
+  if (!(req as any).originalModel) {
+    (req as any).originalModel = body?.model;
+  }
 
   // Validate provider exists
   if (!provider) {
@@ -61,7 +104,118 @@ async function handleTransformerEndpoint(
     );
   }
 
+  // Expose provider name on the request so downstream hooks (onResponse in
+  // server/index.ts) can record it for usage stats and health tracking.
+  // This is especially important for /v1/responses where modelProviderMiddleware
+  // does not run.
+  (req as any).provider = provider.name || providerName;
+
+  // Detect if this is a codex client hitting /v1/messages. Codex sometimes
+  // switches from /v1/responses to /v1/messages mid-session. When that happens
+  // the Anthropic transformer runs (endpoint = /v1/messages), but the response
+  // needs to be converted to Responses API format for codex to parse it.
+  // We flag the request so processResponseTransformers can apply the conversion.
+  const codexDetected = isCodexClient(req);
+  const isCodexOnMessagesEndpoint =
+    transformer.endPoint === "/v1/messages" &&
+    codexDetected;
+
+  // DEBUG: Set a response header to verify codex detection
+  if (codexDetected) {
+    reply.header("X-Codex-Detected", "true");
+  }
+  if (isCodexOnMessagesEndpoint) {
+    reply.header("X-Codex-On-Messages", "true");
+  }
+
   try {
+    // Normalize Responses API (Codex) format into a unified chat request so
+    // downstream transformers (Anthropic, OpenAI, etc.) can process it.
+    // Codex sends: { model, input: [...], instructions, tools, stream, ... }
+    // We convert to: { model, messages: [...], system, tools, stream, ... }
+    if (transformer.endPoint === "/v1/responses" && body.input && !body.messages) {
+      const messages: any[] = [];
+      const input = Array.isArray(body.input) ? body.input : [body.input];
+      for (const item of input) {
+        if (item.type === "function_call") {
+          messages.push({
+            role: "assistant",
+            tool_calls: [{
+              id: item.call_id,
+              type: "function",
+              function: { name: item.name, arguments: item.arguments || "{}" },
+            }],
+          });
+        } else if (item.type === "function_call_output") {
+          messages.push({
+            role: "tool",
+            tool_call_id: item.call_id,
+            content: typeof item.output === "string" ? item.output : JSON.stringify(item.output),
+          });
+        } else if (item.role) {
+          // user / assistant / system messages
+          let content = item.content;
+          // Convert Responses API content format to unified format
+          if (Array.isArray(content)) {
+            content = content.map((c: any) => {
+              if (c.type === "input_text") return { type: "text", text: c.text };
+              if (c.type === "output_text") return { type: "text", text: c.text };
+              if (c.type === "input_image") return { type: "image_url", image_url: { url: c.image_url }, media_type: c.mime_type };
+              return c;
+            });
+          }
+          messages.push({ role: item.role, content });
+        }
+      }
+      body.messages = messages;
+      delete body.input;
+      // Move instructions to system
+      if (body.instructions && typeof body.instructions === "string") {
+        body.system = body.instructions;
+        delete body.instructions;
+      }
+      // Normalize tools from Responses API format to OpenAI format
+      if (Array.isArray(body.tools)) {
+        body.tools = body.tools
+          .filter((tool: any) => tool && typeof tool === "object")
+          .map((tool: any) => {
+            // Responses API tools: { type: "function", name: "X", description: "...", parameters: {...} }
+            if (tool.type === "function" && tool.name && !tool.function) {
+              return {
+                type: "function",
+                function: {
+                  name: tool.name,
+                  description: tool.description || "",
+                  parameters: tool.parameters || { type: "object", properties: {} },
+                },
+              };
+            }
+            // Standard OpenAI format already
+            if (tool.function?.name) {
+              return tool;
+            }
+            // Codex web_search tool
+            if (tool.type === "web_search") {
+              return {
+                type: "function",
+                function: {
+                  name: "web_search",
+                  description: "Search the web",
+                  parameters: { type: "object", properties: { query: { type: "string" } } },
+                },
+              };
+            }
+            // Drop malformed tools rather than crashing downstream
+            return null;
+          })
+          .filter(Boolean);
+      }
+      // Normalize reasoning
+      if (body.reasoning && typeof body.reasoning === "object") {
+        body.reasoning = { enabled: true, effort: body.reasoning.effort };
+      }
+    }
+
     // Process request transformer chain
     const { requestBody, config, bypass } = await processRequestTransformers(
       body,
@@ -72,6 +226,32 @@ async function handleTransformerEndpoint(
         req,
       }
     );
+
+    // Move system messages to the end of the messages array and dedupe exact
+    // repeats so the conversation prefix stays stable for upstream prompt caching.
+    // Claude Code may append identical reminder system messages every few turns;
+    // if those are sent as a growing list, OpenAI-compatible providers can miss
+    // prompt cache even though the user/assistant prefix did not change.
+    if (requestBody?.messages && !bypass && !(req as any).isTargetAnthropic) {
+      const msgs = requestBody.messages;
+      const seenSystem = new Set<string>();
+      const systemMsgs: any[] = [];
+      const otherMsgs: any[] = [];
+      for (const message of msgs) {
+        if (message?.role !== "system") {
+          otherMsgs.push(message);
+          continue;
+        }
+        const key = JSON.stringify(message.content ?? "");
+        if (!seenSystem.has(key)) {
+          seenSystem.add(key);
+          systemMsgs.push(message);
+        }
+      }
+      if (systemMsgs.length > 0 && otherMsgs.length > 0) {
+        requestBody.messages = [...otherMsgs, ...systemMsgs];
+      }
+    }
 
     // Send request to LLM provider
     const response = await sendRequestToProvider(
@@ -94,7 +274,7 @@ async function handleTransformerEndpoint(
     } catch {}
 
     // Process response transformer chain
-    const finalResponse = await processResponseTransformers(
+    let finalResponse = await processResponseTransformers(
       requestBody,
       response,
       provider,
@@ -102,8 +282,80 @@ async function handleTransformerEndpoint(
       bypass,
       {
         req,
+        isCodexOnMessagesEndpoint,
       }
     );
+
+    // Validate streaming responses have data before forwarding.
+    // When GLM/Zhipu returns an empty 200 SSE (e.g. rate-limited or overloaded),
+    // the Anthropic-transformed stream lacks message_start, causing Claude Code's
+    // SDK to report "empty or malformed response". We detect this early and throw
+    // so that the fallback mechanism can try another model instead.
+    if (body.stream && finalResponse?.body) {
+      const reader = finalResponse.body.getReader();
+      const firstResult = await reader.read();
+      if (firstResult.done) {
+        reader.releaseLock();
+        throw createApiError(
+          `Provider returned empty streaming response from ${providerName}`,
+          400,
+          "provider_response_error"
+        );
+      }
+      const firstChunkText = new TextDecoder().decode(firstResult.value);
+      // Check if the first chunk contains an SSE error event (e.g. GLM/Zhipu
+      // returning error JSON inside the SSE stream). Throw to trigger fallback.
+      if (firstChunkText.includes("event: error")) {
+        reader.releaseLock();
+        const errMsg = firstChunkText.length < 500 ? firstChunkText : firstChunkText.slice(0, 500);
+        throw createApiError(
+          `Provider ${providerName} returned error in SSE stream: ${errMsg}`,
+          400,
+          "provider_response_error"
+        );
+      }
+      // Check if the first chunk has no meaningful SSE data lines.
+      // Some providers (e.g. GLM) return HTTP 200 with whitespace-only or
+      // empty SSE that passes the "done" check but contains no actual content.
+      // Detect this and throw to trigger fallback instead of forwarding garbage.
+      const dataLines = firstChunkText.split('\n').filter(
+        (line: string) => line.startsWith('data:') && line.trim().length > 5
+      );
+      if (dataLines.length === 0) {
+        reader.releaseLock();
+        const preview = firstChunkText.length < 500 ? firstChunkText : firstChunkText.slice(0, 500);
+        throw createApiError(
+          `Provider ${providerName} returned streaming response with no SSE data lines: ${preview}`,
+          400,
+          "provider_response_error"
+        );
+      }
+      // Reconstruct the stream from the peeked first chunk + remaining data
+      const remainingStream = new ReadableStream({
+        start: (controller) => {
+          controller.enqueue(firstResult.value!);
+          const pump = () => {
+            reader.read().then(({ done, value }) => {
+              if (done) {
+                controller.close();
+              } else {
+                controller.enqueue(value);
+                pump();
+              }
+            }).catch((err) => controller.error(err));
+          };
+          pump();
+        },
+        cancel: () => {
+          reader.cancel();
+        },
+      });
+      finalResponse = new Response(remainingStream, {
+        headers: finalResponse.headers,
+        status: finalResponse.status,
+        statusText: finalResponse.statusText,
+      });
+    }
 
     const result = formatResponse(finalResponse, reply, body, fastify);
 
@@ -147,8 +399,24 @@ async function handleFallback(
   const originalModel = (req.body as any).model || "";
   const attemptedFallbacks = new Set<string>();
 
+  // Hoisted so the fallback-success path below (which calls forceOpen) can skip
+  // forceOpen for rate-limit errors — markRateLimited already set rateLimitUntil,
+  // and forceOpen would delete it.
+  const isRateLimit = error?.statusCode === 429 ||
+    error?.isRateLimit === true ||
+    (error?.rawBody && isRateLimitError(error.rawBody)) ||
+    (error?.message && isRateLimitError(error.message));
+
   if (originalProvider && originalModel) {
-    healthStore.recordFailure(originalProvider, originalModel, error?.message);
+    // Use markRateLimited for rate-limit errors instead of recordFailure
+    // so the model is immediately isolated (bypassing the 3-failure threshold)
+    // and auto-recovers after a cooldown period.
+    if (isRateLimit) {
+      healthStore.markRateLimited(originalProvider, originalModel, 120, error?.message);
+      req.log.warn(`Primary model ${originalProvider},${originalModel} rate-limited, will try fallbacks`);
+    } else {
+      healthStore.recordFailure(originalProvider, originalModel, error?.message);
+    }
     attemptedFallbacks.add(`${originalProvider},${originalModel}`);
 
     // Record failed primary model attempt in usage stats
@@ -209,7 +477,33 @@ async function handleFallback(
     });
   }
 
-
+  // Safety net: if request contains images but no fallback was found for the
+  // current scenarioType, also try fallback.image. This covers edge cases
+  // where scenarioType wasn't set to 'image' by the router.
+  if (fallbackStages.length === 0 && scenarioType !== 'image') {
+    const body = req.body as any;
+    const hasImages = body?.messages?.some(
+      (msg: any) =>
+        msg.role === "user" &&
+        Array.isArray(msg.content) &&
+        msg.content.some(
+          (item: any) =>
+            item.type === "image" ||
+            item.type === "image_url" ||
+            (Array.isArray(item?.content) &&
+              item.content.some(
+                (sub: any) => sub.type === "image" || sub.type === "image_url"
+              ))
+        )
+    );
+    if (hasImages && Array.isArray(globalFallback?.image) && globalFallback.image.length > 0) {
+      req.log.info(`No fallback for scenario '${scenarioType}', but request has images — trying fallback.image`);
+      fallbackStages.push({
+        name: 'global/image (auto-detected)',
+        models: globalFallback.image,
+      });
+    }
+  }
 
   if (fallbackStages.length === 0) {
     return null;
@@ -324,9 +618,15 @@ async function handleFallback(
           req.log.info(`Promoted fallback model ${fallbackProvider},${model} for ${originalProvider},${originalModel}:${scenarioType}`);
 
           // Immediately mark the original model as unavailable so routing skips it
-          // even when promotion TTL expires or is cleared
-          healthStore.forceOpen(originalProvider, originalModel, error?.message);
-          req.log.info(`Marked original model ${originalProvider},${originalModel} as unavailable`);
+          // even when promotion TTL expires or is cleared.
+          // SKIP forceOpen for rate-limit errors — markRateLimited was already called
+          // above and set rateLimitUntil; forceOpen would delete that cooldown timestamp.
+          if (!isRateLimit) {
+            healthStore.forceOpen(originalProvider, originalModel, error?.message);
+            req.log.info(`Marked original model ${originalProvider},${originalModel} as unavailable`);
+          } else {
+            req.log.info(`Rate-limited original model ${originalProvider},${originalModel} already marked unavailable with cooldown`);
+          }
         }
 
         // Write back to original req so onResponse hook records correct provider/model
@@ -376,6 +676,30 @@ async function processRequestTransformers(
   // Deep clone the request body to preserve original messages for caching
   // and to ensure thinking blocks are not lost when switching between models
   let requestBody = JSON.parse(JSON.stringify(body));
+
+  // Normalize per-request "cch=xxx;" hash in billing header system messages.
+  // Claude Code injects a rotating hash (cch=...) that changes every request,
+  // breaking prompt cache prefix matching on upstream providers like GLM.
+  // Keep the field shape but replace the value with a stable token.
+  // Must run BEFORE transformers which may restructure system into messages.
+  const sys = requestBody?.system;
+  if (typeof sys === "string" && sys.includes("cch=")) {
+    requestBody.system = sys.replace(/cch=[^;]+;?/g, "cch=ccr-stable;");
+  } else if (Array.isArray(sys)) {
+    for (let i = 0; i < sys.length; i++) {
+      const item = sys[i];
+      const t = typeof item === "string" ? item : (item?.text ?? "");
+      if (t.includes("cch=")) {
+        const cleaned = t.replace(/cch=[^;]+;?/g, "cch=ccr-stable;");
+        if (typeof item === "string") {
+          sys[i] = cleaned;
+        } else if (typeof item?.text === "string") {
+          item.text = cleaned;
+        }
+      }
+    }
+  }
+
   let config: any = {};
   let bypass = false;
 
@@ -454,10 +778,12 @@ function shouldBypassTransformers(
   transformer: any,
   body: any
 ): boolean {
-  // If the request contains system messages in the messages array, we cannot bypass
-  // because Anthropic-compatible targets do not support system messages in the messages array.
-  const hasSystemMessage = body?.messages?.some((msg: any) => msg.role === "system");
-  if (hasSystemMessage) {
+  // If the target API is OpenAI-compatible (/v1/chat/completions) but the system field
+  // is an object array (Anthropic format), we must process the request through
+  // transformers to convert system array into messages[0] with role=system.
+  // Without this conversion, the system prompt is silently dropped by the
+  // OpenAI-compatible API, which prevents prefix-based prompt caching.
+  if (transformer.endPoint === "/v1/chat/completions" && Array.isArray(body?.system)) {
     return false;
   }
 
@@ -468,6 +794,26 @@ function shouldBypassTransformers(
       (provider.transformer?.[body.model]?.use.length === 1 &&
         provider.transformer?.[body.model]?.use[0].name === transformer.name))
   );
+}
+
+/**
+ * Detect if the request comes from a codex (OpenAI Codex CLI) client.
+ * Codex sometimes switches from /v1/responses to /v1/messages mid-session,
+ * so we need to detect it regardless of which endpoint it hits.
+ */
+function isCodexClient(req: any): boolean {
+  const headers = req.headers || {};
+  const userAgent = headers["user-agent"] || "";
+  if (typeof userAgent === "string" && /codex/i.test(userAgent)) {
+    return true;
+  }
+  // Check model name — codex typically sends model names like gpt-5.x-xhigh
+  // or uses the codex provider
+  const model = req.body?.model || "";
+  if (typeof model === "string" && /gpt-5\.\d+-(xhigh|mini|fast|codex)/i.test(model)) {
+    return true;
+  }
+  return false;
 }
 
 /**
@@ -567,17 +913,31 @@ async function sendRequestToProvider(
       response.status,
       "provider_response_error"
     );
+    (error as any).isRateLimit = response.status === 429 || isRateLimitError(errorText);
     error.rawBody = errorText;
     throw error;
   }
 
-  // Handle hidden errors in HTTP 200 OK responses (e.g. Zhipu rate limits)
+  // Handle hidden errors in HTTP 200 OK responses (e.g. Zhipu rate limits, empty bodies)
   if (response.ok) {
     const contentType = response.headers.get("content-type") || "";
-    if (contentType.includes("application/json")) {
+    const isStreamRequest = requestBody.stream === true;
+    // DEBUG: log response metadata to diagnose why empty responses bypass checks
+    fastify.log.info(
+      `[hidden-error-check] provider=${provider.name} model=${requestBody.model} stream=${requestBody.stream} isStreamRequest=${isStreamRequest} contentType=${contentType} ok=${response.ok} status=${response.status} hasBody=${!!response.body}`
+    );
+    // For non-streaming requests, always validate the response body regardless
+    // of content-type. Some providers return 200 with empty body or non-JSON
+    // content-type (e.g. text/event-stream for non-streaming requests), which
+    // would bypass the JSON-only hidden error check and forward garbage to the client.
+    if (!isStreamRequest || contentType.includes("application/json")) {
       const cloned = response.clone();
+      let bodyText = "";
       try {
-        const bodyText = await cloned.text();
+        bodyText = await cloned.text();
+        if (!bodyText || bodyText.trim() === "") {
+          throw new SyntaxError("Empty JSON body");
+        }
         const bodyJson = JSON.parse(bodyText);
         // Check if the response contains an error object
         if (bodyJson && typeof bodyJson === 'object' && bodyJson.error) {
@@ -590,18 +950,38 @@ async function sendRequestToProvider(
             fastify.log.error(
               `[provider_response_error] Hidden error from provider(${provider.name},${requestBody.model}: ${response.status}): ${bodyText}`,
             );
+            // Classify as rate-limit when error text contains relevant keywords
+            const isRateLimit = isRateLimitError(bodyText);
             const error = createApiError(
               `Error from provider(${provider.name},${requestBody.model}: ${response.status}): ${bodyText}`,
               // Promote to 400 to trigger fallback and correct usage logging
               400,
               "provider_response_error"
             );
+            (error as any).isRateLimit = isRateLimit;
             error.rawBody = bodyText;
             throw error;
           }
         }
       } catch (e) {
-        // Ignore JSON parse errors or other issues, let it pass through
+        // Empty or malformed JSON body on HTTP 200 — the provider returned an
+        // invalid response. Throw to trigger fallback instead of forwarding
+        // the empty response to the client, which would cause a different error.
+        if (e instanceof SyntaxError) {
+          fastify.log.warn(
+            `[provider_response_error] Empty or malformed JSON response from provider(${provider.name},${requestBody.model}: 200): "${bodyText}"`
+          );
+          const error = createApiError(
+            `API returned an empty or malformed response (HTTP 200) from ${provider.name} — check for a proxy or gateway intercepting the request`,
+            400,
+            "provider_response_error"
+          );
+          error.rawBody = bodyText;
+          throw error;
+        }
+        // For non-SyntaxError exceptions (e.g. network issues reading cloned body),
+        // re-throw so they propagate and trigger fallback too.
+        throw e;
       }
     }
   }
@@ -672,10 +1052,28 @@ async function processResponseTransformers(
 
   // Execute transformer's transformResponseIn method
   if (!bypass && transformer.transformResponseIn) {
+    // Expose provider to transformer so it can read cacheMode for usage translation
+    if (!context.provider) context.provider = provider;
     finalResponse = await transformer.transformResponseIn(
       finalResponse,
       context
     );
+  }
+
+  // When a codex client sends requests to /v1/messages (instead of /v1/responses),
+  // the response is in Anthropic SSE format which codex cannot parse. Apply the
+  // Responses API conversion so codex can display the response correctly.
+  if (context?.isCodexOnMessagesEndpoint) {
+    try {
+      const responsesTransformer = new OpenAIResponsesTransformer();
+      finalResponse = await responsesTransformer.transformResponseIn(
+        finalResponse,
+        { ...context, provider }
+      );
+    } catch (e) {
+      // If the conversion fails, fall through and return the original response
+      console.error("Failed to apply Responses API conversion for codex client:", e);
+    }
   }
 
   return finalResponse;
@@ -738,6 +1136,7 @@ export const registerApiRoutes = async (
         successCount: s.successCount,
         lastFailureTime: s.lastFailureTime,
         lastError: s.lastError,
+        rateLimitUntil: s.rateLimitUntil ?? null,
       })),
       timestamp: new Date().toISOString(),
     };
@@ -949,6 +1348,26 @@ export const registerApiRoutes = async (
     }
   );
 };
+
+/**
+ * Check if an error message or response body indicates a rate-limit error.
+ * Matches common patterns across providers (OpenAI, GLM/Zhipu, Anthropic, etc.).
+ */
+function isRateLimitError(text: string): boolean {
+  const lower = text.toLowerCase();
+  return (
+    lower.includes('rate limit') ||
+    lower.includes('rate_limit') ||
+    lower.includes('rate_limit_error') ||
+    lower.includes('too many requests') ||
+    lower.includes('too many') ||
+    lower.includes('quota exhausted') ||
+    lower.includes('qps_limit') ||
+    lower.includes('token_limit') ||
+    lower.includes('限流') ||
+    lower.includes('频率限制')
+  );
+}
 
 // Helper function
 function isValidUrl(url: string): boolean {

@@ -635,6 +635,504 @@ export class OpenAIResponsesTransformer implements Transformer {
     return null;
   }
 
+  async transformResponseIn(
+    response: Response,
+    context?: any
+  ): Promise<Response> {
+    const isStream = response.headers
+      .get("Content-Type")
+      ?.includes("text/event-stream");
+    if (isStream && response.body) {
+      // Peek at the first SSE event to detect the format (Anthropic vs OpenAI Chat)
+      // and route to the appropriate converter.
+      const [peekStream, bodyStream] = response.body.tee();
+      const reader = peekStream.getReader();
+      let firstChunk = "";
+      try {
+        const { value, done } = await reader.read();
+        if (!done && value) {
+          firstChunk = new TextDecoder().decode(value);
+        }
+      } finally {
+        reader.releaseLock();
+      }
+      // Cancel the peek stream — we only need bodyStream
+      peekStream.cancel().catch(() => {});
+
+      // Detect Anthropic SSE by looking for "type":"message_start" or "type":"content_block_start"
+      const isAnthropic = firstChunk.includes("message_start") || firstChunk.includes("content_block_start");
+      // Detect OpenAI Chat SSE by looking for "object":"chat.completion.chunk"
+      const isOpenAIChat = firstChunk.includes("chat.completion.chunk");
+
+      if (isOpenAIChat && !isAnthropic) {
+        // OpenAI Chat SSE → Responses API SSE
+        // We need to prepend the peeked chunk back onto the stream
+        const combinedStream = this.prependToStream(firstChunk, bodyStream);
+        const converted = this.convertOpenAIChatStreamToResponsesAPI(combinedStream, context);
+        return new Response(converted, {
+          headers: {
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            Connection: "keep-alive",
+          },
+        });
+      }
+
+      // Default: treat as Anthropic SSE → Responses API SSE
+      const combinedStream = this.prependToStream(firstChunk, bodyStream);
+      const converted = this.convertAnthropicStreamToResponsesAPI(combinedStream, context);
+      return new Response(converted, {
+        headers: {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          Connection: "keep-alive",
+        },
+      });
+    }
+    // Non-stream: assume OpenAI Chat JSON → wrap in Responses API shape
+    try {
+      const json = await response.json();
+      return new Response(JSON.stringify(this.wrapChatInResponses(json)), {
+        headers: { "Content-Type": "application/json" },
+      });
+    } catch {
+      return response;
+    }
+  }
+
+  /**
+   * Prepend a string chunk to the beginning of an existing ReadableStream.
+   * Used when we've peeked at the first chunk and need to feed it back into
+   * the converter along with the rest of the stream.
+   */
+  private prependToStream(firstChunk: string, rest: ReadableStream): ReadableStream {
+    const encoder = new TextEncoder();
+    const firstBytes = encoder.encode(firstChunk);
+    const reader = rest.getReader();
+    let firstEmitted = false;
+
+    return new ReadableStream({
+      async pull(controller) {
+        if (!firstEmitted) {
+          firstEmitted = true;
+          controller.enqueue(firstBytes);
+        }
+        try {
+          const { done, value } = await reader.read();
+          if (done) {
+            controller.close();
+          } else {
+            controller.enqueue(value);
+          }
+        } catch (e) {
+          controller.error(e);
+        }
+      },
+      cancel() {
+        reader.cancel().catch(() => {});
+      },
+    });
+  }
+
+  /**
+   * Convert an OpenAI Chat SSE stream to Responses API SSE events.
+   * Handles choices[0].delta.content, choices[0].delta.tool_calls, and finish_reason.
+   */
+  private convertOpenAIChatStreamToResponsesAPI(
+    stream: ReadableStream,
+    context?: any
+  ): ReadableStream {
+    const decoder = new TextDecoder();
+    const encoder = new TextEncoder();
+    const model = (context?.provider?.models?.[0]) || "gpt-5.4";
+    const responseId = `resp_${Date.now()}`;
+    let outputIndex = 0;
+    let sentCreated = false;
+    let sentTextItemAdded = false;
+    let currentToolCallId = "";
+    let currentToolIndex = -1;
+    const outputItems: any[] = [];
+
+    return new ReadableStream({
+      async start(controller) {
+        try {
+          const reader = stream.getReader();
+          let buffer = "";
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            buffer = lines.pop() || "";
+
+            for (const line of lines) {
+              const trimmed = line.trim();
+              if (!trimmed || trimmed.startsWith("event:")) continue;
+              if (!trimmed.startsWith("data:")) continue;
+
+              const raw = trimmed.slice(5).trim();
+              if (raw === "[DONE]") {
+                // Emit response.completed if not already emitted
+                controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+                continue;
+              }
+
+              let data: any;
+              try { data = JSON.parse(raw); } catch { continue; }
+
+              // Emit response.created on first chunk
+              if (!sentCreated) {
+                sentCreated = true;
+                controller.enqueue(encoder.encode(
+                  `data: ${JSON.stringify({ type: "response.created", response: { id: responseId, model } })}\n\n`
+                ));
+                controller.enqueue(encoder.encode(
+                  `data: ${JSON.stringify({ type: "response.in_progress", response: { id: responseId, model } })}\n\n`
+                ));
+              }
+
+              const choice = data.choices?.[0];
+              if (!choice) continue;
+
+              // Handle text content delta
+              const delta = choice.delta;
+              if (delta?.content) {
+                if (!sentTextItemAdded) {
+                  sentTextItemAdded = true;
+                  const idx = outputIndex++;
+                  const item = { id: `${responseId}-text`, type: "message", role: "assistant", content: [] };
+                  outputItems.push(item);
+                  controller.enqueue(encoder.encode(
+                    `data: ${JSON.stringify({ type: "response.output_item.added", response_id: responseId, output_index: idx, item })}\n\n`
+                  ));
+                }
+                controller.enqueue(encoder.encode(
+                  `data: ${JSON.stringify({ type: "response.output_text.delta", item_id: `${responseId}-text`, output_index: outputIndex - 1, content_index: 0, delta: delta.content })}\n\n`
+                ));
+              }
+
+              // Handle tool calls
+              if (Array.isArray(delta?.tool_calls)) {
+                for (const tc of delta.tool_calls) {
+                  if (tc.id) {
+                    // New tool call started
+                    currentToolCallId = tc.id;
+                    currentToolIndex = outputIndex++;
+                    const item = { id: tc.id, type: "function_call", call_id: tc.id, name: tc.function?.name || "", arguments: "" };
+                    outputItems.push(item);
+                    controller.enqueue(encoder.encode(
+                      `data: ${JSON.stringify({ type: "response.output_item.added", response_id: responseId, output_index: currentToolIndex, item })}\n\n`
+                    ));
+                  }
+                  if (tc.function?.arguments) {
+                    controller.enqueue(encoder.encode(
+                      `data: ${JSON.stringify({ type: "response.function_call_arguments.delta", item_id: currentToolCallId, output_index: currentToolIndex, delta: tc.function.arguments })}\n\n`
+                    ));
+                    // Accumulate args
+                    const existing = outputItems.find((o: any) => o.call_id === currentToolCallId);
+                    if (existing) existing.arguments += tc.function.arguments;
+                  }
+                }
+              }
+
+              // Handle finish_reason → response.completed
+              if (choice.finish_reason) {
+                const finalOutput = outputItems.map((item: any) => item);
+                controller.enqueue(encoder.encode(
+                  `data: ${JSON.stringify({
+                    type: "response.completed",
+                    response: {
+                      id: responseId,
+                      model: data.model || model,
+                      output: finalOutput,
+                      usage: data.usage ? {
+                        input_tokens: data.usage.prompt_tokens || 0,
+                        output_tokens: data.usage.completion_tokens || 0,
+                        total_tokens: data.usage.total_tokens || 0,
+                      } : undefined,
+                    },
+                  })}\n\n`
+                ));
+              }
+            }
+          }
+
+          controller.close();
+        } catch (e) {
+          controller.error(e);
+        }
+      },
+    });
+  }
+
+  private convertAnthropicStreamToResponsesAPI(
+    stream: ReadableStream,
+    context?: any
+  ): ReadableStream {
+    const decoder = new TextDecoder();
+    const encoder = new TextEncoder();
+    const model = (context?.provider?.models?.[0]) || "gpt-5.4";
+    let responseId = `resp_${Date.now()}`;
+    let textContent = "";
+    let toolCallId = "";
+    let toolCallName = "";
+    let toolCallArgs = "";
+    let thinkingContent = "";
+    let outputIndex = 0;
+    let sentTextItemAdded = false;
+    let sentThinkingItemAdded = false;
+    // Track which content block type we're currently inside so content_block_stop
+    // can finalize tool-use arguments correctly.
+    let currentBlockType: "text" | "thinking" | "tool_use" | null = null;
+    // Accumulate output items for the final response.completed event.
+    const outputItems: any[] = [];
+
+    return new ReadableStream({
+      async start(controller) {
+        try {
+          const reader = stream.getReader();
+          let buffer = "";
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            buffer = lines.pop() || "";
+
+            for (const line of lines) {
+              const trimmed = line.trim();
+              if (!trimmed || trimmed.startsWith("event:")) continue;
+              if (!trimmed.startsWith("data:")) continue;
+
+              const raw = trimmed.slice(5).trim();
+              if (raw === "[DONE]") continue;
+
+              let data: any;
+              try { data = JSON.parse(raw); } catch { continue; }
+
+              if (data.type === "message_start") {
+                responseId = data.message?.id || responseId;
+                controller.enqueue(encoder.encode(
+                  `data: ${JSON.stringify({ type: "response.created", response: { id: responseId, model } })}\n\n`
+                ));
+                controller.enqueue(encoder.encode(
+                  `data: ${JSON.stringify({ type: "response.in_progress", response: { id: responseId, model } })}\n\n`
+                ));
+              }
+
+              if (data.type === "content_block_start") {
+                const block = data.content_block;
+                currentBlockType = block?.type || null;
+                if (block?.type === "tool_use") {
+                  toolCallId = block.id || "";
+                  toolCallName = block.name || "";
+                  toolCallArgs = "";
+                  const idx = outputIndex++;
+                  const item = { id: toolCallId, type: "function_call", call_id: toolCallId, name: toolCallName, arguments: "" };
+                  outputItems.push(item);
+                  controller.enqueue(encoder.encode(
+                    `data: ${JSON.stringify({
+                      type: "response.output_item.added",
+                      response_id: responseId,
+                      output_index: idx,
+                      item,
+                    })}\n\n`
+                  ));
+                }
+                if (block?.type === "thinking") {
+                  thinkingContent = block.thinking || "";
+                  if (!sentThinkingItemAdded) {
+                    sentThinkingItemAdded = true;
+                    const idx = outputIndex++;
+                    const item = { id: `${responseId}-reasoning`, type: "reasoning_summary", summary: thinkingContent };
+                    outputItems.push(item);
+                    controller.enqueue(encoder.encode(
+                      `data: ${JSON.stringify({
+                        type: "response.output_item.added",
+                        response_id: responseId,
+                        output_index: idx,
+                        item,
+                      })}\n\n`
+                    ));
+                  }
+                }
+                if (block?.type === "text") {
+                  textContent = block?.text || "";
+                  if (!sentTextItemAdded && block?.text !== undefined) {
+                    sentTextItemAdded = true;
+                    const idx = outputIndex++;
+                    const item = { id: `${responseId}-text`, type: "message", role: "assistant", content: [] };
+                    outputItems.push(item);
+                    controller.enqueue(encoder.encode(
+                      `data: ${JSON.stringify({
+                        type: "response.output_item.added",
+                        response_id: responseId,
+                        output_index: idx,
+                        item,
+                      })}\n\n`
+                    ));
+                  }
+                }
+              }
+
+              if (data.type === "content_block_delta") {
+                const delta = data.delta;
+                if (delta?.type === "text_delta") {
+                  textContent += delta.text || "";
+                  if (!sentTextItemAdded) {
+                    sentTextItemAdded = true;
+                    const idx = outputIndex++;
+                    const item = { id: `${responseId}-text`, type: "message", role: "assistant", content: [] };
+                    outputItems.push(item);
+                    controller.enqueue(encoder.encode(
+                      `data: ${JSON.stringify({
+                        type: "response.output_item.added",
+                        response_id: responseId,
+                        output_index: idx,
+                        item,
+                      })}\n\n`
+                    ));
+                  }
+                  controller.enqueue(encoder.encode(
+                    `data: ${JSON.stringify({
+                      type: "response.output_text.delta",
+                      item_id: `${responseId}-text`,
+                      output_index: outputIndex - 1,
+                      content_index: 0,
+                      delta: delta.text || "",
+                    })}\n\n`
+                  ));
+                }
+                if (delta?.type === "thinking_delta") {
+                  thinkingContent += delta.thinking || "";
+                  controller.enqueue(encoder.encode(
+                    `data: ${JSON.stringify({
+                      type: "response.reasoning_summary_text.delta",
+                      item_id: `${responseId}-reasoning`,
+                      output_index: outputIndex - 1,
+                      content_index: 0,
+                      delta: delta.thinking || "",
+                    })}\n\n`
+                  ));
+                }
+                if (delta?.type === "input_json_delta") {
+                  toolCallArgs += delta.partial_json || "";
+                  controller.enqueue(encoder.encode(
+                    `data: ${JSON.stringify({
+                      type: "response.function_call_arguments.delta",
+                      item_id: toolCallId || `${responseId}-tool`,
+                      output_index: outputIndex - 1,
+                      delta: delta.partial_json || "",
+                    })}\n\n`
+                  ));
+                }
+              }
+
+              if (data.type === "content_block_stop") {
+                // Finalize tool-use arguments when the tool_use block ends.
+                // Emit a function_call_arguments.done event with the complete
+                // assembled arguments so Codex knows the argument stream is
+                // complete. Also update the outputItems entry with the full args.
+                if (currentBlockType === "tool_use" && toolCallId) {
+                  controller.enqueue(encoder.encode(
+                    `data: ${JSON.stringify({
+                      type: "response.function_call_arguments.done",
+                      item_id: toolCallId,
+                      output_index: outputIndex - 1,
+                      delta: toolCallArgs,
+                    })}\n\n`
+                  ));
+                  // Update the accumulated output item with the full arguments
+                  const existingItem = outputItems.find((o: any) => o.call_id === toolCallId);
+                  if (existingItem) {
+                    existingItem.arguments = toolCallArgs;
+                  }
+                }
+                currentBlockType = null;
+              }
+
+              if (data.type === "message_delta") {
+                const usage = data.usage;
+                // Build the final output array for response.completed.
+                // For text items, include the full text content.
+                const finalOutput = outputItems.map((item: any) => {
+                  if (item.type === "message" && item.role === "assistant") {
+                    return { ...item, content: [{ type: "output_text", text: textContent }] };
+                  }
+                  return item;
+                });
+                controller.enqueue(encoder.encode(
+                  `data: ${JSON.stringify({
+                    type: "response.completed",
+                    response: {
+                      id: responseId,
+                      model,
+                      output: finalOutput,
+                      usage: usage ? {
+                        input_tokens: usage.input_tokens || 0,
+                        output_tokens: usage.output_tokens || 0,
+                        total_tokens: (usage.input_tokens || 0) + (usage.output_tokens || 0),
+                      } : undefined,
+                    },
+                  })}\n\n`
+                ));
+              }
+
+              if (data.type === "message_stop") {
+                controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+              }
+            }
+          }
+
+          buffer = "";
+          controller.close();
+        } catch (e) {
+          controller.error(e);
+        }
+      },
+    });
+  }
+
+  private wrapChatInResponses(chatJson: any): any {
+    const choice = chatJson?.choices?.[0];
+    const output: any[] = [];
+
+    // Text message output
+    const content: any[] = [];
+    if (choice?.message?.content) {
+      content.push({ type: "output_text", text: choice.message.content });
+    }
+    output.push({ type: "message", role: "assistant", content });
+
+    // Function call outputs (tool_calls)
+    if (Array.isArray(choice?.message?.tool_calls)) {
+      for (const tc of choice.message.tool_calls) {
+        output.push({
+          type: "function_call",
+          id: tc.id,
+          call_id: tc.id,
+          name: tc.function?.name || "",
+          arguments: tc.function?.arguments || "{}",
+        });
+      }
+    }
+
+    return {
+      id: chatJson.id || `resp_${Date.now()}`,
+      object: "response",
+      model: chatJson.model,
+      output,
+      usage: chatJson.usage ? {
+        input_tokens: chatJson.usage.prompt_tokens || 0,
+        output_tokens: chatJson.usage.completion_tokens || 0,
+        total_tokens: chatJson.usage.total_tokens || 0,
+      } : undefined,
+    };
+  }
   private convertResponseToChat(responseData: ResponsesAPIPayload): any {
     // 从output数组中提取不同类型的输出
     const messageOutput = responseData.output?.find(

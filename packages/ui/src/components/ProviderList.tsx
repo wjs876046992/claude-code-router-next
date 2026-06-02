@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import { Pencil, Trash2 } from "lucide-react";
+import { Pencil, RefreshCw, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
@@ -12,6 +12,8 @@ interface ProviderListProps {
   onEdit: (index: number) => void;
   onRemove: (index: number) => void;
   onToggle?: (index: number, enabled: boolean) => void;
+  onProbe?: (providerName: string) => void;
+  probingProviders?: Set<string>;
 }
 
 // Get health status for a provider
@@ -217,7 +219,7 @@ function QuotaProgressBar({
   );
 }
 
-export function ProviderList({ providers, healthStates, quotaUsages, onEdit, onRemove, onToggle }: ProviderListProps) {
+export function ProviderList({ providers, healthStates, quotaUsages, onEdit, onRemove, onToggle, onProbe, probingProviders }: ProviderListProps) {
   const { t } = useTranslation();
 
   if (!providers || !Array.isArray(providers)) {
@@ -240,6 +242,8 @@ export function ProviderList({ providers, healthStates, quotaUsages, onEdit, onR
         const models = Array.isArray(provider.models) ? provider.models : [];
         const health = getProviderHealth(providerName, healthStates);
         const quota = quotaUsages?.find(q => q.provider === providerName);
+        const isProbing = probingProviders?.has(providerName) || false;
+        const isEnabled = provider.enabled !== false;
 
         return (
           <div key={index} className="flex items-start justify-between rounded-2xl border border-white/10 bg-white/5 p-5 transition-all hover:bg-white/10 hover:border-primary/30 group animate-in shadow-lg shadow-black/5 glass-card">
@@ -287,22 +291,44 @@ export function ProviderList({ providers, healthStates, quotaUsages, onEdit, onR
               </div>
             </div>
             
-            <div className="ml-4 flex flex-col items-end gap-4 shrink-0">
-              <div className="flex items-center gap-2">
+            <div className="ml-4 flex w-[124px] shrink-0 flex-col items-end gap-3">
+              <div className="flex items-center justify-end gap-1.5">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => onProbe?.(providerName)}
+                  disabled={!isEnabled || isProbing}
+                  className="h-8 w-8 rounded-lg hover:bg-emerald-500/15 hover:text-emerald-600 disabled:opacity-40"
+                  title={t("providers.probe_provider", { defaultValue: "Refresh provider" })}
+                >
+                  <RefreshCw className={`h-4 w-4 ${isProbing ? "animate-spin" : ""}`} />
+                </Button>
                 <span className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider">
-                  {provider.enabled !== false ? t("providers.enabled", { defaultValue: "Active" }) : t("providers.disabled", { defaultValue: "Disabled" })}
+                  {isEnabled ? t("providers.enabled", { defaultValue: "Active" }) : t("providers.disabled", { defaultValue: "Disabled" })}
                 </span>
                 <Switch
-                  checked={provider.enabled !== false}
+                  checked={isEnabled}
                   onCheckedChange={(checked) => onToggle?.(index, checked)}
                 />
               </div>
-              <HealthIndicator status={provider.enabled !== false ? health.status : 'unknown'} />
-              <div className="flex flex-col gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                <Button variant="ghost" size="icon" onClick={() => onEdit(index)} className="h-9 w-9 rounded-lg hover:bg-primary/20 hover:text-primary">
+              <HealthIndicator status={isEnabled ? health.status : 'unknown'} />
+              <div className="grid grid-cols-2 gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => onEdit(index)}
+                  className="h-8 w-8 rounded-lg hover:bg-primary/20 hover:text-primary"
+                  title={t("common.edit", { defaultValue: "Edit" })}
+                >
                   <Pencil className="h-4 w-4" />
                 </Button>
-                <Button variant="destructive" size="icon" onClick={() => onRemove(index)} className="h-9 w-9 rounded-lg opacity-80 hover:opacity-100">
+                <Button
+                  variant="destructive"
+                  size="icon"
+                  onClick={() => onRemove(index)}
+                  className="h-8 w-8 rounded-lg opacity-80 hover:opacity-100"
+                  title={t("common.delete", { defaultValue: "Delete" })}
+                >
                   <Trash2 className="h-4 w-4" />
                 </Button>
               </div>

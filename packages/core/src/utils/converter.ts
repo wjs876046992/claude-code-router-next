@@ -20,22 +20,26 @@ function log(...args: any[]) {
 export function convertToolsToOpenAI(
   tools: UnifiedTool[]
 ): ChatCompletionTool[] {
-  return tools.map((tool) => ({
-    type: "function" as const,
-    function: {
-      name: tool.function.name,
-      description: tool.function.description,
-      parameters: tool.function.parameters,
-    },
-  }));
+  return tools
+    .filter((tool): tool is UnifiedTool => !!tool?.function?.name)
+    .map((tool) => ({
+      type: "function" as const,
+      function: {
+        name: tool.function.name,
+        description: tool.function.description,
+        parameters: tool.function.parameters,
+      },
+    }));
 }
 
 export function convertToolsToAnthropic(tools: UnifiedTool[]): AnthropicTool[] {
-  return tools.map((tool) => ({
-    name: tool.function.name,
-    description: tool.function.description,
-    input_schema: tool.function.parameters,
-  }));
+  return tools
+    .filter((tool): tool is UnifiedTool => !!tool?.function?.name)
+    .map((tool) => ({
+      name: tool.function.name,
+      description: tool.function.description,
+      input_schema: tool.function.parameters,
+    }));
 }
 
 export function convertToolsFromOpenAI(
@@ -64,6 +68,23 @@ export function convertToolsFromAnthropic(
   }));
 }
 
+function stripCacheControl(msg: any): any {
+  if (!msg) return msg;
+  const result = { ...msg };
+  delete result.cache_control;
+  if (Array.isArray(result.content)) {
+    result.content = result.content.map((block: any) => {
+      if (block && typeof block === "object") {
+        const cleaned = { ...block };
+        delete cleaned.cache_control;
+        return cleaned;
+      }
+      return block;
+    });
+  }
+  return result;
+}
+
 export function convertToOpenAI(
   request: UnifiedChatRequest
 ): OpenAIChatRequest {
@@ -75,11 +96,13 @@ export function convertToOpenAI(
       if (!toolResponsesQueue.has(msg.tool_call_id)) {
         toolResponsesQueue.set(msg.tool_call_id, []);
       }
-      toolResponsesQueue.get(msg.tool_call_id).push({
-        role: "tool",
-        content: msg.content,
-        tool_call_id: msg.tool_call_id,
-      });
+      toolResponsesQueue.get(msg.tool_call_id).push(
+        stripCacheControl({
+          role: "tool",
+          content: msg.content,
+          tool_call_id: msg.tool_call_id,
+        })
+      );
     }
   });
 
@@ -100,16 +123,9 @@ export function convertToOpenAI(
         });
       }
     } else {
-      otherMessages.push(msg);
+      otherMessages.push(stripCacheControl(msg));
     }
   });
-
-  if (systemContents.length > 0) {
-    messages.push({
-      role: "system",
-      content: systemContents.join("\n\n"),
-    } as any);
-  }
 
   for (let i = 0; i < otherMessages.length; i++) {
     const msg = otherMessages[i];
@@ -167,6 +183,17 @@ export function convertToOpenAI(
         messages.push(response);
       });
     }
+  }
+
+  // Append system as the LAST message so it does not shift the conversation prefix.
+  // This prevents system-reminder changes from breaking upstream prompt caching
+  // which depends on prefix stability.
+  if (systemContents.length > 0) {
+    const uniqueSystemContents = Array.from(new Set(systemContents));
+    messages.push({
+      role: "system",
+      content: uniqueSystemContents.join("\n\n"),
+    } as any);
   }
 
   const result: any = {
@@ -488,25 +515,56 @@ export function convertToAnthropic(
   request: UnifiedChatRequest
 ): AnthropicChatRequest {
   const otherMessages: UnifiedMessage[] = [];
-  const systemContents: string[] = [];
+  const systemBlocks: any[] = [];
+
+  const addSystemContent = (content: any) => {
+    if (typeof content === "string") {
+      systemBlocks.push({ type: "text", text: content });
+      return;
+    }
+
+    if (!Array.isArray(content)) return;
+
+    content.forEach((block: any) => {
+      if (typeof block === "string") {
+        systemBlocks.push({ type: "text", text: block });
+        return;
+      }
+
+      if (block && typeof block === "object" && block.type === "text" && block.text) {
+        systemBlocks.push({ ...block });
+      }
+    });
+  };
+
+  const dedupeSystemBlocks = () => {
+    const seen = new Map<string, number>();
+    for (let i = 0; i < systemBlocks.length; i++) {
+      const block = systemBlocks[i];
+      const key = block?.text ?? JSON.stringify(block);
+      const existingIndex = seen.get(key);
+      if (existingIndex === undefined) {
+        seen.set(key, i);
+        continue;
+      }
+
+      const existingBlock = systemBlocks[existingIndex];
+      if (!existingBlock?.cache_control && block?.cache_control) {
+        systemBlocks[existingIndex] = block;
+      }
+      systemBlocks.splice(i, 1);
+      i--;
+    }
+  };
 
   request.messages.forEach((msg) => {
     if (msg.role === "system") {
-      if (typeof msg.content === "string") {
-        systemContents.push(msg.content);
-      } else if (Array.isArray(msg.content)) {
-        msg.content.forEach((block: any) => {
-          if (block && typeof block === "object" && block.type === "text" && block.text) {
-            systemContents.push(block.text);
-          } else if (typeof block === "string") {
-            systemContents.push(block);
-          }
-        });
-      }
+      addSystemContent(msg.content);
     } else {
       otherMessages.push(msg);
     }
   });
+  dedupeSystemBlocks();
 
   const messages: AnthropicMessage[] = [];
 
@@ -638,6 +696,71 @@ export function convertToAnthropic(
     }
   }
 
+  const countCacheBreakpoints = () => {
+    let count = systemBlocks.filter((block) => block?.cache_control).length;
+    for (const message of messages as any[]) {
+      if (!Array.isArray(message.content)) continue;
+      count += message.content.filter((block: any) => block?.cache_control).length;
+    }
+    return count;
+  };
+
+  const cloneCacheControl = (cacheControl: any) =>
+    cacheControl && typeof cacheControl === "object"
+      ? { ...cacheControl }
+      : { type: "ephemeral" };
+
+  const findLatestCacheControl = () => {
+    for (let i = (messages as any[]).length - 1; i >= 0; i--) {
+      const content = (messages as any[])[i]?.content;
+      if (!Array.isArray(content)) continue;
+      const cachedBlock = content.find((block: any) => block?.cache_control);
+      if (cachedBlock?.cache_control) return cachedBlock.cache_control;
+    }
+    for (let i = systemBlocks.length - 1; i >= 0; i--) {
+      if (systemBlocks[i]?.cache_control) return systemBlocks[i].cache_control;
+    }
+    return { type: "ephemeral" };
+  };
+
+  const addCacheBreakpointToMessage = (message: any, cacheControl: any) => {
+    if (!Array.isArray(message?.content)) return false;
+    if (message.content.some((block: any) => block?.cache_control)) return false;
+
+    const targetBlock = message.content.find(
+      (block: any) => block && typeof block === "object" && !block.cache_control
+    );
+    if (!targetBlock) return false;
+
+    targetBlock.cache_control = cloneCacheControl(cacheControl);
+    return true;
+  };
+
+  const ensureMessageCacheBreakpoints = () => {
+    let remaining = 4 - countCacheBreakpoints();
+    if (remaining <= 0 || messages.length === 0) return;
+
+    const anthropicMessages = messages as any[];
+    const cacheControl = findLatestCacheControl();
+    const candidateIndexes: number[] = [];
+
+    for (let i = anthropicMessages.length - 1; i >= 0; i--) {
+      if (anthropicMessages[i]?.role !== "user" || !Array.isArray(anthropicMessages[i].content)) {
+        continue;
+      }
+      candidateIndexes.push(i);
+    }
+
+    for (const index of candidateIndexes) {
+      if (remaining <= 0) break;
+      if (addCacheBreakpointToMessage(anthropicMessages[index], cacheControl)) {
+        remaining--;
+      }
+    }
+  };
+
+  ensureMessageCacheBreakpoints();
+
   const result: any = {
     messages,
     model: request.model,
@@ -646,8 +769,11 @@ export function convertToAnthropic(
     stream: request.stream,
   };
 
-  if (systemContents.length > 0) {
-    result.system = systemContents.join("\n\n");
+  if (systemBlocks.length > 0) {
+    const hasCacheControl = systemBlocks.some((block) => block?.cache_control);
+    result.system = hasCacheControl
+      ? systemBlocks
+      : systemBlocks.map((block) => block.text || "").join("\n\n");
   }
 
   if (request.tools && request.tools.length > 0) {

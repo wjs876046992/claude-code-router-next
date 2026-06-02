@@ -90,6 +90,7 @@ export class ProviderService {
           models: providerConfig.models || [],
           quotaToken: (providerConfig as any).quota_token,
           transformer: providerConfig.transformer ? transformer : undefined,
+          cacheMode: providerConfig.cache_mode || 'exclusive',
           enabled: providerConfig.enabled !== false,
           wakeupEnabled: providerConfig.wakeup_enabled === true,
           wakeupTime: providerConfig.wakeup_time || "06:00",

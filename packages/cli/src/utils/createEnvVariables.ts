@@ -1,5 +1,11 @@
 import { readConfigFile } from ".";
 
+const CLAUDE_AUTO_COMPACT_ENV = {
+  CLAUDE_CODE_AUTO_COMPACT_WINDOW: "200000",
+  CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "85",
+  CLAUDE_CODE_SIMPLE: "1",
+};
+
 function hasExtendedContext(familyConfig: any): boolean {
   return familyConfig?.enableExtendedContext === true;
 }
@@ -76,6 +82,7 @@ export const createEnvVariables = async (): Promise<Record<string, string | unde
     DISABLE_TELEMETRY: "true",
     DISABLE_COST_WARNINGS: "true",
     API_TIMEOUT_MS: String(config.API_TIMEOUT_MS ?? 600000),
+    ...CLAUDE_AUTO_COMPACT_ENV,
     // Reset CLAUDE_CODE_USE_BEDROCK when running with ccr
     CLAUDE_CODE_USE_BEDROCK: undefined,
     ...getModelEnvVars(config),

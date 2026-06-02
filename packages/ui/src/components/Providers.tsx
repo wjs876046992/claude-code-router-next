@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -14,7 +14,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { X, Trash2, Plus, Eye, EyeOff, Search, XCircle, HelpCircle } from "lucide-react";
+import { X, Trash2, Plus, Eye, EyeOff, Search, XCircle, HelpCircle, RefreshCw } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
@@ -134,6 +134,8 @@ export function Providers() {
   const [searchTerm, setSearchTerm] = useState<string>("");
   const [healthStates, setHealthStates] = useState<ProviderHealthState[]>([]);
   const [quotaUsages, setQuotaUsages] = useState<ProviderQuotaUsage[]>([]);
+  const [isProbingAllProviders, setIsProbingAllProviders] = useState(false);
+  const [probingProviders, setProbingProviders] = useState<Set<string>>(new Set());
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'warning' } | null>(null);
   const comboInputRef = useRef<HTMLInputElement>(null);
 
@@ -169,53 +171,32 @@ export function Providers() {
     fetchTransformers();
   }, []);
 
-  // Fetch provider health status periodically + on page visibility change
-  useEffect(() => {
-    const fetchHealth = async () => {
-      try {
-        const response = await api.getProviderHealth();
-        setHealthStates(response.states || []);
-      } catch (error) {
-        console.error('Failed to fetch provider health:', error);
-      }
-    };
+  const refreshProviderTelemetry = useCallback(async () => {
+    try {
+      const [healthResponse, quotaResponse] = await Promise.all([
+        api.getProviderHealth(),
+        api.getProviderQuota(),
+      ]);
+      setHealthStates(healthResponse.states || []);
+      setQuotaUsages(quotaResponse.quotas || []);
+    } catch (error) {
+      console.error('Failed to fetch provider telemetry:', error);
+    }
+  }, []);
 
-    fetchHealth();
-    const interval = setInterval(fetchHealth, 30000);
+  useEffect(() => {
+    refreshProviderTelemetry();
+    const interval = setInterval(refreshProviderTelemetry, 30000);
 
     const handleVisibility = () => {
-      if (document.visibilityState === 'visible') fetchHealth();
+      if (document.visibilityState === 'visible') refreshProviderTelemetry();
     };
     document.addEventListener('visibilitychange', handleVisibility);
     return () => {
       clearInterval(interval);
       document.removeEventListener('visibilitychange', handleVisibility);
     };
-  }, []);
-
-  // Fetch provider quota usage periodically + on page visibility change
-  useEffect(() => {
-    const fetchQuota = async () => {
-      try {
-        const response = await api.getProviderQuota();
-        setQuotaUsages(response.quotas || []);
-      } catch (error) {
-        console.error('Failed to fetch provider quota:', error);
-      }
-    };
-
-    fetchQuota();
-    const interval = setInterval(fetchQuota, 30000);
-
-    const handleVisibility = () => {
-      if (document.visibilityState === 'visible') fetchQuota();
-    };
-    document.addEventListener('visibilitychange', handleVisibility);
-    return () => {
-      clearInterval(interval);
-      document.removeEventListener('visibilitychange', handleVisibility);
-    };
-  }, []);
+  }, [refreshProviderTelemetry]);
 
   // Handle case where config is null or undefined
   if (!config) {
@@ -734,6 +715,46 @@ export function Providers() {
     return false;
   });
 
+  const handleProbeProvider = async (providerName: string) => {
+    if (!providerName || probingProviders.has(providerName)) return;
+    setProbingProviders((current) => new Set(current).add(providerName));
+    try {
+      const result = await api.probeProvider(providerName);
+      await refreshProviderTelemetry();
+      setToast({
+        message: result.success
+          ? t("providers.probe_success", { provider: providerName })
+          : t("providers.probe_failed", { provider: providerName }),
+        type: result.success ? "success" : "warning",
+      });
+    } catch (error) {
+      setToast({ message: t("providers.probe_failed", { provider: providerName }) + ': ' + (error as Error).message, type: 'error' });
+    } finally {
+      setProbingProviders((current) => {
+        const next = new Set(current);
+        next.delete(providerName);
+        return next;
+      });
+    }
+  };
+
+  const handleProbeAllProviders = async () => {
+    if (isProbingAllProviders) return;
+    setIsProbingAllProviders(true);
+    try {
+      const result = await api.probeAllProviders();
+      await refreshProviderTelemetry();
+      setToast({
+        message: t("providers.probe_all_complete", { success: result.successCount, total: result.total }),
+        type: result.successCount === result.total ? "success" : "warning",
+      });
+    } catch (error) {
+      setToast({ message: t("providers.probe_all_failed") + ': ' + (error as Error).message, type: 'error' });
+    } finally {
+      setIsProbingAllProviders(false);
+    }
+  };
+
   return (
     <Card className="flex h-full flex-col glass-card border-white/10 shadow-xl overflow-hidden">
       <CardHeader className="flex flex-col border-b border-white/10 bg-white/5 p-5 gap-4">
@@ -744,10 +765,23 @@ export function Providers() {
               {filteredProviders.length}/{validProviders.length}
             </span>
           </CardTitle>
-          <Button onClick={handleAddProvider} size="sm" className="h-9 px-4 rounded-xl">
-            <Plus className="h-4 w-4 mr-1" />
-            {t("providers.add")}
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              onClick={handleProbeAllProviders}
+              variant="outline"
+              size="sm"
+              disabled={isProbingAllProviders}
+              className="h-9 px-3 rounded-xl"
+              title={t("providers.probe_all")}
+            >
+              <RefreshCw className={`h-4 w-4 mr-1 ${isProbingAllProviders ? "animate-spin" : ""}`} />
+              {t("providers.probe_all")}
+            </Button>
+            <Button onClick={handleAddProvider} size="sm" className="h-9 px-4 rounded-xl">
+              <Plus className="h-4 w-4 mr-1" />
+              {t("providers.add")}
+            </Button>
+          </div>
         </div>
         <div className="flex items-center gap-2">
           <div className="relative flex-1 group">
@@ -779,6 +813,8 @@ export function Providers() {
           onEdit={handleEditProvider}
           onRemove={handleSetDeletingProviderIndex}
           onToggle={handleToggleProvider}
+          onProbe={handleProbeProvider}
+          probingProviders={probingProviders}
         />
       </CardContent>
 

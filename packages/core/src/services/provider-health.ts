@@ -1,3 +1,7 @@
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { join } from "path";
+import { HOME_DIR } from "@wengine-ai/claude-code-router-shared";
+
 /**
  * Provider health state for circuit breaker pattern
  */
@@ -10,7 +14,19 @@ export interface ProviderHealthState {
   lastFailureTime: number;
   lastProbeTime: number;
   lastError?: string;
+  /** Epoch ms before which a rate-limited model should NOT be probed or used.
+   *  Set by markRateLimited(); cleared on expiry (auto-recover) or on explicit recovery. */
+  rateLimitUntil?: number;
 }
+
+interface PersistedProviderHealthState extends ProviderHealthState {
+  updatedAt: number;
+}
+
+/** Default retry-after seconds for rate-limited models when no Retry-After header is present. */
+const DEFAULT_RATE_LIMIT_RETRY_AFTER_SECONDS = 120;
+/** Extend a still-rate-limited probe by this many additional seconds. */
+const RATE_LIMIT_EXTEND_SECONDS = 120;
 
 
 /**
@@ -62,6 +78,13 @@ export class ProviderHealthStore {
     }
 
     state.successCount++;
+
+    // Rate-limited models must NOT be recovered by a generic models-endpoint probe.
+    // They can only be recovered by the dedicated rate-limit recovery probe
+    // (runRateLimitProbe) which sends real chat requests.
+    if (state.rateLimitUntil) {
+      return;
+    }
 
     if (state.status === 'half-open') {
       if (state.successCount >= this.config.halfOpenSuccessThreshold) {
@@ -149,6 +172,21 @@ export class ProviderHealthStore {
 
     const state = this.getState(provider, model);
     if (!state) return true; // No state = closed (healthy)
+
+    // Rate-limited model: check if cooldown has expired → auto-recover
+    if (state.status === 'open' && state.rateLimitUntil) {
+      if (Date.now() < state.rateLimitUntil) {
+        return false; // Still rate-limited
+      }
+      // Cooldown expired — model is now available.
+      // Do NOT delete the state entry here — the quota probe guard
+      // (active-probe.ts) checks s?.rateLimitUntil before calling forceOpen,
+      // and if we delete it the guard would miss, causing forceOpen to
+      // overwrite with failureCount=3, rateLimitUntil=null.
+      // Cleanup is handled by runRateLimitProbe (every 2 min).
+      return true;
+    }
+
     return state.status !== 'open';
   }
 
@@ -234,6 +272,59 @@ export class ProviderHealthStore {
       state.lastError = error;
       state.lastProbeTime = 0;
     }
+    // forceOpen supersedes any rate-limit cooldown — e.g. when quota probe detects
+    // exhaustion with a known reset time, we don't want auto-recover from a stale
+    // rateLimitUntil to bypass the quota-probe recovery path.
+  }
+
+  /**
+   * Immediately mark a provider/model as rate-limited (unavailable).
+   * Sets a rateLimitUntil timestamp after which the model auto-recovers.
+   * Does NOT increment failureCount so the generic circuit-breaker threshold
+   * (used for network / unreachable failures) is preserved separately.
+   */
+  markRateLimited(provider: string, model: string, retryAfterSeconds?: number, error?: string): void {
+    if (!this.config.enabled) return;
+
+    const key = this.getKey(provider, model);
+    let state = this.states.get(key);
+
+    if (!state) {
+      state = {
+        provider,
+        model,
+        status: 'open',
+        failureCount: 0,
+        successCount: 0,
+        lastFailureTime: Date.now(),
+        lastProbeTime: 0,
+        lastError: error || 'rate-limited',
+      };
+      this.states.set(key, state);
+    } else {
+      state.status = 'open';
+      state.lastFailureTime = Date.now();
+      state.lastError = error || 'rate-limited';
+      state.lastProbeTime = 0;
+      // Do NOT increment failureCount — keep generic circuit-breaker separate
+    }
+
+    const retryAfterMs = (retryAfterSeconds ?? DEFAULT_RATE_LIMIT_RETRY_AFTER_SECONDS) * 1000;
+    state.rateLimitUntil = Date.now() + retryAfterMs;
+  }
+
+  /**
+   * Get all models currently in rate-limited state.
+   * Returns keys in "provider,model" format.
+   */
+  getRateLimitedModels(): string[] {
+    const result: string[] = [];
+    for (const [key, state] of this.states) {
+      if (state.status === 'open' && state.rateLimitUntil) {
+        result.push(key);
+      }
+    }
+    return result;
   }
 
   /**
@@ -279,6 +370,13 @@ export class ProviderHealthStore {
   }
 
   /**
+   * Restore a previously persisted health state.
+   */
+  restore(state: ProviderHealthState): void {
+    this.states.set(this.getKey(state.provider, state.model), { ...state });
+  }
+
+  /**
    * Stop probe timer
    */
   stopProbeTimer(): void {
@@ -287,6 +385,80 @@ export class ProviderHealthStore {
       this.probeTimer = undefined;
     }
   }
+}
+
+// --- Persistence ---
+
+const RUNTIME_DIR = join(HOME_DIR, "runtime");
+const PERSIST_FILE = join(RUNTIME_DIR, "provider-health.json");
+
+let persistenceInitialized = false;
+let saveTimer: ReturnType<typeof setInterval> | null = null;
+
+function loadFromDisk(store: ProviderHealthStore): void {
+  try {
+    if (!existsSync(PERSIST_FILE)) return;
+    const data = JSON.parse(readFileSync(PERSIST_FILE, "utf-8"));
+    if (!Array.isArray(data)) return;
+
+    const now = Date.now();
+    for (const item of data as PersistedProviderHealthState[]) {
+      if (!item || !item.provider || !item.model) continue;
+
+      // Skip obviously stale entries so we do not resurrect old circuit-breaker
+      // state forever after a long downtime.
+      const ageSource = item.updatedAt || item.lastFailureTime || 0;
+      if (ageSource && now - ageSource > 24 * 60 * 60 * 1000) continue;
+
+      store.restore({
+        provider: item.provider,
+        model: item.model,
+        status: item.status,
+        failureCount: item.failureCount ?? 0,
+        successCount: item.successCount ?? 0,
+        lastFailureTime: item.lastFailureTime ?? 0,
+        lastProbeTime: item.lastProbeTime ?? 0,
+        lastError: item.lastError,
+        rateLimitUntil: item.rateLimitUntil,
+      });
+    }
+  } catch {
+    // Corrupted file — start fresh
+  }
+}
+
+function saveToDisk(store: ProviderHealthStore): void {
+  try {
+    const states = store.getAllStates();
+    if (states.length === 0) return;
+
+    if (!existsSync(RUNTIME_DIR)) {
+      mkdirSync(RUNTIME_DIR, { recursive: true });
+    }
+
+    const payload: PersistedProviderHealthState[] = states.map((state) => ({
+      ...state,
+      updatedAt: Date.now(),
+    }));
+
+    writeFileSync(PERSIST_FILE, JSON.stringify(payload, null, 2), "utf-8");
+  } catch {
+    // Best-effort persistence
+  }
+}
+
+/**
+ * Initialize persistence: load from disk and set up periodic save.
+ */
+export function initProviderHealthPersistence(): void {
+  if (persistenceInitialized) return;
+  persistenceInitialized = true;
+
+  const store = getHealthStore();
+  loadFromDisk(store);
+
+  saveTimer = setInterval(() => saveToDisk(store), 60_000);
+  process.on("exit", () => saveToDisk(store));
 }
 
 // Singleton instance

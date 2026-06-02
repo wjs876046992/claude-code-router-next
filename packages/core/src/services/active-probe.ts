@@ -33,6 +33,17 @@ const DEFAULT_CONFIG: Required<ActiveProbeConfig> = {
   excludeProviders: [],
 };
 
+function isConfigEnabled(value: any): boolean {
+  return value === true || value === 'true' || value === 1 || value === '1';
+}
+
+function getLocalDateString(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 /**
  * Derive a models endpoint URL from the provider base URL
  * Prefers lightweight GET requests to /models or /v1/models endpoints
@@ -225,6 +236,73 @@ async function wakeupProvider(
 }
 
 /**
+ * Perform a scheduled ping to a specific model to check if rate limits have cleared.
+ * Sends a dummy chat completion / messages request.
+ */
+async function pingProviderModel(
+  provider: LLMProvider,
+  modelName: string,
+  timeoutMs: number,
+  proxyUrl?: string,
+  logger?: any
+): Promise<{ success: boolean; error?: string }> {
+  const isAnthropic = provider.baseUrl.includes('anthropic') || modelName.includes('claude');
+  const chatUrl = isAnthropic
+    ? (provider.baseUrl.includes('/messages') ? provider.baseUrl : `${provider.baseUrl.replace(/\/$/, '')}/v1/messages`)
+    : (provider.baseUrl.includes('/chat/completions') ? provider.baseUrl : `${provider.baseUrl.replace(/\/$/, '')}/chat/completions`);
+
+  try {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+
+    if (isAnthropic) {
+      headers['x-api-key'] = provider.apiKey;
+      headers['anthropic-version'] = '2023-06-01';
+    } else {
+      headers['Authorization'] = `Bearer ${provider.apiKey}`;
+    }
+
+    const fetchOptions: RequestInit = {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        model: modelName,
+        messages: [{ role: 'user', content: 'ping' }],
+        max_tokens: 1,
+      }),
+      signal: AbortSignal.timeout(timeoutMs),
+    };
+
+    // Add proxy if configured
+    if (proxyUrl) {
+      try {
+        const { ProxyAgent } = await import('undici');
+        (fetchOptions as any).dispatcher = new ProxyAgent(new URL(proxyUrl).toString());
+      } catch {
+        // Proxy agent not available, continue without proxy
+      }
+    }
+
+    logger?.debug?.(`Sending independent ping to rate-limited model ${provider.name} (${modelName})...`);
+    const response = await fetch(chatUrl, fetchOptions);
+
+    if (response.ok) {
+      return { success: true };
+    }
+
+    const errorText = await response.text().catch(() => '');
+    return {
+      success: false,
+      error: `HTTP ${response.status}: ${errorText.slice(0, 200) || 'Unknown error'}`,
+    };
+  } catch (err: any) {
+    const errorMessage = err?.message || err?.toString() || 'Unknown ping error';
+    return { success: false, error: errorMessage };
+  }
+}
+
+/**
  * Active probe scheduler
  */
 export class ActiveProbeService {
@@ -232,6 +310,7 @@ export class ActiveProbeService {
   private quotaProbeTimer?: NodeJS.Timeout;
   private healthProbeTimer?: NodeJS.Timeout;
   private wakeupTimer?: NodeJS.Timeout;
+  private rateLimitProbeTimer?: NodeJS.Timeout;
   private lastWakeupDate: Map<string, string> = new Map(); // key: providerName, value: YYYY-MM-DD
   private getProviders: () => LLMProvider[];
   private getHttpsProxy?: () => string | undefined;
@@ -257,30 +336,45 @@ export class ActiveProbeService {
    * Start the active probe loop
    */
   start(): void {
-    if (!this.config.enabled || this.running) return;
+    if (this.running) return;
+
+    const wakeupEnabled = this.isWakeupGloballyEnabled();
+    if (!this.config.enabled && !wakeupEnabled) return;
 
     this.running = true;
 
     // Initial probe after delay
     setTimeout(() => {
       if (!this.running) return;
-      this.runQuotaProbe();
-      this.runHealthProbe();
+      if (this.config.enabled) {
+        this.runQuotaProbe();
+        this.runHealthProbe();
+        this.runRateLimitProbe();
+      }
       this.runScheduledWakeup();
     }, this.config.initialDelayMs);
 
-    // Periodic quota probe
-    this.quotaProbeTimer = setInterval(
-      () => this.runQuotaProbe(),
-      this.config.quotaProbeIntervalMinutes * 60 * 1000
-    );
+    if (this.config.enabled) {
+      // Periodic quota probe
+      this.quotaProbeTimer = setInterval(
+        () => this.runQuotaProbe(),
+        this.config.quotaProbeIntervalMinutes * 60 * 1000
+      );
 
-    // Periodic health probe (aligned with ProviderHealthStore probeInterval)
-    // Run every 5 minutes to check open states
-    this.healthProbeTimer = setInterval(
-      () => this.runHealthProbe(),
-      5 * 60 * 1000
-    );
+      // Periodic health probe (aligned with ProviderHealthStore probeInterval)
+      // Run every 5 minutes to check open states
+      this.healthProbeTimer = setInterval(
+        () => this.runHealthProbe(),
+        5 * 60 * 1000
+      );
+
+      // Rate-limit recovery probe: runs every 2 minutes so rate-limited models
+      // are tested for recovery more frequently than the health probe.
+      this.rateLimitProbeTimer = setInterval(
+        () => this.runRateLimitProbe(),
+        2 * 60 * 1000
+      );
+    }
 
     // Periodic scheduled wake-up check every minute
     this.wakeupTimer = setInterval(
@@ -305,6 +399,11 @@ export class ActiveProbeService {
     if (this.healthProbeTimer) {
       clearInterval(this.healthProbeTimer);
       this.healthProbeTimer = undefined;
+    }
+
+    if (this.rateLimitProbeTimer) {
+      clearInterval(this.rateLimitProbeTimer);
+      this.rateLimitProbeTimer = undefined;
     }
 
     if (this.wakeupTimer) {
@@ -361,6 +460,13 @@ export class ActiveProbeService {
                     ? `Quota exhausted: 5h limit reached (${result.usedDailyBalance}/${result.limitDaily})`
                     : `Quota exhausted: 7d balance depleted (${result.usedBalance}/${result.totalBalance})`;
                   for (const m of models) {
+                    // Skip forceOpen for rate-limited models — markRateLimited already set
+                    // status=open with rateLimitUntil; forceOpen would delete the cooldown.
+                    const s = healthStore.getState(provider.name, m);
+                    if (s?.rateLimitUntil) {
+                      this.logger?.debug?.(`Skip forceOpen for ${provider.name} (${m}): already rate-limited with active cooldown`);
+                      continue;
+                    }
                     healthStore.forceOpen(provider.name, m, errorMsg);
                   }
                   this.logger?.warn?.(`${errorMsg} for ${provider.name}, marked as unhealthy`);
@@ -441,9 +547,30 @@ export class ActiveProbeService {
           let recoveredCount = 0;
           for (const m of models) {
             const state = healthStore.getState(provider.name, m);
-            if (state && state.status === 'open' && state.lastError?.includes('Quota exhausted')) {
-              this.logger?.debug?.(`Skipping health probe recovery for ${provider.name} (${m}) because quota is exhausted`);
-              continue;
+            if (state && state.status === 'open') {
+              const isQuotaExhausted = state.lastError?.includes('Quota exhausted');
+              const isRateLimit = state.rateLimitUntil || (
+                state.lastError && (
+                  state.lastError.includes('429') ||
+                  state.lastError.toLowerCase().includes('rate limit') ||
+                  state.lastError.toLowerCase().includes('rate_limit') ||
+                  state.lastError.toLowerCase().includes('too many requests') ||
+                  state.lastError.toLowerCase().includes('限流')
+                )
+              );
+
+              if (isQuotaExhausted) {
+                this.logger?.debug?.(`Skipping health probe recovery for ${provider.name} (${m}) because quota is exhausted`);
+                continue;
+              }
+
+              if (isRateLimit || state.rateLimitUntil) {
+                // Rate-limited models are handled by the dedicated runRateLimitProbe()
+                // which sends real chat requests. Do NOT recover them via the generic
+                // /v1/models endpoint probe.
+                this.logger?.debug?.(`Skipping health probe recovery for rate-limited ${provider.name} (${m})`);
+                continue;
+              }
             }
             healthStore.recordSuccess(provider.name, m);
             recoveredCount++;
@@ -467,11 +594,83 @@ export class ActiveProbeService {
   }
 
   /**
+   * Run independent probe for rate-limited models.
+   * Sends real chat requests (max_tokens:1) to test if the rate limit has cleared.
+   * Rate-limited models are NOT probed by runHealthProbe — they have a separate timer
+   * so they can be checked more frequently (every 2 minutes) without affecting normal probes.
+   */
+  private async runRateLimitProbe(): Promise<void> {
+    const healthStore = getHealthStore();
+    const rateLimitedKeys = healthStore.getRateLimitedModels();
+    if (rateLimitedKeys.length === 0) return;
+
+    const providers = this.getProviders();
+    const proxy = this.getHttpsProxy?.();
+    const pingTimeoutMs = this.config.probeTimeoutMs;
+
+    this.logger?.debug?.(`Running rate-limit recovery probe for ${rateLimitedKeys.length} model(s)`);
+
+    for (const key of rateLimitedKeys) {
+      const [providerName, ...modelParts] = key.split(',');
+      const modelName = modelParts.join(',');
+      if (!providerName || !modelName) continue;
+
+      // Check if cooldown expired (auto-recovered via isAvailable check, but just in case)
+      const state = healthStore.getState(providerName, modelName);
+      if (!state || !state.rateLimitUntil) continue;
+      if (Date.now() >= state.rateLimitUntil) {
+        healthStore.recover(providerName, modelName);
+        this.logger?.info?.(`Rate-limit cooldown expired, auto-recovered ${key}`);
+        continue;
+      }
+
+      // Find provider config
+      const provider = providers.find(
+        p => p?.name === providerName && p.enabled !== false
+      );
+      if (!provider) {
+        this.logger?.warn?.(`Provider ${providerName} not found or disabled for rate-limit probe`);
+        continue;
+      }
+
+      try {
+        const result = await pingProviderModel(provider, modelName, pingTimeoutMs, proxy, this.logger);
+
+        if (result.success) {
+          this.logger?.info?.(`Rate-limit probe succeeded for ${key}, recovering model`);
+          healthStore.recover(providerName, modelName);
+        } else if (result.error && (
+          result.error.includes('429') ||
+          result.error.toLowerCase().includes('rate limit') ||
+          result.error.toLowerCase().includes('rate_limit') ||
+          result.error.toLowerCase().includes('too many requests') ||
+          result.error.toLowerCase().includes('限流')
+        )) {
+          // Still rate-limited — extend the cooldown
+          const now = Date.now();
+          if (state.rateLimitUntil && state.rateLimitUntil > now) {
+            state.rateLimitUntil += 120 * 1000;
+          } else {
+            state.rateLimitUntil = now + 120 * 1000;
+          }
+          this.logger?.debug?.(`Rate-limit probe for ${key} confirmed still limited, extending cooldown`);
+        } else {
+          // Non-rate-limit error (e.g. auth failure, 500) — leave in rate-limited state
+          // but still meaningful: the model is not usable for real requests either.
+          // The cooldown will expire naturally and isAvailable will re-check.
+          this.logger?.debug?.(`Rate-limit probe for ${key} returned non-rate-limit error: ${result.error?.slice(0, 100)}`);
+        }
+      } catch (err: any) {
+        this.logger?.warn?.(`Rate-limit probe exception for ${key}: ${err?.message || err}`);
+      }
+    }
+  }
+
+  /**
    * Run scheduled wake-up for configured providers
    */
   private async runScheduledWakeup(): Promise<void> {
-    const globalWakeupEnabled = this.getConfig ? this.getConfig('WAKEUP_ENABLED') === true : false;
-    if (!globalWakeupEnabled) {
+    if (!this.isWakeupGloballyEnabled()) {
       return;
     }
 
@@ -483,7 +682,7 @@ export class ActiveProbeService {
     const now = new Date();
     const currentHour = now.getHours();
     const currentMinute = now.getMinutes();
-    const currentDateStr = now.toISOString().split('T')[0];
+    const currentDateStr = getLocalDateString(now);
     const proxy = this.getHttpsProxy?.();
     const globalWakeupTime = this.getConfig ? this.getConfig('WAKEUP_TIME') || '06:00' : '06:00';
 
@@ -514,6 +713,10 @@ export class ActiveProbeService {
         }
       }
     }
+  }
+
+  private isWakeupGloballyEnabled(): boolean {
+    return this.getConfig ? isConfigEnabled(this.getConfig('WAKEUP_ENABLED')) : false;
   }
 
   /**

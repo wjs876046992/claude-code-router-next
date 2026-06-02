@@ -2,6 +2,9 @@ import Server, { calculateTokenCount, TokenizerService, getAllRateLimitInfo, get
 const _llmsModule = require("@wengine-ai/llms") as any;
 const initRateLimitPersistence: () => void = _llmsModule.initRateLimitPersistence;
 const initQuotaStorePersistence: () => void = _llmsModule.initQuotaStorePersistence;
+const ProviderService = _llmsModule.ProviderService;
+const startActiveProbe = _llmsModule.startActiveProbe;
+const resetActiveProbeService = _llmsModule.resetActiveProbeService;
 import { getHealthStore } from "@wengine-ai/llms";
 import { readConfigFile, writeConfigFile, backupConfigFile } from "./utils";
 import { join } from "path";
@@ -23,11 +26,17 @@ import {
   findMarketPresetByName,
   getMarketPresets,
   applyClientSelection,
+  activateCodexAccount,
+  deleteCodexAccount,
   disableClient,
   enableClient,
+  importCodexAccountFromRefreshToken,
+  importCurrentCodexAccount,
   isClientId,
+  listCodexAccounts,
   listClientStatuses,
   restoreClient,
+  type CodexAccountsResult,
   type PresetFile,
   type ManifestFile,
   type PresetMetadata,
@@ -50,6 +59,31 @@ interface ProviderQuotaUsage {
   type7d?: 'rateLimit' | 'balance';
   /** Currency for balance display (e.g. "CNY", "USD") */
   currency?: string;
+}
+
+interface AnthropicModelInfo {
+  type: "model";
+  id: string;
+  display_name: string;
+  created_at: string;
+  context_window: number;
+  contextWindow: number;
+  max_input_tokens: number;
+  maxInputTokens: number;
+  max_tokens: number;
+  maxTokens: number;
+  max_output_tokens: number;
+  maxOutputTokens: number;
+  capabilities: {
+    context_window: number;
+    contextWindow: number;
+    max_input_tokens: number;
+    maxInputTokens: number;
+    max_tokens: number;
+    maxTokens: number;
+    max_output_tokens: number;
+    maxOutputTokens: number;
+  };
 }
 
 /**
@@ -107,6 +141,287 @@ function computeProviderQuota(providers: any[]): ProviderQuotaUsage[] {
   return result;
 }
 
+interface CodexUsageRateLimitWindow {
+  used_percent?: number;
+  limit_window_seconds?: number;
+  reset_after_seconds?: number;
+  reset_at?: number | null;
+}
+
+interface CodexOfficialUsage {
+  used5h?: number;
+  used7d?: number;
+  reset5h?: string;
+  reset7d?: string;
+  planType?: string;
+  rateLimitReachedType?: string | null;
+}
+
+type CodexUsageCacheEntry = CodexOfficialUsage & {
+  fetchedAt: string;
+};
+
+type CodexUsageCache = Record<string, CodexUsageCacheEntry>;
+
+interface StoredCodexAuth {
+  tokens?: {
+    access_token?: string;
+    account_id?: string;
+  };
+}
+
+const CODEX_USAGE_CACHE_DIR = join(HOME_DIR, "data");
+const CODEX_USAGE_CACHE_PATH = join(CODEX_USAGE_CACHE_DIR, "codex-usage-cache.json");
+const ACTIVE_CODEX_USAGE_CACHE_REFRESH_INTERVAL_MS = 60 * 1000;
+const INACTIVE_CODEX_USAGE_CACHE_REFRESH_INTERVAL_MS = 30 * 60 * 1000;
+const codexUsageRefreshes = new Map<string, Promise<void>>();
+
+function epochSecondsToIso(value: unknown): string | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+  return new Date(value * 1000).toISOString();
+}
+
+function readCodexUsageCache(): CodexUsageCache {
+  if (!existsSync(CODEX_USAGE_CACHE_PATH)) return {};
+  try {
+    const parsed = JSON.parse(readFileSync(CODEX_USAGE_CACHE_PATH, "utf8"));
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return parsed as CodexUsageCache;
+  } catch {
+    return {};
+  }
+}
+
+function writeCodexUsageCache(cache: CodexUsageCache): void {
+  mkdirSync(CODEX_USAGE_CACHE_DIR, { recursive: true });
+  writeFileSync(CODEX_USAGE_CACHE_PATH, `${JSON.stringify(cache, null, 2)}\n`, "utf8");
+}
+
+function pruneCodexUsageCache(cache: CodexUsageCache, accountIds: Set<string>): CodexUsageCache {
+  let changed = false;
+  const next: CodexUsageCache = {};
+  for (const [accountId, entry] of Object.entries(cache)) {
+    if (accountIds.has(accountId)) {
+      next[accountId] = entry;
+    } else {
+      changed = true;
+    }
+  }
+  if (changed) writeCodexUsageCache(next);
+  return changed ? next : cache;
+}
+
+function isCodexUsageCacheFresh(entry: CodexUsageCacheEntry | undefined, active: boolean): boolean {
+  if (!entry?.fetchedAt) return false;
+  const fetchedAt = Date.parse(entry.fetchedAt);
+  const refreshInterval = active
+    ? ACTIVE_CODEX_USAGE_CACHE_REFRESH_INTERVAL_MS
+    : INACTIVE_CODEX_USAGE_CACHE_REFRESH_INTERVAL_MS;
+  return Number.isFinite(fetchedAt) && Date.now() - fetchedAt < refreshInterval;
+}
+
+function normalizeCodexUsageResponse(payload: any): CodexOfficialUsage | null {
+  const rateLimit = payload?.rate_limit;
+  if (!rateLimit) return null;
+
+  const primary = rateLimit.primary_window as CodexUsageRateLimitWindow | undefined;
+  const secondary = rateLimit.secondary_window as CodexUsageRateLimitWindow | undefined;
+  const usage: CodexOfficialUsage = {
+    planType: typeof payload.plan_type === "string" ? payload.plan_type : undefined,
+    rateLimitReachedType: typeof payload.rate_limit_reached_type?.type === "string"
+      ? payload.rate_limit_reached_type.type
+      : null,
+  };
+
+  if (typeof primary?.used_percent === "number") {
+    usage.used5h = primary.used_percent;
+    usage.reset5h = epochSecondsToIso(primary.reset_at);
+  }
+  if (typeof secondary?.used_percent === "number") {
+    usage.used7d = secondary.used_percent;
+    usage.reset7d = epochSecondsToIso(secondary.reset_at);
+  }
+
+  return usage.used5h !== undefined || usage.used7d !== undefined ? usage : null;
+}
+
+function readStoredCodexAuth(accountId: string): StoredCodexAuth | null {
+  const storedAuthPath = join(HOME_DIR, "codex-accounts", `${accountId}.auth.json`);
+  if (!existsSync(storedAuthPath)) return null;
+  try {
+    return JSON.parse(readFileSync(storedAuthPath, "utf8")) as StoredCodexAuth;
+  } catch {
+    return null;
+  }
+}
+
+async function readCodexOfficialUsage(accountId: string): Promise<CodexOfficialUsage | null> {
+  const auth = readStoredCodexAuth(accountId);
+  const accessToken = auth?.tokens?.access_token;
+  const chatGptAccountId = auth?.tokens?.account_id || accountId;
+  if (!accessToken) return null;
+
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${accessToken}`,
+    "ChatGPT-Account-Id": chatGptAccountId,
+    originator: "codex_cli_rs",
+    Accept: "application/json",
+    "Accept-Encoding": "gzip, deflate",
+    "User-Agent": "codex_cli_rs/0.0.0",
+  };
+
+  const urls = [
+    "https://chatgpt.com/backend-api/wham/usage",
+    "https://chatgpt.com/backend-api/codex/usage",
+  ];
+
+  for (const url of urls) {
+    try {
+      const response = await fetch(url, {
+        headers,
+        signal: AbortSignal.timeout(15000),
+      });
+      if (!response.ok) continue;
+
+      const payload = await response.json();
+      const usage = normalizeCodexUsageResponse(payload);
+      if (usage) return usage;
+    } catch {
+      // Fall through to the next compatible usage endpoint.
+    }
+  }
+
+  return null;
+}
+
+function applyCodexOfficialUsage(account: any, officialUsage?: CodexOfficialUsage | null): any {
+  if (!officialUsage) return account;
+  return {
+    ...account,
+    plan: officialUsage.planType || account.plan,
+    limitedWindow: officialUsage.rateLimitReachedType ? account.limitedWindow || "unknown" : account.limitedWindow,
+    usage: {
+      used5h: officialUsage.used5h ?? 0,
+      used7d: officialUsage.used7d ?? 0,
+      limit5h: officialUsage.used5h !== undefined ? 100 : undefined,
+      limit7d: officialUsage.used7d !== undefined ? 100 : undefined,
+      reset5h: officialUsage.reset5h,
+      reset7d: officialUsage.reset7d,
+    },
+  };
+}
+
+function refreshCodexUsageCache(accountIds: string[]): void {
+  for (const accountId of accountIds) {
+    if (codexUsageRefreshes.has(accountId)) continue;
+
+    const refresh = (async () => {
+      const officialUsage = await readCodexOfficialUsage(accountId);
+      if (!officialUsage) return;
+
+      const cache = readCodexUsageCache();
+      cache[accountId] = {
+        ...officialUsage,
+        fetchedAt: new Date().toISOString(),
+      };
+      writeCodexUsageCache(cache);
+    })().catch((error) => {
+      console.error(`Failed to refresh Codex usage for ${accountId}:`, error);
+    }).finally(() => {
+      codexUsageRefreshes.delete(accountId);
+    });
+
+    codexUsageRefreshes.set(accountId, refresh);
+  }
+}
+
+async function computeCodexAccountUsage(config: Record<string, any>): Promise<CodexAccountsResult> {
+  const accountsResult = listCodexAccounts(config);
+  const accountIds = new Set(accountsResult.accounts.map((account) => account.id));
+  const usageCache = pruneCodexUsageCache(readCodexUsageCache(), accountIds);
+  const staleAccountIds = accountsResult.accounts
+    .filter((account) => !isCodexUsageCacheFresh(usageCache[account.id], account.active))
+    .map((account) => account.id);
+
+  if (staleAccountIds.length > 0) {
+    refreshCodexUsageCache(staleAccountIds);
+  }
+
+  const accounts = accountsResult.accounts.map((account) => (
+    applyCodexOfficialUsage(account, usageCache[account.id])
+  ));
+
+  return {
+    ...accountsResult,
+    accounts,
+  };
+}
+
+function getModelContextWindow(modelId: string): number {
+  return /\[1m\]/i.test(modelId) ? 1_000_000 : 200_000;
+}
+
+function getModelMaxOutputTokens(modelId: string): number {
+  const normalized = modelId.toLowerCase();
+  if (normalized.includes("haiku") || normalized.includes("mini")) return 8_192;
+  return 32_000;
+}
+
+function createAnthropicModelInfo(id: string, displayName = id): AnthropicModelInfo {
+  const contextWindow = getModelContextWindow(id);
+  const maxOutputTokens = getModelMaxOutputTokens(id);
+  return {
+    type: "model",
+    id,
+    display_name: displayName,
+    created_at: "2024-01-01T00:00:00Z",
+    context_window: contextWindow,
+    contextWindow,
+    max_input_tokens: contextWindow,
+    maxInputTokens: contextWindow,
+    max_tokens: maxOutputTokens,
+    maxTokens: maxOutputTokens,
+    max_output_tokens: maxOutputTokens,
+    maxOutputTokens: maxOutputTokens,
+    capabilities: {
+      context_window: contextWindow,
+      contextWindow,
+      max_input_tokens: contextWindow,
+      maxInputTokens: contextWindow,
+      max_tokens: maxOutputTokens,
+      maxTokens: maxOutputTokens,
+      max_output_tokens: maxOutputTokens,
+      maxOutputTokens: maxOutputTokens,
+    },
+  };
+}
+
+function listAnthropicCompatibleModels(config: any): AnthropicModelInfo[] {
+  const models = new Map<string, AnthropicModelInfo>();
+  const addModel = (id: string, displayName = id) => {
+    if (!id || models.has(id)) return;
+    models.set(id, createAnthropicModelInfo(id, displayName));
+  };
+
+  addModel("ccr-opus", "CCR Opus");
+  addModel("ccr-sonnet", "CCR Sonnet");
+  addModel("ccr-haiku", "CCR Haiku");
+  addModel("ccr-opus[1m]", "CCR Opus 1M");
+  addModel("ccr-sonnet[1m]", "CCR Sonnet 1M");
+  addModel("ccr-haiku[1m]", "CCR Haiku 1M");
+
+  for (const provider of config.Providers || config.providers || []) {
+    if (!provider?.name || !Array.isArray(provider.models)) continue;
+    for (const model of provider.models) {
+      if (typeof model !== "string" || !model) continue;
+      addModel(model, model);
+      addModel(`${provider.name},${model}`, `${provider.name}/${model}`);
+    }
+  }
+
+  return Array.from(models.values());
+}
+
 export const createServer = async (config: any): Promise<any> => {
   const server = new Server(config);
   const app = server.app;
@@ -119,6 +434,33 @@ export const createServer = async (config: any): Promise<any> => {
     limits: {
       fileSize: 50 * 1024 * 1024, // 50MB
     },
+  });
+
+  app.get("/v1/models", async () => {
+    const data = listAnthropicCompatibleModels(config);
+    return {
+      object: "list",
+      data,
+      first_id: data[0]?.id || null,
+      last_id: data[data.length - 1]?.id || null,
+      has_more: false,
+    };
+  });
+
+  app.get("/v1/models/:modelId", async (req: any, reply: any) => {
+    const modelId = decodeURIComponent(req.params.modelId);
+    const model = listAnthropicCompatibleModels(config).find((item) => item.id === modelId);
+    if (!model) {
+      reply.status(404);
+      return {
+        type: "error",
+        error: {
+          type: "not_found_error",
+          message: `Model not found: ${modelId}`,
+        },
+      };
+    }
+    return model;
   });
 
   app.post("/v1/messages/count_tokens", async (req: any, reply: any) => {
@@ -196,6 +538,47 @@ export const createServer = async (config: any): Promise<any> => {
     }
 
     await writeConfigFile(newConfig);
+    try {
+      const coreServer = (app as any)._server;
+      if (coreServer?.configService) {
+        coreServer.configService.reload();
+        const nextProviders = newConfig?.Providers || newConfig?.providers;
+        if (Array.isArray(nextProviders)) {
+          coreServer.configService.set('providers', nextProviders);
+        }
+        if (ProviderService && coreServer.transformerService) {
+          coreServer.providerService = new ProviderService(
+            coreServer.configService,
+            coreServer.transformerService,
+            app.log
+          );
+        }
+
+        if (startActiveProbe && resetActiveProbeService) {
+          try {
+            resetActiveProbeService();
+          } catch {}
+
+          const probeConfig = {
+            enabled: coreServer.configService.get('ACTIVE_PROBE_ENABLED') ?? true,
+            quotaProbeIntervalMinutes: coreServer.configService.get('QUOTA_PROBE_INTERVAL_MINUTES') ?? 10,
+            probeTimeoutMs: coreServer.configService.get('PROBE_TIMEOUT_MS') ?? 15000,
+            initialDelayMs: coreServer.configService.get('PROBE_INITIAL_DELAY_MS') ?? 5000,
+            excludeProviders: coreServer.configService.get('EXCLUDE_PROBE_PROVIDERS') ?? [],
+          };
+
+          coreServer.activeProbeService = startActiveProbe(
+            () => coreServer.providerService.getProviders(),
+            probeConfig,
+            () => coreServer.configService.getHttpsProxy(),
+            app.log,
+            (key: string) => coreServer.configService.get(key)
+          );
+        }
+      }
+    } catch (reloadError: any) {
+      app.log?.warn?.(`Config saved but runtime reload failed: ${reloadError?.message || reloadError}`);
+    }
     return { success: true, message: "Config saved successfully" };
   });
 
@@ -265,6 +648,72 @@ export const createServer = async (config: any): Promise<any> => {
 
   app.post("/api/clients/:id/restore", async (req: any, reply: any) => {
     return runClientAction(req, reply, "restore");
+  });
+
+  app.get("/api/clients/codex/accounts", async (_req: any, reply: any) => {
+    try {
+      const config = await readConfigFile();
+      return await computeCodexAccountUsage(config);
+    } catch (error: any) {
+      console.error("Failed to get Codex accounts:", error);
+      reply.status(500).send({ error: error.message || "Failed to get Codex accounts" });
+    }
+  });
+
+  app.post("/api/clients/codex/accounts/import-current", async (req: any, reply: any) => {
+    try {
+      const body = req.body as { label?: string };
+      const config = await readConfigFile();
+      const result = importCurrentCodexAccount(config, body?.label);
+      await writeConfigFile(result.config);
+      const accounts = await computeCodexAccountUsage(result.config);
+      return { ...result, ...accounts };
+    } catch (error: any) {
+      console.error("Failed to import current Codex account:", error);
+      reply.status(500).send({ error: error.message || "Failed to import current Codex account" });
+    }
+  });
+
+  app.post("/api/clients/codex/accounts/import-rt", async (req: any, reply: any) => {
+    try {
+      const body = req.body as { label?: string; refreshToken?: string };
+      const config = await readConfigFile();
+      const result = await importCodexAccountFromRefreshToken(config, body?.refreshToken || "", body?.label);
+      await writeConfigFile(result.config);
+      const accounts = await computeCodexAccountUsage(result.config);
+      return { ...result, ...accounts };
+    } catch (error: any) {
+      console.error("Failed to import Codex account from refresh token:", error);
+      reply.status(500).send({ error: error.message || "Failed to import Codex account from refresh token" });
+    }
+  });
+
+  app.post("/api/clients/codex/accounts/:accountId/activate", async (req: any, reply: any) => {
+    try {
+      const { accountId } = req.params as { accountId: string };
+      const config = await readConfigFile();
+      const result = activateCodexAccount(config, accountId);
+      await writeConfigFile(result.config);
+      const accounts = await computeCodexAccountUsage(result.config);
+      return { ...result, ...accounts };
+    } catch (error: any) {
+      console.error("Failed to activate Codex account:", error);
+      reply.status(500).send({ error: error.message || "Failed to activate Codex account" });
+    }
+  });
+
+  app.delete("/api/clients/codex/accounts/:accountId", async (req: any, reply: any) => {
+    try {
+      const { accountId } = req.params as { accountId: string };
+      const config = await readConfigFile();
+      const result = deleteCodexAccount(config, accountId);
+      await writeConfigFile(result.config);
+      const accounts = await computeCodexAccountUsage(result.config);
+      return { ...result, ...accounts };
+    } catch (error: any) {
+      console.error("Failed to delete Codex account:", error);
+      reply.status(500).send({ error: error.message || "Failed to delete Codex account" });
+    }
   });
 
   // Register static file serving with caching
@@ -444,12 +893,83 @@ export const createServer = async (config: any): Promise<any> => {
           successCount: s.successCount,
           lastFailureTime: s.lastFailureTime,
           lastError: s.lastError,
+          rateLimitUntil: s.rateLimitUntil ?? null,
         })),
         timestamp: new Date().toISOString()
       };
     } catch (error) {
       console.error("Failed to get provider health:", error);
       reply.status(500).send({ error: "Failed to get provider health" });
+    }
+  });
+
+  app.post("/api/providers/probe", async (req: any, reply: any) => {
+    try {
+      const { providerName } = req.body as { providerName?: string };
+      if (!providerName) {
+        reply.status(400);
+        return { error: "providerName is required" };
+      }
+
+      const coreServer = (app as any)._server;
+      const probeService = coreServer?.activeProbeService;
+      if (!probeService?.probeProviderManually) {
+        reply.status(503);
+        return { error: "Active probe service is not available" };
+      }
+
+      const success = await probeService.probeProviderManually(providerName);
+      const provider = coreServer?.providerService?.getProviders?.()
+        ?.find((item: any) => item?.name === providerName);
+      if (success && provider?.models) {
+        const healthStore = getHealthStore();
+        for (const model of provider.models) {
+          healthStore.recover(providerName, model);
+        }
+      }
+
+      return {
+        provider: providerName,
+        success,
+        timestamp: new Date().toISOString(),
+      };
+    } catch (error: any) {
+      console.error("Failed to probe provider:", error);
+      reply.status(500).send({ error: error.message || "Failed to probe provider" });
+    }
+  });
+
+  app.post("/api/providers/probe-all", async (_req: any, reply: any) => {
+    try {
+      const coreServer = (app as any)._server;
+      const probeService = coreServer?.activeProbeService;
+      if (!probeService?.probeProviderManually) {
+        reply.status(503);
+        return { error: "Active probe service is not available" };
+      }
+
+      const providers = (coreServer?.providerService?.getProviders?.() || [])
+        .filter((provider: any) => provider?.name && provider.enabled !== false);
+      const healthStore = getHealthStore();
+      const results = await Promise.all(providers.map(async (provider: any) => {
+        const success = await probeService.probeProviderManually(provider.name);
+        if (success && Array.isArray(provider.models)) {
+          for (const model of provider.models) {
+            healthStore.recover(provider.name, model);
+          }
+        }
+        return { provider: provider.name, success };
+      }));
+
+      return {
+        results,
+        successCount: results.filter((result: any) => result.success).length,
+        total: results.length,
+        timestamp: new Date().toISOString(),
+      };
+    } catch (error: any) {
+      console.error("Failed to probe all providers:", error);
+      reply.status(500).send({ error: error.message || "Failed to probe all providers" });
     }
   });
 

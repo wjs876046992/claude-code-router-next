@@ -124,13 +124,14 @@ export class ReasoningTransformer implements Transformer {
 
                 // Check if reasoning is complete (when delta has content but no reasoning_content)
                 if (
-                  (data.choices?.[0]?.delta?.content ||
-                    data.choices?.[0]?.delta?.tool_calls) &&
+                  data.choices?.[0]?.delta?.content &&
                   context.reasoningContent() &&
                   !context.isReasoningComplete()
                 ) {
                   context.setReasoningComplete(true);
-                  const signature = Date.now().toString();
+                  const signature = "ccr_think_signature";
+                  // Save the original content before we null it for thinking chunk
+                  const originalContent = data.choices[0].delta.content;
 
                   // Create a new chunk with thinking block
                   const thinkingChunk = {

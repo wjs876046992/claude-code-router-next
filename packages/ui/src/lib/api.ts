@@ -1,4 +1,4 @@
-import type { ClientApplyResponse, ClientId, ClientStatus, Config, Provider, Transformer, ProviderQuotaResponse } from '@/types';
+import type { ClientApplyResponse, ClientId, ClientStatus, CodexAccountOperationResponse, CodexAccountsResponse, Config, Provider, Transformer, ProviderQuotaResponse } from '@/types';
 
 // 日志聚合响应类型
 interface GroupedLogsResponse {
@@ -292,6 +292,26 @@ class ApiClient {
     return this.post<ClientApplyResponse>(`/clients/${encodeURIComponent(id)}/restore`, {});
   }
 
+  async getCodexAccounts(): Promise<CodexAccountsResponse> {
+    return this.get<CodexAccountsResponse>('/clients/codex/accounts');
+  }
+
+  async importCurrentCodexAccount(label?: string): Promise<CodexAccountOperationResponse> {
+    return this.post<CodexAccountOperationResponse>('/clients/codex/accounts/import-current', { label });
+  }
+
+  async importCodexAccountFromRefreshToken(refreshToken: string, label?: string): Promise<CodexAccountOperationResponse> {
+    return this.post<CodexAccountOperationResponse>('/clients/codex/accounts/import-rt', { refreshToken, label });
+  }
+
+  async activateCodexAccount(accountId: string): Promise<CodexAccountOperationResponse> {
+    return this.post<CodexAccountOperationResponse>(`/clients/codex/accounts/${encodeURIComponent(accountId)}/activate`, {});
+  }
+
+  async deleteCodexAccount(accountId: string): Promise<CodexAccountOperationResponse> {
+    return this.delete<CodexAccountOperationResponse>(`/clients/codex/accounts/${encodeURIComponent(accountId)}`);
+  }
+
   // ========== Usage Statistics API methods ==========
 
   // Get usage records with summary
@@ -423,6 +443,14 @@ class ApiClient {
   // Get provider quota usage (5h and 7d windows)
   async getProviderQuota(): Promise<ProviderQuotaResponse> {
     return this.get<ProviderQuotaResponse>('/providers/quota');
+  }
+
+  async probeProvider(providerName: string): Promise<{ provider: string; success: boolean; timestamp: string }> {
+    return this.post<{ provider: string; success: boolean; timestamp: string }>('/providers/probe', { providerName });
+  }
+
+  async probeAllProviders(): Promise<{ results: Array<{ provider: string; success: boolean }>; successCount: number; total: number; timestamp: string }> {
+    return this.post<{ results: Array<{ provider: string; success: boolean }>; successCount: number; total: number; timestamp: string }>('/providers/probe-all', {});
   }
 }
 

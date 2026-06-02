@@ -238,9 +238,9 @@ const DEFAULT_THEME: StatusLineThemeConfig = {
             color: "bright_cyan"
         },
         {
-            type: "contextCircle",
-            icon: "○",
-            text: "{{contextPercent}}% {{contextUsage}}",
+            type: "contextBar",
+            icon: "",
+            text: "Context {{contextBar}} {{contextPercent}}%",
             color: "#22c55e"
         },
         {
@@ -289,9 +289,9 @@ const POWERLINE_THEME: StatusLineThemeConfig = {
             background: "bg_bright_cyan"
         },
         {
-            type: "contextCircle",
-            icon: "○",
-            text: "{{contextPercent}}% {{contextUsage}}",
+            type: "contextBar",
+            icon: "",
+            text: "Context {{contextBar}} {{contextPercent}}%",
             color: "#22c55e",
             background: "bg_bright_black"
         },
@@ -341,9 +341,9 @@ const SIMPLE_THEME: StatusLineThemeConfig = {
             color: "bright_cyan"
         },
         {
-            type: "contextCircle",
-            icon: "○",
-            text: "{{contextPercent}}% {{contextUsage}}",
+            type: "contextBar",
+            icon: "",
+            text: "Context {{contextBar}} {{contextPercent}}%",
             color: "#22c55e"
         },
         {
@@ -383,9 +383,9 @@ const FULL_THEME: StatusLineThemeConfig = {
             color: "bright_cyan"
         },
         {
-            type: "contextCircle",
-            icon: "○",
-            text: "{{contextPercent}}% {{contextUsage}}",
+            type: "contextBar",
+            icon: "",
+            text: "Context {{contextBar}} {{contextPercent}}%",
             color: "#22c55e"
         },
         {
@@ -431,14 +431,20 @@ function formatTokenCount(count: number): string {
     }
     if (count < 1_000_000) {
         const val = count / 1000;
-        return (val % 1 === 0 ? val.toFixed(0) : val.toFixed(1)) + 'k';
+        const formatted = val % 1 === 0 ? val.toFixed(0) : val.toFixed(1);
+        if (+formatted >= 1000) {
+            const m = count / 1_000_000;
+            return (m % 1 === 0 ? m.toFixed(0) : m.toFixed(1)) + 'm';
+        }
+        return formatted + 'k';
     }
-    if (count < 1_000_000_000) {
-        const val = count / 1_000_000;
-        return (val % 1 === 0 ? val.toFixed(0) : val.toFixed(1)) + 'm';
+    const mVal = count / 1_000_000;
+    const mFormatted = mVal % 1 === 0 ? mVal.toFixed(0) : mVal.toFixed(1);
+    if (+mFormatted >= 1000) {
+        const bVal = count / 1_000_000_000;
+        return (bVal % 1 === 0 ? bVal.toFixed(0) : bVal.toFixed(1)) + 'b';
     }
-    const val = count / 1_000_000_000;
-    return (val % 1 === 0 ? val.toFixed(0) : val.toFixed(1)) + 'b';
+    return mFormatted + 'm';
 }
 
 // Format usage information with auto unit
@@ -485,12 +491,26 @@ function getContextCircleIcon(contextPercentStr: string): string {
     return "●";
 }
 
-function getContextProgressBar(percent: number, length: number = 8): string {
+function getContextProgressBar(percent: number, length: number = 10): string {
     const filledLength = Math.round((percent / 100) * length);
-    const emptyLength = length - filledLength;
-    const filled = "▰".repeat(Math.max(0, filledLength));
-    const empty = "▱".repeat(Math.max(0, emptyLength));
-    return `${filled}${empty}`;
+    
+    // Determine overall color based on total percentage
+    let overallColor = "\x1b[32m"; // green
+    if (percent >= 80) {
+        overallColor = "\x1b[31m"; // red
+    } else if (percent >= 50) {
+        overallColor = "\x1b[33m"; // yellow
+    }
+    
+    let result = "";
+    for (let i = 0; i < length; i++) {
+        if (i < filledLength) {
+            result += `${overallColor}█\x1b[0m`;
+        } else {
+            result += `\x1b[90m░\x1b[0m`;
+        }
+    }
+    return result;
 }
 
 // Format cost display
@@ -969,18 +989,25 @@ async function renderDefaultStyle(
 
     // Iterate through module array, rendering each module (maximum 10)
     for (let i = 0; i < modules.length; i++) {
-        const module = modules[i];
+        let module = modules[i];
 
-        const dynamicColor = module.type === "contextCircle"
+        // Auto-upgrade legacy contextCircle to contextBar
+        if (module.type === "contextCircle") {
+            module = {
+                ...module,
+                type: "contextBar",
+                icon: "",
+                text: "Context {{contextBar}} {{contextPercent}}%"
+            };
+        }
+
+        const dynamicColor = module.type === "contextCircle" || module.type === "contextBar"
             ? getContextUsageColor(variables.contextPercent)
             : module.color || "";
 
         const color = dynamicColor ? getColorCode(dynamicColor) : "";
         const background = module.background ? getColorCode(module.background) : "";
         let icon = module.icon || "";
-        if (module.type === "contextCircle") {
-            icon = getContextCircleIcon(variables.contextPercent);
-        }
 
         // If script type, execute script to get text
         let text = "";
@@ -1128,15 +1155,23 @@ async function renderPowerlineStyle(
 
     // Iterate through module array, rendering each module (maximum 10)
     for (let i = 0; i < Math.min(modules.length, 10); i++) {
-        const module = modules[i];
-        const color = module.type === "contextCircle"
+        let module = modules[i];
+        
+        // Auto-upgrade legacy contextCircle to contextBar
+        if (module.type === "contextCircle") {
+            module = {
+                ...module,
+                type: "contextBar",
+                icon: "",
+                text: "Context {{contextBar}} {{contextPercent}}%"
+            };
+        }
+        
+        const color = module.type === "contextCircle" || module.type === "contextBar"
             ? getContextUsageColor(variables.contextPercent)
             : module.color || "white";
         const backgroundName = module.background || "";
         let icon = module.icon || "";
-        if (module.type === "contextCircle") {
-            icon = getContextCircleIcon(variables.contextPercent);
-        }
 
         // If script type, execute script to get text
         let text = "";

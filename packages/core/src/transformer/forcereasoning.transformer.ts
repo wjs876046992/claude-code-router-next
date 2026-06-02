@@ -177,7 +177,7 @@ export class ForceReasoningTransformer implements Transformer {
                   // Send signature message
                   const signatureDelta = {
                     ...originalData.choices[0].delta,
-                    thinking: { signature: new Date().getTime().toString() },
+                    thinking: { signature: "ccr_think_signature" },
                   };
                   delete signatureDelta.content;
                   const signatureChunk = {
@@ -311,7 +311,7 @@ export class ForceReasoningTransformer implements Transformer {
 
             if (fsmState === "REASONING") {
               const signatureDelta = {
-                thinking: { signature: new Date().getTime().toString() },
+                thinking: { signature: "ccr_think_signature" },
               };
               const signatureChunk = {
                 choices: [{ delta: signatureDelta }],

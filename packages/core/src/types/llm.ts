@@ -186,7 +186,7 @@ export interface AnthropicChatRequest {
   max_tokens: number;
   temperature?: number;
   stream?: boolean;
-  system?: string;
+  system?: string | Array<Record<string, any>>;
   tools?: AnthropicTool[];
   tool_choice?: { type: "auto" } | { type: "tool"; name: string };
 }
@@ -211,6 +211,12 @@ export interface LLMProvider {
   } & {
     use?: Transformer[];
   };
+  /**
+   * How the provider reports input_tokens in usage responses.
+   * - 'exclusive' (default): input_tokens is net of cache, total = input + cache_read + cache_creation + output
+   * - 'inclusive': input_tokens already includes cache tokens, total = input + output
+   */
+  cacheMode?: 'exclusive' | 'inclusive';
   enabled?: boolean;
   wakeupEnabled?: boolean;
   wakeupTime?: string;

@@ -95,6 +95,12 @@ export interface ClientConfig {
   managed?: boolean;
   configPath?: string;
   modelAlias?: string;
+  activeAccountId?: string;
+  autoSwitchAccounts?: boolean;
+  quota?: {
+    limit5h?: number;
+    limit7d?: number;
+  };
 }
 
 export interface ClientStatus {
@@ -121,6 +127,44 @@ export interface ClientApplyResponse {
   success: boolean;
   results: ClientOperationResult[];
   clients: ClientStatus[];
+  config: Config;
+}
+
+export interface CodexAccount {
+  id: string;
+  label: string;
+  email?: string;
+  plan?: string;
+  accountId?: string;
+  authMode?: string;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+  lastUsedAt?: string;
+  limitedUntil?: string;
+  limitedWindow?: '5h' | '7d' | 'unknown';
+  limitedReason?: string;
+  lastLimitedAt?: string;
+  usage?: {
+    used5h: number;
+    used7d: number;
+    limit5h?: number;
+    limit7d?: number;
+    reset5h?: string;
+    reset7d?: string;
+  };
+}
+
+export interface CodexAccountsResponse {
+  accounts: CodexAccount[];
+  activeAccountId?: string;
+  authPath: string;
+}
+
+export interface CodexAccountOperationResponse extends CodexAccountsResponse {
+  success: boolean;
+  account?: CodexAccount;
+  switchedAccount?: CodexAccount;
   config: Config;
 }
 

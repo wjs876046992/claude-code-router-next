@@ -369,6 +369,18 @@ export class AnthropicTransformer implements Transformer {
         const safeClose = () => {
           if (!isClosed) {
             try {
+              // If upstream produced no data (hasStarted is false), do NOT emit
+              // partial/invalid SSE (message_delta + message_stop without message_start).
+              // Instead, close silently so downstream detects done:true and triggers fallback.
+              if (!hasStarted) {
+                this.logger?.warn(
+                  `[empty_stream] Upstream produced no data, closing silently`
+                );
+                controller.close();
+                isClosed = true;
+                return;
+              }
+
               // Close any remaining open content block
               if (currentContentBlockIndex >= 0) {
                 const contentBlockStop = {
@@ -395,6 +407,9 @@ export class AnthropicTransformer implements Transformer {
                 );
                 stopReasonMessageDelta = null;
               } else {
+                // Fallback message_delta when upstream didn't provide usage data.
+                // Use estimated input tokens so Claude Code context tracking isn't zeroed.
+                const estimatedInputTokens = context?.req?.tokenCount || 0;
                 safeEnqueue(
                   encoder.encode(
                     `event: message_delta\ndata: ${JSON.stringify({
@@ -404,7 +419,7 @@ export class AnthropicTransformer implements Transformer {
                         stop_sequence: null,
                       },
                       usage: {
-                        input_tokens: 0,
+                        input_tokens: estimatedInputTokens,
                         output_tokens: 0,
                         cache_read_input_tokens: 0,
                       },
@@ -505,6 +520,10 @@ export class AnthropicTransformer implements Transformer {
                 if (!hasStarted && !isClosed && !hasFinished) {
                   hasStarted = true;
 
+                  // Use pre-calculated token count from router (tiktoken estimate)
+                  // so Claude Code can track context usage for auto-compression.
+                  const estimatedInputTokens = context?.req?.tokenCount || 0;
+
                   const messageStart = {
                     type: "message_start",
                     message: {
@@ -516,7 +535,7 @@ export class AnthropicTransformer implements Transformer {
                       stop_reason: null,
                       stop_sequence: null,
                       usage: {
-                        input_tokens: 0,
+                        input_tokens: estimatedInputTokens,
                         output_tokens: 0,
                       },
                     },
@@ -533,6 +552,10 @@ export class AnthropicTransformer implements Transformer {
 
                 const choice = chunk.choices?.[0];
                 if (chunk.usage) {
+                  const cachedTokens = chunk.usage?.prompt_tokens_details?.cached_tokens || 0;
+                  const promptTokens = chunk.usage?.prompt_tokens || 0;
+                  // Keep Anthropic protocol semantics for Claude Code: input_tokens is net of cache reads.
+                  const inputTokens = promptTokens - cachedTokens;
                   if (!stopReasonMessageDelta) {
                     stopReasonMessageDelta = {
                       type: "message_delta",
@@ -541,25 +564,16 @@ export class AnthropicTransformer implements Transformer {
                         stop_sequence: null,
                       },
                       usage: {
-                        input_tokens:
-                          (chunk.usage?.prompt_tokens || 0) -
-                          (chunk.usage?.prompt_tokens_details?.cached_tokens ||
-                            0),
+                        input_tokens: inputTokens,
                         output_tokens: chunk.usage?.completion_tokens || 0,
-                        cache_read_input_tokens:
-                          chunk.usage?.prompt_tokens_details?.cached_tokens ||
-                          0,
+                        cache_read_input_tokens: cachedTokens,
                       },
                     };
                   } else {
                     stopReasonMessageDelta.usage = {
-                      input_tokens:
-                        (chunk.usage?.prompt_tokens || 0) -
-                        (chunk.usage?.prompt_tokens_details?.cached_tokens ||
-                          0),
+                      input_tokens: inputTokens,
                       output_tokens: chunk.usage?.completion_tokens || 0,
-                      cache_read_input_tokens:
-                        chunk.usage?.prompt_tokens_details?.cached_tokens || 0,
+                      cache_read_input_tokens: cachedTokens,
                     };
                   }
                 }
@@ -799,7 +813,7 @@ export class AnthropicTransformer implements Transformer {
                         newContentBlockIndex
                       );
                       const toolCallId =
-                        toolCall.id || `call_${Date.now()}_${toolCallIndex}`;
+                        toolCall.id || `call_ccr_${toolCallIndex}`;
                       const toolCallName =
                         toolCall.function?.name || `tool_${toolCallIndex}`;
                       const contentBlockStart = {
@@ -937,6 +951,10 @@ export class AnthropicTransformer implements Transformer {
                     const anthropicStopReason =
                       stopReasonMapping[choice.finish_reason] || "end_turn";
 
+                    const cachedTokens2 = chunk.usage?.prompt_tokens_details?.cached_tokens || 0;
+                    const promptTokens2 = chunk.usage?.prompt_tokens || 0;
+                    // Keep Anthropic protocol semantics for Claude Code: input_tokens is net of cache reads.
+                    const inputTokens2 = promptTokens2 - cachedTokens2;
                     stopReasonMessageDelta = {
                       type: "message_delta",
                       delta: {
@@ -944,14 +962,9 @@ export class AnthropicTransformer implements Transformer {
                         stop_sequence: null,
                       },
                       usage: {
-                        input_tokens:
-                          (chunk.usage?.prompt_tokens || 0) -
-                          (chunk.usage?.prompt_tokens_details?.cached_tokens ||
-                            0),
+                        input_tokens: inputTokens2,
                         output_tokens: chunk.usage?.completion_tokens || 0,
-                        cache_read_input_tokens:
-                          chunk.usage?.prompt_tokens_details?.cached_tokens ||
-                          0,
+                        cache_read_input_tokens: cachedTokens2,
                       },
                     };
                   }
@@ -1072,8 +1085,14 @@ export class AnthropicTransformer implements Transformer {
           signature: (choice.message as any).thinking.signature,
         });
       }
+      const cachedTokens =
+        openaiResponse.usage?.prompt_tokens_details?.cached_tokens || 0;
+      const inputTokens =
+        (openaiResponse.usage?.prompt_tokens || 0) - cachedTokens;
       const result = {
-        id: openaiResponse.id,
+        id: openaiResponse.id?.startsWith("msg_")
+          ? openaiResponse.id
+          : `msg_${uuidv4().replace(/-/g, "")}`,
         type: "message",
         role: "assistant",
         model: openaiResponse.model,
@@ -1090,13 +1109,26 @@ export class AnthropicTransformer implements Transformer {
             : "end_turn",
         stop_sequence: null,
         usage: {
-          input_tokens:
-            (openaiResponse.usage?.prompt_tokens || 0) -
-            (openaiResponse.usage?.prompt_tokens_details?.cached_tokens || 0),
+          // Keep Anthropic protocol semantics for Claude Code: input_tokens is net of cache reads.
+          input_tokens: inputTokens,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: cachedTokens,
           output_tokens: openaiResponse.usage?.completion_tokens || 0,
-          cache_read_input_tokens:
-            openaiResponse.usage?.prompt_tokens_details?.cached_tokens || 0,
+          server_tool_use: {
+            web_search_requests: 0,
+            web_fetch_requests: 0,
+          },
+          service_tier: "standard",
+          cache_creation: {
+            ephemeral_1h_input_tokens: 0,
+            ephemeral_5m_input_tokens: 0,
+          },
+          inference_geo: "",
+          iterations: [],
+          speed: "standard",
         },
+        stop_details: null,
+        context_management: null,
       };
       this.logger.debug(
         {
