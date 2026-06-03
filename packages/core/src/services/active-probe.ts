@@ -696,9 +696,18 @@ export class ActiveProbeService {
         continue;
       }
 
-      if (currentHour === targetHour && currentMinute === targetMinute) {
-        if (this.lastWakeupDate.get(provider.name) !== currentDateStr) {
-          this.lastWakeupDate.set(provider.name, currentDateStr);
+      // Use fallback-safe match: trigger if current time is at/past the target,
+      // using lastWakeupDate to ensure it fires at most once per day.
+      // This survives macOS sleep/wake cycles that skip the exact target minute.
+      const isPastTarget = currentHour > targetHour ||
+        (currentHour === targetHour && currentMinute >= targetMinute);
+
+      // Also fire if we're within a 5-minute window of the target time,
+      // covering short sleep cycles where the timer fires early.
+      const msUntilTarget = (targetHour * 60 + targetMinute) * 60000 - (currentHour * 60 + currentMinute) * 60000;
+      const isWithinWindow = msUntilTarget > 0 && msUntilTarget <= 5 * 60 * 1000;
+
+      if ((isPastTarget || isWithinWindow) && !this.hasWakeupFiredToday(provider.name, currentDateStr)) {
           this.logger?.info?.(`Scheduled wake-up triggered for provider ${provider.name} at ${wakeupTime}`);
 
           wakeupProvider(provider, 30000, proxy, this.logger).then(res => {
@@ -710,13 +719,25 @@ export class ActiveProbeService {
           }).catch(err => {
              this.logger?.error?.(`Error in wake-up task for ${provider.name}: ${err}`);
           });
-        }
       }
     }
   }
 
   private isWakeupGloballyEnabled(): boolean {
     return this.getConfig ? isConfigEnabled(this.getConfig('WAKEUP_ENABLED')) : false;
+  }
+
+  /**
+   * Check if the wake-up has already fired for this provider today.
+   * Returns true if already fired, so the caller can skip.
+   * If not yet fired, atomically marks it as fired.
+   */
+  private hasWakeupFiredToday(providerName: string, currentDateStr: string): boolean {
+    if (this.lastWakeupDate.get(providerName) === currentDateStr) {
+      return true;
+    }
+    this.lastWakeupDate.set(providerName, currentDateStr);
+    return false;
   }
 
   /**
