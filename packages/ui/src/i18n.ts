@@ -19,7 +19,11 @@ i18n
   .use(initReactI18next)
   .init({
     resources,
-    fallbackLng: "en",
+    fallbackLng: "zh",
+    detection: {
+      order: ["localStorage", "cookie"],
+      caches: ["localStorage", "cookie"],
+    },
     interpolation: {
       escapeValue: false,
     },

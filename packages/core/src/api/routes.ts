@@ -23,6 +23,101 @@ import { getHealthStore } from "@/services/provider-health";
 import { captureRateLimitHeaders } from "@/services/rate-limit";
 import { getFallbackPromotionStore } from "@/utils/fallback-promotion";
 import { OpenAIResponsesTransformer } from "../transformer/openai.responses.transformer";
+import { router } from "@/utils/router";
+
+// Matches the CCR model-family aliases that CCR injects into managed clients
+// (e.g. "ccr-opus", "ccr-sonnet[1m]"). Codex sends one of these as a bare model
+// name to /v1/responses.
+const CCR_FAMILY_ALIAS = /^ccr-(opus|sonnet|haiku)(\[1m\])?$/i;
+
+/**
+ * Normalize a Responses API (Codex) request body into a unified chat request so
+ * downstream transformers (and the family router) can process it.
+ * Codex sends: { model, input: [...], instructions, tools, stream, ... }
+ * We convert to: { model, messages: [...], system, tools, stream, ... }
+ */
+function normalizeResponsesBody(body: any): void {
+  const messages: any[] = [];
+  const input = Array.isArray(body.input) ? body.input : [body.input];
+  for (const item of input) {
+    if (item.type === "function_call") {
+      messages.push({
+        role: "assistant",
+        tool_calls: [{
+          id: item.call_id,
+          type: "function",
+          function: { name: item.name, arguments: item.arguments || "{}" },
+        }],
+      });
+    } else if (item.type === "function_call_output") {
+      messages.push({
+        role: "tool",
+        tool_call_id: item.call_id,
+        content: typeof item.output === "string" ? item.output : JSON.stringify(item.output),
+      });
+    } else if (item.role) {
+      // user / assistant / system messages
+      let content = item.content;
+      // Convert Responses API content format to unified format
+      if (Array.isArray(content)) {
+        content = content.map((c: any) => {
+          if (c.type === "input_text") return { type: "text", text: c.text };
+          if (c.type === "output_text") return { type: "text", text: c.text };
+          if (c.type === "input_image") return { type: "image_url", image_url: { url: c.image_url }, media_type: c.mime_type };
+          return c;
+        });
+      }
+      messages.push({ role: item.role, content });
+    }
+  }
+  body.messages = messages;
+  delete body.input;
+  // Move instructions to system
+  if (body.instructions && typeof body.instructions === "string") {
+    body.system = body.instructions;
+    delete body.instructions;
+  }
+  // Normalize tools from Responses API format to OpenAI format
+  if (Array.isArray(body.tools)) {
+    body.tools = body.tools
+      .filter((tool: any) => tool && typeof tool === "object")
+      .map((tool: any) => {
+        // Responses API tools: { type: "function", name: "X", description: "...", parameters: {...} }
+        if (tool.type === "function" && tool.name && !tool.function) {
+          return {
+            type: "function",
+            function: {
+              name: tool.name,
+              description: tool.description || "",
+              parameters: tool.parameters || { type: "object", properties: {} },
+            },
+          };
+        }
+        // Standard OpenAI format already
+        if (tool.function?.name) {
+          return tool;
+        }
+        // Codex web_search tool
+        if (tool.type === "web_search") {
+          return {
+            type: "function",
+            function: {
+              name: "web_search",
+              description: "Search the web",
+              parameters: { type: "object", properties: { query: { type: "string" } } },
+            },
+          };
+        }
+        // Drop malformed tools rather than crashing downstream
+        return null;
+      })
+      .filter(Boolean);
+  }
+  // Normalize reasoning
+  if (body.reasoning && typeof body.reasoning === "object") {
+    body.reasoning = { enabled: true, effort: body.reasoning.effort };
+  }
+}
 
 // Extend FastifyInstance to include custom services
 declare module "fastify" {
@@ -50,6 +145,31 @@ async function handleTransformerEndpoint(
   transformer: any
 ) {
   const body = req.body as any;
+
+  // Normalize Responses API (Codex) format into a unified chat request BEFORE
+  // provider resolution. This must happen first so that a CCR family alias can be
+  // routed through the shared family router below, which needs messages/system/tools
+  // to count tokens.
+  if (transformer.endPoint === "/v1/responses" && body?.input && !body?.messages) {
+    normalizeResponsesBody(body);
+  }
+
+  // Codex sends a bare CCR family alias (e.g. "ccr-opus") to /v1/responses. Run the
+  // same family router used for /v1/messages so Codex is routed by the CCR model
+  // family (default/think/longContext/webSearch) instead of falling back to
+  // Router.default. The router rewrites body.model to "provider,model".
+  if (
+    transformer.endPoint === "/v1/responses" &&
+    !req.provider &&
+    typeof body?.model === "string" &&
+    CCR_FAMILY_ALIAS.test(body.model)
+  ) {
+    await router(req, reply, {
+      configService: fastify.configService,
+      tokenizerService: (fastify as any).tokenizerService,
+    });
+  }
+
   // For /v1/responses (Codex) the modelProviderMiddleware does not run because
   // it only handles /v1/messages. Parse provider from body.model here.
   let providerName = req.provider as string | undefined;
@@ -128,92 +248,15 @@ async function handleTransformerEndpoint(
     reply.header("X-Codex-On-Messages", "true");
   }
 
+  // Store codex flags on the request so handleFallback can propagate them
+  (req as any).isCodexOnMessagesEndpoint = isCodexOnMessagesEndpoint;
+  (req as any).codexDetected = codexDetected;
+
   try {
-    // Normalize Responses API (Codex) format into a unified chat request so
-    // downstream transformers (Anthropic, OpenAI, etc.) can process it.
-    // Codex sends: { model, input: [...], instructions, tools, stream, ... }
-    // We convert to: { model, messages: [...], system, tools, stream, ... }
+    // Safety net: convert any Responses API (Codex) body that was not already
+    // normalized above (idempotent — the guard is false once converted).
     if (transformer.endPoint === "/v1/responses" && body.input && !body.messages) {
-      const messages: any[] = [];
-      const input = Array.isArray(body.input) ? body.input : [body.input];
-      for (const item of input) {
-        if (item.type === "function_call") {
-          messages.push({
-            role: "assistant",
-            tool_calls: [{
-              id: item.call_id,
-              type: "function",
-              function: { name: item.name, arguments: item.arguments || "{}" },
-            }],
-          });
-        } else if (item.type === "function_call_output") {
-          messages.push({
-            role: "tool",
-            tool_call_id: item.call_id,
-            content: typeof item.output === "string" ? item.output : JSON.stringify(item.output),
-          });
-        } else if (item.role) {
-          // user / assistant / system messages
-          let content = item.content;
-          // Convert Responses API content format to unified format
-          if (Array.isArray(content)) {
-            content = content.map((c: any) => {
-              if (c.type === "input_text") return { type: "text", text: c.text };
-              if (c.type === "output_text") return { type: "text", text: c.text };
-              if (c.type === "input_image") return { type: "image_url", image_url: { url: c.image_url }, media_type: c.mime_type };
-              return c;
-            });
-          }
-          messages.push({ role: item.role, content });
-        }
-      }
-      body.messages = messages;
-      delete body.input;
-      // Move instructions to system
-      if (body.instructions && typeof body.instructions === "string") {
-        body.system = body.instructions;
-        delete body.instructions;
-      }
-      // Normalize tools from Responses API format to OpenAI format
-      if (Array.isArray(body.tools)) {
-        body.tools = body.tools
-          .filter((tool: any) => tool && typeof tool === "object")
-          .map((tool: any) => {
-            // Responses API tools: { type: "function", name: "X", description: "...", parameters: {...} }
-            if (tool.type === "function" && tool.name && !tool.function) {
-              return {
-                type: "function",
-                function: {
-                  name: tool.name,
-                  description: tool.description || "",
-                  parameters: tool.parameters || { type: "object", properties: {} },
-                },
-              };
-            }
-            // Standard OpenAI format already
-            if (tool.function?.name) {
-              return tool;
-            }
-            // Codex web_search tool
-            if (tool.type === "web_search") {
-              return {
-                type: "function",
-                function: {
-                  name: "web_search",
-                  description: "Search the web",
-                  parameters: { type: "object", properties: { query: { type: "string" } } },
-                },
-              };
-            }
-            // Drop malformed tools rather than crashing downstream
-            return null;
-          })
-          .filter(Boolean);
-      }
-      // Normalize reasoning
-      if (body.reasoning && typeof body.reasoning === "object") {
-        body.reasoning = { enabled: true, effort: body.reasoning.effort };
-      }
+      normalizeResponsesBody(body);
     }
 
     // Process request transformer chain
@@ -589,14 +632,18 @@ async function handleFallback(
           }
         } catch {}
 
-        // Process response transformer chain
+        // Process response transformer chain — propagate codex flags so the
+        // fallback response also gets Responses API conversion when needed.
         const finalResponse = await processResponseTransformers(
           requestBody,
           response,
           provider,
           transformer,
           bypass,
-          { req: newReq }
+          {
+            req: newReq,
+            isCodexOnMessagesEndpoint: (req as any).isCodexOnMessagesEndpoint || false,
+          }
         );
 
         req.log.info(`Fallback model ${fallbackModel} succeeded`);

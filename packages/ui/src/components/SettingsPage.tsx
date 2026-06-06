@@ -127,7 +127,7 @@ export function SettingsPage() {
 
   const syncClientResponse = useCallback((response: ClientApplyResponse) => {
     setClients(response.clients || []);
-    setSelectedClientIds((response.clients || []).filter((client) => client.enabled).map((client) => client.id));
+    setSelectedClientIds((response.clients || []).filter((client) => client.enabled || client.managed).map((client) => client.id));
     if (response.config) {
       setConfig((current) => {
         if (!current) return response.config;
@@ -168,7 +168,7 @@ export function SettingsPage() {
         api.getCodexAccounts(),
       ]);
       setClients(clientsResponse.clients || []);
-      setSelectedClientIds((clientsResponse.clients || []).filter((client) => client.enabled).map((client) => client.id));
+      setSelectedClientIds((clientsResponse.clients || []).filter((client) => client.enabled || client.managed).map((client) => client.id));
       syncCodexAccounts(accountsResponse);
     } catch (error) {
       setToast({ message: t("clients.load_failed") + ': ' + (error as Error).message, type: 'error' });
@@ -912,8 +912,8 @@ export function SettingsPage() {
                               {client.name}
                             </Label>
                             <div className="flex flex-wrap items-center gap-2 text-xs">
-                              <span className={client.enabled ? "rounded-full bg-green-100 px-2 py-0.5 text-green-700" : "rounded-full bg-gray-100 px-2 py-0.5 text-gray-600"}>
-                                {client.enabled ? t("clients.enabled") : t("clients.disabled")}
+                              <span className={(client.enabled || client.managed) ? "rounded-full bg-green-100 px-2 py-0.5 text-green-700" : "rounded-full bg-gray-100 px-2 py-0.5 text-gray-600"}>
+                                {(client.enabled || client.managed) ? t("clients.enabled") : t("clients.disabled")}
                               </span>
                               <span className={client.managed ? "rounded-full bg-blue-100 px-2 py-0.5 text-blue-700" : "rounded-full bg-gray-100 px-2 py-0.5 text-gray-600"}>
                                 {client.managed ? t("clients.managed") : t("clients.official")}

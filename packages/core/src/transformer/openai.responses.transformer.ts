@@ -209,9 +209,10 @@ export class OpenAIResponsesTransformer implements Transformer {
     if (contentType.includes("application/json")) {
       const jsonResponse: any = await response.json();
 
-      // 检查是否为responses API格式的JSON响应
+      // Check if this is a Responses API format JSON response from an upstream
+      // provider that natively speaks the Responses API (e.g. OpenAI o-series).
+      // Convert to chat format so downstream transformers can process it.
       if (jsonResponse.object === "response" && jsonResponse.output) {
-        // 将responses格式转换为chat格式
         const chatResponse = this.convertResponseToChat(jsonResponse);
         return new Response(JSON.stringify(chatResponse), {
           status: response.status,
@@ -220,7 +221,19 @@ export class OpenAIResponsesTransformer implements Transformer {
         });
       }
 
-      // 不是responses API格式，保持原样
+      // Anthropic JSON format — pass through unchanged. The downstream
+      // transformResponseIn will handle Anthropic → Responses API conversion.
+      // Without this guard, wrapChatInResponses would look for choices[0] which
+      // doesn't exist in Anthropic JSON, producing an empty output array.
+      if (jsonResponse.type === "message" && Array.isArray(jsonResponse.content)) {
+        return new Response(JSON.stringify(jsonResponse), {
+          status: response.status,
+          statusText: response.statusText,
+          headers: response.headers,
+        });
+      }
+
+      // Not a recognized format — pass through as-is
       return new Response(JSON.stringify(jsonResponse), {
         status: response.status,
         statusText: response.statusText,
@@ -231,21 +244,69 @@ export class OpenAIResponsesTransformer implements Transformer {
         return response;
       }
 
+      // Peek at the first chunk to detect the stream format before processing.
+      // If the upstream returns Anthropic SSE (e.g. when the provider uses the
+      // Anthropic transformer), we must pass it through unchanged — the downstream
+      // transformResponseIn will convert Anthropic SSE → Responses API SSE.
+      // Without this guard, the Responses-API → Chat → Responses-API round-trip
+      // corrupts Anthropic events, causing Codex to receive malformed SSE.
+      const [peekStream, bodyStream] = response.body.tee();
+      const peekReader = peekStream.getReader();
+      let firstChunk = "";
+      try {
+        const { value, done } = await peekReader.read();
+        if (!done && value) {
+          firstChunk = new TextDecoder().decode(value);
+        }
+      } finally {
+        peekReader.releaseLock();
+      }
+      peekStream.cancel().catch(() => {});
+
+      const isAnthropic = firstChunk.includes("message_start") || firstChunk.includes("content_block_start");
+      if (isAnthropic) {
+        // Reconstruct the stream with the peeked first chunk prepended
+        const restoredStream = this.prependToStream(firstChunk, bodyStream);
+        return new Response(restoredStream, {
+          status: response.status,
+          statusText: response.statusText,
+          headers: response.headers,
+        });
+      }
+
+      // Also pass through if the upstream already speaks Responses API natively.
+      // The downstream transformResponseIn will detect and handle it.
+      const isAlreadyResponsesAPI = firstChunk.includes("response.created") ||
+        firstChunk.includes("response.output_text.delta") ||
+        firstChunk.includes("response.in_progress") ||
+        firstChunk.includes("response.output_item.added");
+      if (isAlreadyResponsesAPI) {
+        const restoredStream = this.prependToStream(firstChunk, bodyStream);
+        return new Response(restoredStream, {
+          status: response.status,
+          statusText: response.statusText,
+          headers: response.headers,
+        });
+      }
+
+      // OpenAI Chat SSE — proceed with Responses API → Chat conversion below
+      // (prepend the peeked chunk so nothing is lost)
+      const sourceStream = this.prependToStream(firstChunk, bodyStream);
+
       const decoder = new TextDecoder();
       const encoder = new TextEncoder();
-      let buffer = ""; // 用于缓冲不完整的数据
+      let buffer = ""; // Buffer for incomplete lines
       let isStreamEnded = false;
 
       const transformer = this;
       const stream = new ReadableStream({
         async start(controller) {
-          const reader = response.body!.getReader();
+          const reader = sourceStream.getReader();
 
-          // 索引跟踪变量，只有在事件类型切换时才增加索引
+          // Index tracking — only increments when event type changes
           let currentIndex = -1;
           let lastEventType = "";
 
-          // 获取当前应该使用的索引的函数
           const getCurrentIndex = (eventType: string) => {
             if (eventType !== lastEventType) {
               currentIndex++;
@@ -663,12 +724,26 @@ export class OpenAIResponsesTransformer implements Transformer {
       const isAnthropic = firstChunk.includes("message_start") || firstChunk.includes("content_block_start");
       // Detect OpenAI Chat SSE by looking for "object":"chat.completion.chunk"
       const isOpenAIChat = firstChunk.includes("chat.completion.chunk");
+      // Detect native Responses API SSE — upstream already speaks the Responses API format.
+      // Pass it through unchanged so Codex can parse it directly.
+      const isResponsesAPI = firstChunk.includes("response.created") ||
+        firstChunk.includes("response.output_text.delta") ||
+        firstChunk.includes("response.in_progress") ||
+        firstChunk.includes("response.output_item.added");
+
+      if (isResponsesAPI) {
+        return new Response(bodyStream, {
+          headers: {
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            Connection: "keep-alive",
+          },
+        });
+      }
 
       if (isOpenAIChat && !isAnthropic) {
         // OpenAI Chat SSE → Responses API SSE
-        // We need to prepend the peeked chunk back onto the stream
-        const combinedStream = this.prependToStream(firstChunk, bodyStream);
-        const converted = this.convertOpenAIChatStreamToResponsesAPI(combinedStream, context);
+        const converted = this.convertOpenAIChatStreamToResponsesAPI(bodyStream, context);
         return new Response(converted, {
           headers: {
             "Content-Type": "text/event-stream",
@@ -679,8 +754,7 @@ export class OpenAIResponsesTransformer implements Transformer {
       }
 
       // Default: treat as Anthropic SSE → Responses API SSE
-      const combinedStream = this.prependToStream(firstChunk, bodyStream);
-      const converted = this.convertAnthropicStreamToResponsesAPI(combinedStream, context);
+      const converted = this.convertAnthropicStreamToResponsesAPI(bodyStream, context);
       return new Response(converted, {
         headers: {
           "Content-Type": "text/event-stream",
@@ -753,11 +827,92 @@ export class OpenAIResponsesTransformer implements Transformer {
     let currentToolIndex = -1;
     const outputItems: any[] = [];
 
+    // Emit a properly-formatted SSE event with both event: and data: lines.
+    const emit = (type: string, payload: object) =>
+      encoder.encode(`event: ${type}\ndata: ${JSON.stringify(payload)}\n\n`);
+
+    // Build a base response object matching the official OpenAI Responses API shape.
+    const baseResponse = (status: string, output: any[] = []) => ({
+      id: responseId,
+      object: "response" as const,
+      created_at: Math.floor(Date.now() / 1000),
+      status,
+      model,
+      output,
+      usage: {
+        input_tokens: 0,
+        output_tokens: 0,
+        total_tokens: 0,
+        output_tokens_details: { reasoning_tokens: 0 },
+      },
+    });
+
     return new ReadableStream({
       async start(controller) {
         try {
           const reader = stream.getReader();
           let buffer = "";
+          let completedEmitted = false;
+
+          // Emit response.function_call_arguments.done + output_item.done for
+          // each pending tool call, then emit response.completed.
+          const finalizeResponse = (data: any) => {
+            if (completedEmitted) return;
+            completedEmitted = true;
+
+            // Finalize each tool call: emit arguments.done + output_item.done
+            for (const item of outputItems) {
+              if (item.type === "function_call") {
+                const idx = outputItems.indexOf(item);
+                controller.enqueue(emit("response.function_call_arguments.done", {
+                  type: "response.function_call_arguments.done",
+                  item_id: item.call_id || item.id,
+                  output_index: idx,
+                  arguments: item.arguments || "",
+                }));
+                item.status = "completed";
+                controller.enqueue(emit("response.output_item.done", {
+                  type: "response.output_item.done",
+                  output_index: idx,
+                  item,
+                }));
+              }
+            }
+
+            // Finalize text item if present
+            for (const item of outputItems) {
+              if (item.type === "message") {
+                const idx = outputItems.indexOf(item);
+                item.status = "completed";
+                controller.enqueue(emit("response.output_item.done", {
+                  type: "response.output_item.done",
+                  output_index: idx,
+                  item,
+                }));
+              }
+            }
+
+            controller.enqueue(emit("response.completed", {
+              type: "response.completed",
+              response: {
+                id: responseId,
+                object: "response",
+                created_at: Math.floor(Date.now() / 1000),
+                status: "completed",
+                model: data?.model || model,
+                output: outputItems.slice(),
+                usage: data?.usage ? {
+                  input_tokens: data.usage.prompt_tokens || 0,
+                  output_tokens: data.usage.completion_tokens || 0,
+                  total_tokens: data.usage.total_tokens || 0,
+                } : {
+                  input_tokens: 0,
+                  output_tokens: 0,
+                  total_tokens: 0,
+                },
+              },
+            }));
+          };
 
           while (true) {
             const { done, value } = await reader.read();
@@ -774,7 +929,8 @@ export class OpenAIResponsesTransformer implements Transformer {
 
               const raw = trimmed.slice(5).trim();
               if (raw === "[DONE]") {
-                // Emit response.completed if not already emitted
+                // Ensure response.completed is emitted before [DONE].
+                finalizeResponse({});
                 controller.enqueue(encoder.encode("data: [DONE]\n\n"));
                 continue;
               }
@@ -785,12 +941,8 @@ export class OpenAIResponsesTransformer implements Transformer {
               // Emit response.created on first chunk
               if (!sentCreated) {
                 sentCreated = true;
-                controller.enqueue(encoder.encode(
-                  `data: ${JSON.stringify({ type: "response.created", response: { id: responseId, model } })}\n\n`
-                ));
-                controller.enqueue(encoder.encode(
-                  `data: ${JSON.stringify({ type: "response.in_progress", response: { id: responseId, model } })}\n\n`
-                ));
+                controller.enqueue(emit("response.created", { type: "response.created", response: baseResponse("in_progress") }));
+                controller.enqueue(emit("response.in_progress", { type: "response.in_progress", response: baseResponse("in_progress") }));
               }
 
               const choice = data.choices?.[0];
@@ -802,61 +954,41 @@ export class OpenAIResponsesTransformer implements Transformer {
                 if (!sentTextItemAdded) {
                   sentTextItemAdded = true;
                   const idx = outputIndex++;
-                  const item = { id: `${responseId}-text`, type: "message", role: "assistant", content: [] };
+                  const item = { id: `${responseId}_msg`, type: "message", status: "in_progress", role: "assistant", content: [] };
                   outputItems.push(item);
-                  controller.enqueue(encoder.encode(
-                    `data: ${JSON.stringify({ type: "response.output_item.added", response_id: responseId, output_index: idx, item })}\n\n`
-                  ));
+                  controller.enqueue(emit("response.output_item.added", { type: "response.output_item.added", output_index: idx, item }));
                 }
-                controller.enqueue(encoder.encode(
-                  `data: ${JSON.stringify({ type: "response.output_text.delta", item_id: `${responseId}-text`, output_index: outputIndex - 1, content_index: 0, delta: delta.content })}\n\n`
-                ));
+                controller.enqueue(emit("response.output_text.delta", { type: "response.output_text.delta", item_id: `${responseId}_msg`, output_index: outputIndex - 1, content_index: 0, delta: delta.content }));
               }
 
               // Handle tool calls
               if (Array.isArray(delta?.tool_calls)) {
                 for (const tc of delta.tool_calls) {
                   if (tc.id) {
-                    // New tool call started
                     currentToolCallId = tc.id;
                     currentToolIndex = outputIndex++;
-                    const item = { id: tc.id, type: "function_call", call_id: tc.id, name: tc.function?.name || "", arguments: "" };
+                    const item = { id: tc.id, type: "function_call", status: "in_progress", call_id: tc.id, name: tc.function?.name || "", arguments: "" };
                     outputItems.push(item);
-                    controller.enqueue(encoder.encode(
-                      `data: ${JSON.stringify({ type: "response.output_item.added", response_id: responseId, output_index: currentToolIndex, item })}\n\n`
-                    ));
+                    controller.enqueue(emit("response.output_item.added", { type: "response.output_item.added", output_index: currentToolIndex, item }));
                   }
                   if (tc.function?.arguments) {
-                    controller.enqueue(encoder.encode(
-                      `data: ${JSON.stringify({ type: "response.function_call_arguments.delta", item_id: currentToolCallId, output_index: currentToolIndex, delta: tc.function.arguments })}\n\n`
-                    ));
-                    // Accumulate args
+                    controller.enqueue(emit("response.function_call_arguments.delta", { type: "response.function_call_arguments.delta", item_id: currentToolCallId, output_index: currentToolIndex, delta: tc.function.arguments }));
                     const existing = outputItems.find((o: any) => o.call_id === currentToolCallId);
                     if (existing) existing.arguments += tc.function.arguments;
                   }
                 }
               }
 
-              // Handle finish_reason → response.completed
+              // Handle finish_reason → finalize tool calls and emit response.completed
               if (choice.finish_reason) {
-                const finalOutput = outputItems.map((item: any) => item);
-                controller.enqueue(encoder.encode(
-                  `data: ${JSON.stringify({
-                    type: "response.completed",
-                    response: {
-                      id: responseId,
-                      model: data.model || model,
-                      output: finalOutput,
-                      usage: data.usage ? {
-                        input_tokens: data.usage.prompt_tokens || 0,
-                        output_tokens: data.usage.completion_tokens || 0,
-                        total_tokens: data.usage.total_tokens || 0,
-                      } : undefined,
-                    },
-                  })}\n\n`
-                ));
+                finalizeResponse(data);
               }
             }
+          }
+
+          // Stream ended without [DONE] — still emit response.completed
+          if (!completedEmitted) {
+            finalizeResponse({});
           }
 
           controller.close();
@@ -876,21 +1008,110 @@ export class OpenAIResponsesTransformer implements Transformer {
     const model = (context?.provider?.models?.[0]) || "gpt-5.4";
     let responseId = `resp_${Date.now()}`;
     let textContent = "";
+    let textItemId = "";
+    let textItemOutputIndex = -1;
     let toolCallId = "";
     let toolCallName = "";
     let toolCallArgs = "";
+    let toolCallOutputIndex = -1;
     let thinkingContent = "";
+    let thinkingItemId = "";
+    let thinkingOutputIndex = -1;
     let outputIndex = 0;
+    let sentCreated = false;
     let sentTextItemAdded = false;
     let sentThinkingItemAdded = false;
-    // Track which content block type we're currently inside so content_block_stop
-    // can finalize tool-use arguments correctly.
+    let completedEmitted = false;
     let currentBlockType: "text" | "thinking" | "tool_use" | null = null;
-    // Accumulate output items for the final response.completed event.
     const outputItems: any[] = [];
 
+    // Emit a properly-formatted SSE event with both event: and data: lines.
+    // The OpenAI SDK dispatches on the named event type, so both lines are required.
+    const emit = (type: string, payload: object) =>
+      encoder.encode(`event: ${type}\ndata: ${JSON.stringify(payload)}\n\n`);
+
+    // Build a base response object with all required fields matching the official
+    // OpenAI Responses API shape. Codex SDK expects object, status, output, etc.
+    const baseResponse = (status: string, output: any[] = []) => ({
+      id: responseId,
+      object: "response" as const,
+      created_at: Math.floor(Date.now() / 1000),
+      status,
+      model,
+      output,
+      usage: {
+        input_tokens: 0,
+        output_tokens: 0,
+        total_tokens: 0,
+        output_tokens_details: { reasoning_tokens: 0 },
+      },
+    });
+
+    // Emit response.created + response.in_progress if not yet done.
+    const ensureCreated = () => {
+      if (sentCreated) return;
+      sentCreated = true;
+      controller.enqueue(emit("response.created", { type: "response.created", response: baseResponse("in_progress") }));
+      controller.enqueue(emit("response.in_progress", { type: "response.in_progress", response: baseResponse("in_progress") }));
+    };
+
+    // Emit response.output_item.done for a completed output item.
+    const emitOutputItemDone = (outputIdx: number, item: any) => {
+      controller.enqueue(emit("response.output_item.done", {
+        type: "response.output_item.done",
+        output_index: outputIdx,
+        item: { ...item, status: "completed" },
+      }));
+    };
+
+    // Helper: emit response.completed from current outputItems state if not yet emitted.
+    const emitCompleted = (usage?: any) => {
+      if (completedEmitted) return;
+      completedEmitted = true;
+
+      // Finalize any open text item
+      if (sentTextItemAdded) {
+        const textItem = outputItems.find((o: any) => o.type === "message");
+        if (textItem) {
+          textItem.content = [{ type: "output_text", text: textContent }];
+          textItem.status = "completed";
+        }
+      }
+
+      // Finalize any open tool items
+      for (const item of outputItems) {
+        if (item.type === "function_call") {
+          item.status = "completed";
+        }
+      }
+
+      return emit("response.completed", {
+        type: "response.completed",
+        response: {
+          id: responseId,
+          object: "response",
+          created_at: Math.floor(Date.now() / 1000),
+          status: "completed",
+          model,
+          output: outputItems,
+          usage: usage ? {
+            input_tokens: usage.input_tokens || 0,
+            output_tokens: usage.output_tokens || 0,
+            total_tokens: (usage.input_tokens || 0) + (usage.output_tokens || 0),
+          } : {
+            input_tokens: 0,
+            output_tokens: 0,
+            total_tokens: 0,
+          },
+        },
+      });
+    };
+
+    let controller: ReadableStreamDefaultController;
+
     return new ReadableStream({
-      async start(controller) {
+      async start(ctrl) {
+        controller = ctrl;
         try {
           const reader = stream.getReader();
           let buffer = "";
@@ -916,176 +1137,203 @@ export class OpenAIResponsesTransformer implements Transformer {
 
               if (data.type === "message_start") {
                 responseId = data.message?.id || responseId;
-                controller.enqueue(encoder.encode(
-                  `data: ${JSON.stringify({ type: "response.created", response: { id: responseId, model } })}\n\n`
-                ));
-                controller.enqueue(encoder.encode(
-                  `data: ${JSON.stringify({ type: "response.in_progress", response: { id: responseId, model } })}\n\n`
-                ));
+                ensureCreated();
               }
 
               if (data.type === "content_block_start") {
                 const block = data.content_block;
                 currentBlockType = block?.type || null;
+
                 if (block?.type === "tool_use") {
                   toolCallId = block.id || "";
                   toolCallName = block.name || "";
                   toolCallArgs = "";
-                  const idx = outputIndex++;
-                  const item = { id: toolCallId, type: "function_call", call_id: toolCallId, name: toolCallName, arguments: "" };
+                  toolCallOutputIndex = outputIndex++;
+                  const item = {
+                    id: toolCallId,
+                    type: "function_call",
+                    status: "in_progress",
+                    call_id: toolCallId,
+                    name: toolCallName,
+                    arguments: "",
+                  };
                   outputItems.push(item);
-                  controller.enqueue(encoder.encode(
-                    `data: ${JSON.stringify({
-                      type: "response.output_item.added",
-                      response_id: responseId,
-                      output_index: idx,
-                      item,
-                    })}\n\n`
-                  ));
+                  controller.enqueue(emit("response.output_item.added", {
+                    type: "response.output_item.added",
+                    output_index: toolCallOutputIndex,
+                    item,
+                  }));
                 }
+
                 if (block?.type === "thinking") {
                   thinkingContent = block.thinking || "";
                   if (!sentThinkingItemAdded) {
                     sentThinkingItemAdded = true;
-                    const idx = outputIndex++;
-                    const item = { id: `${responseId}-reasoning`, type: "reasoning_summary", summary: thinkingContent };
+                    thinkingOutputIndex = outputIndex++;
+                    thinkingItemId = `rs_${responseId}`;
+                    const item = {
+                      id: thinkingItemId,
+                      type: "reasoning",
+                      status: "in_progress",
+                      summary: [],
+                    };
                     outputItems.push(item);
-                    controller.enqueue(encoder.encode(
-                      `data: ${JSON.stringify({
-                        type: "response.output_item.added",
-                        response_id: responseId,
-                        output_index: idx,
-                        item,
-                      })}\n\n`
-                    ));
+                    controller.enqueue(emit("response.output_item.added", {
+                      type: "response.output_item.added",
+                      output_index: thinkingOutputIndex,
+                      item,
+                    }));
                   }
                 }
+
                 if (block?.type === "text") {
                   textContent = block?.text || "";
-                  if (!sentTextItemAdded && block?.text !== undefined) {
+                  if (!sentTextItemAdded) {
                     sentTextItemAdded = true;
-                    const idx = outputIndex++;
-                    const item = { id: `${responseId}-text`, type: "message", role: "assistant", content: [] };
+                    textItemOutputIndex = outputIndex++;
+                    textItemId = `${responseId}_msg`;
+                    const item = {
+                      id: textItemId,
+                      type: "message",
+                      status: "in_progress",
+                      role: "assistant",
+                      content: [],
+                    };
                     outputItems.push(item);
-                    controller.enqueue(encoder.encode(
-                      `data: ${JSON.stringify({
-                        type: "response.output_item.added",
-                        response_id: responseId,
-                        output_index: idx,
-                        item,
-                      })}\n\n`
-                    ));
+                    controller.enqueue(emit("response.output_item.added", {
+                      type: "response.output_item.added",
+                      output_index: textItemOutputIndex,
+                      item,
+                    }));
                   }
                 }
               }
 
               if (data.type === "content_block_delta") {
                 const delta = data.delta;
+
                 if (delta?.type === "text_delta") {
-                  textContent += delta.text || "";
                   if (!sentTextItemAdded) {
                     sentTextItemAdded = true;
-                    const idx = outputIndex++;
-                    const item = { id: `${responseId}-text`, type: "message", role: "assistant", content: [] };
+                    textItemOutputIndex = outputIndex++;
+                    textItemId = `${responseId}_msg`;
+                    const item = {
+                      id: textItemId,
+                      type: "message",
+                      status: "in_progress",
+                      role: "assistant",
+                      content: [],
+                    };
                     outputItems.push(item);
-                    controller.enqueue(encoder.encode(
-                      `data: ${JSON.stringify({
-                        type: "response.output_item.added",
-                        response_id: responseId,
-                        output_index: idx,
-                        item,
-                      })}\n\n`
-                    ));
+                    controller.enqueue(emit("response.output_item.added", {
+                      type: "response.output_item.added",
+                      output_index: textItemOutputIndex,
+                      item,
+                    }));
                   }
-                  controller.enqueue(encoder.encode(
-                    `data: ${JSON.stringify({
-                      type: "response.output_text.delta",
-                      item_id: `${responseId}-text`,
-                      output_index: outputIndex - 1,
-                      content_index: 0,
-                      delta: delta.text || "",
-                    })}\n\n`
-                  ));
+                  textContent += delta.text || "";
+                  controller.enqueue(emit("response.output_text.delta", {
+                    type: "response.output_text.delta",
+                    item_id: textItemId,
+                    output_index: textItemOutputIndex,
+                    content_index: 0,
+                    delta: delta.text || "",
+                  }));
                 }
+
                 if (delta?.type === "thinking_delta") {
                   thinkingContent += delta.thinking || "";
-                  controller.enqueue(encoder.encode(
-                    `data: ${JSON.stringify({
-                      type: "response.reasoning_summary_text.delta",
-                      item_id: `${responseId}-reasoning`,
-                      output_index: outputIndex - 1,
-                      content_index: 0,
-                      delta: delta.thinking || "",
-                    })}\n\n`
-                  ));
+                  controller.enqueue(emit("response.reasoning_summary_text.delta", {
+                    type: "response.reasoning_summary_text.delta",
+                    item_id: thinkingItemId || `rs_${responseId}`,
+                    output_index: thinkingOutputIndex >= 0 ? thinkingOutputIndex : 0,
+                    summary_index: 0,
+                    delta: delta.thinking || "",
+                  }));
                 }
+
                 if (delta?.type === "input_json_delta") {
                   toolCallArgs += delta.partial_json || "";
-                  controller.enqueue(encoder.encode(
-                    `data: ${JSON.stringify({
-                      type: "response.function_call_arguments.delta",
-                      item_id: toolCallId || `${responseId}-tool`,
-                      output_index: outputIndex - 1,
-                      delta: delta.partial_json || "",
-                    })}\n\n`
-                  ));
+                  controller.enqueue(emit("response.function_call_arguments.delta", {
+                    type: "response.function_call_arguments.delta",
+                    item_id: toolCallId || `call_0`,
+                    output_index: toolCallOutputIndex >= 0 ? toolCallOutputIndex : 0,
+                    delta: delta.partial_json || "",
+                  }));
                 }
               }
 
               if (data.type === "content_block_stop") {
-                // Finalize tool-use arguments when the tool_use block ends.
-                // Emit a function_call_arguments.done event with the complete
-                // assembled arguments so Codex knows the argument stream is
-                // complete. Also update the outputItems entry with the full args.
                 if (currentBlockType === "tool_use" && toolCallId) {
-                  controller.enqueue(encoder.encode(
-                    `data: ${JSON.stringify({
-                      type: "response.function_call_arguments.done",
-                      item_id: toolCallId,
-                      output_index: outputIndex - 1,
-                      delta: toolCallArgs,
-                    })}\n\n`
-                  ));
-                  // Update the accumulated output item with the full arguments
+                  // Emit function_call_arguments.done with "arguments" field (not "delta")
+                  // — the OpenAI Responses API spec uses "arguments" here.
+                  controller.enqueue(emit("response.function_call_arguments.done", {
+                    type: "response.function_call_arguments.done",
+                    item_id: toolCallId,
+                    output_index: toolCallOutputIndex,
+                    arguments: toolCallArgs,
+                  }));
                   const existingItem = outputItems.find((o: any) => o.call_id === toolCallId);
                   if (existingItem) {
                     existingItem.arguments = toolCallArgs;
+                    existingItem.status = "completed";
+                  }
+                  // Emit output_item.done to signal the item is finalized.
+                  if (existingItem) {
+                    emitOutputItemDone(toolCallOutputIndex, existingItem);
                   }
                 }
+
+                if (currentBlockType === "text" && sentTextItemAdded) {
+                  // Emit output_text.done and output_item.done for text block.
+                  controller.enqueue(emit("response.output_text.done", {
+                    type: "response.output_text.done",
+                    item_id: textItemId,
+                    output_index: textItemOutputIndex,
+                    content_index: 0,
+                    text: textContent,
+                  }));
+                  const textItem = outputItems.find((o: any) => o.type === "message");
+                  if (textItem) {
+                    textItem.content = [{ type: "output_text", text: textContent }];
+                    emitOutputItemDone(textItemOutputIndex, textItem);
+                  }
+                }
+
+                if (currentBlockType === "thinking" && sentThinkingItemAdded) {
+                  const thinkItem = outputItems.find((o: any) => o.type === "reasoning");
+                  if (thinkItem) {
+                    thinkItem.summary = [{ type: "summary_text", text: thinkingContent }];
+                    emitOutputItemDone(thinkingOutputIndex, thinkItem);
+                  }
+                }
+
                 currentBlockType = null;
               }
 
               if (data.type === "message_delta") {
-                const usage = data.usage;
-                // Build the final output array for response.completed.
-                // For text items, include the full text content.
-                const finalOutput = outputItems.map((item: any) => {
-                  if (item.type === "message" && item.role === "assistant") {
-                    return { ...item, content: [{ type: "output_text", text: textContent }] };
-                  }
-                  return item;
-                });
-                controller.enqueue(encoder.encode(
-                  `data: ${JSON.stringify({
-                    type: "response.completed",
-                    response: {
-                      id: responseId,
-                      model,
-                      output: finalOutput,
-                      usage: usage ? {
-                        input_tokens: usage.input_tokens || 0,
-                        output_tokens: usage.output_tokens || 0,
-                        total_tokens: (usage.input_tokens || 0) + (usage.output_tokens || 0),
-                      } : undefined,
-                    },
-                  })}\n\n`
-                ));
+                const completedEvent = emitCompleted(data.usage);
+                if (completedEvent) {
+                  controller.enqueue(completedEvent);
+                }
               }
 
               if (data.type === "message_stop") {
+                // Ensure response.completed is always emitted before [DONE].
+                const completedEvent = emitCompleted();
+                if (completedEvent) {
+                  controller.enqueue(completedEvent);
+                }
                 controller.enqueue(encoder.encode("data: [DONE]\n\n"));
               }
             }
+          }
+
+          // Stream ended — if we never saw message_stop, still emit response.completed.
+          ensureCreated();
+          const finalCompleted = emitCompleted();
+          if (finalCompleted) {
+            controller.enqueue(finalCompleted);
           }
 
           buffer = "";
