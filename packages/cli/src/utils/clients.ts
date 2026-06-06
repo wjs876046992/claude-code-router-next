@@ -7,6 +7,7 @@ import {
   disableConfiguredClients,
   enableClient,
   enableConfiguredClients,
+  exportCodexRefreshToken,
   importCodexAccountFromRefreshToken,
   importCurrentCodexAccount,
   isClientId,
@@ -178,10 +179,16 @@ export async function handleClientsCommand(args: string[]): Promise<void> {
         console.log(`✓ Deleted Codex account: ${accountId}`);
         return;
       }
+      if (action === "export-rt") {
+        const result = exportCodexRefreshToken(config, args[2]);
+        console.log(result.refreshToken);
+        return;
+      }
       console.log(`Usage:
   ccr clients codex accounts
   ccr clients codex import-current [label]
   ccr clients codex import-rt <refresh-token> [label]
+  ccr clients codex export-rt [account-id]
   ccr clients codex activate <account-id>
   ccr clients codex delete <account-id>`);
       process.exit(1);

@@ -92,10 +92,13 @@ npm install -g @wengine-ai/claude-code-router-next@latest && ccr restart
 
 | 版本 | 发布内容 |
 | --- | --- |
-| **v2.1.34** | <ul><li>**Codex 账号列表缓存优化**：Codex 账号页优先读取本地固化账号与限额缓存，页面刷新无需等待官方 usage 接口；当前账号后台 1 分钟刷新一次，非当前账号 30 分钟刷新一次。</li></ul> |
+| **v2.1.36** | <ul><li>**Codex 最新 RT 导出**：Codex 账号管理支持导出当前或指定托管账号的最新 refresh token，CLI 新增 `ccr clients codex export-rt [account-id]`，Web UI 新增复制最新 RT 按钮，并会在当前 auth 文件更新时同步托管快照。</li></ul> |
+| **v2.1.35** | <ul><li>**定时唤醒稳定性修复**：提供商定时唤醒在 macOS 睡眠/唤醒或系统时间跳变后会重新计算下一次触发时间，避免错过或重复执行唤醒任务。</li></ul> |
+| **v2.1.34** | <ul><li>**本地客户端配置接管**：新增 Client Configuration 管理能力，可通过 UI/API/CLI 启用、禁用或恢复本地 Claude Code、Codex 等客户端配置，并自动写入 CCR 代理地址与模型别名。</li><li>**Codex 本地账号代管理**：新增 Codex 账号管理页与 `ccr clients codex` 命令，支持导入当前登录账号、通过 refresh token 导入、切换激活账号、删除托管账号，并对官方 auth 文件做备份与替换。</li><li>**Codex 账号列表缓存优化**：Codex 账号页优先读取本地固化账号与限额缓存，页面刷新无需等待官方 usage 接口；当前账号后台 1 分钟刷新一次，非当前账号 30 分钟刷新一次。</li><li>**Codex / OpenAI Responses API 兼容**：新增 `openai-responses` Transformer，支持 Codex 使用 Responses API wire format 接入 CCR，并完成 Chat/Anthropic 与 Responses 的流式、非流式转换。</li><li>**状态栏视觉升级**：状态栏新增彩色渐变 Context 上下文占用进度条，提升长上下文使用情况的可读性。</li></ul> |
 | **v2.1.32** | <ul><li>**供应商刷新按钮位置优化**：单个供应商刷新按钮移动到卡片顶部状态行，位于启用开关左侧；hover 操作区仅保留编辑和删除。</li></ul> |
 | **v2.1.31** | <ul><li>**供应商操作区优化**：供应商卡片右侧刷新、编辑、删除按钮改为紧凑横向排列，避免纵向拉伸导致卡片视觉松散。</li></ul> |
 | **v2.1.30** | <ul><li>**Codex 多账号限额展示**：Codex 账号管理页新增官方限额信息展示，通过 `chatgpt.com/backend-api/wham/usage` 获取 5 小时速率限制与 7 天周限制的使用百分比和重置时间。</li><li>**Codex 账号自动切换**：Codex 请求前会检查当前账号官方限额，默认任一窗口达到 95% 自动切换到下一个可用账号；仍保留 429/限流错误后的自动切换兜底。</li></ul> |
+| **v2.1.27** | <ul><li>**DeepSeek / GLM 工具调用兼容修复**：修复部分 DeepSeek 与 GLM 兼容接口因 `tool_choice` 参数格式不一致导致的请求失败问题。</li></ul> |
 | **v2.1.26** | <ul><li>**修复 Anthropic Transformer URI 覆盖问题**：当 `Anthropic` 与 DeepSeek/OpenAI 兼容提供商组合使用时，不再把 `chat/completions` 端点错误改写为 `/v1/messages`，避免 DeepSeek 返回 404。</li><li>**协议转换边界收紧**：仅当 provider 的 `api_base_url` 明确指向 `/messages` 端点时，才将请求体转换为 Anthropic messages 结构。</li></ul> |
 | **v2.1.25** | <ul><li>**修复新版 Claude Code (v2.1.154+) 422 报错**：完美解决请求 `/v1/messages` 兼容提供商时因 messages 数组中包含 `role: "system"` 造成的 400/422 报错。</li><li>**动态 Passthrough 绕过自愈**：强制拦截带有 system 消息的 Anthropic 兼容提供商透传，自动进行双向协议规范化与 system 字段合并。</li><li>**响应无损透传修复**：支持目标为 Anthropic 协议响应的原样直出，解决了第三方接口转发时“请求成功但无数据返回”的重大漏洞。</li></ul> |
 | **v2.1.22** | <ul><li>**提供商定时唤醒功能 (定时唤醒)**：新增通用及提供商级别的清晨定时自动重置/唤醒机制，通过发送 dummy 消息提前激活额度。</li><li>**对称用量展示面板**：将 Web 控制台的用量统计网格从 8 张卡片升级为更美观对称的 10 卡片布局。</li><li>**高级用量指标统计**：新增对缓存命中率 (Cache Hit Rate) 及生成速度 (Average Speed) 的多维度计算与动态展示。</li></ul> |

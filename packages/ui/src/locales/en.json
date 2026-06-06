@@ -238,6 +238,7 @@
     "codex_auth_path": "Auth file",
     "codex_import_current": "Import Current",
     "codex_import_rt": "Import by RT",
+    "codex_export_active_rt": "Export Active RT",
     "codex_rt_placeholder": "Paste refresh token (rt...)",
     "codex_account_label_placeholder": "Optional local label; email is used when empty",
     "codex_accounts_empty": "No managed accounts yet. Sign in with Codex, then import the current account.",
@@ -249,6 +250,8 @@
     "codex_account_activate_failed": "Failed to switch Codex account",
     "codex_account_delete_success": "Managed Codex account deleted",
     "codex_account_delete_failed": "Failed to delete Codex account",
+    "codex_rt_export_success": "Latest RT copied",
+    "codex_rt_export_failed": "Failed to export Codex RT",
     "operation_failed": "operation failed"
   },
   "json_editor": {

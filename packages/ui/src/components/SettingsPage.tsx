@@ -13,7 +13,7 @@ import { UsageStats } from "./UsageStats";
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { LogViewer } from '@/components/LogViewer';
 import type { ClientApplyResponse, ClientId, ClientStatus, CodexAccount, CodexAccountOperationResponse, CodexAccountsResponse, StatusLineConfig, FallbackConfig } from "@/types";
-import { FileJson, FileText, CircleArrowUp, FileCog, ArrowLeft, Save, RefreshCw, Trash2, UserRound, CheckCircle2, Download } from "lucide-react";
+import { FileJson, FileText, CircleArrowUp, FileCog, ArrowLeft, Save, RefreshCw, Trash2, UserRound, CheckCircle2, Download, ClipboardCopy } from "lucide-react";
 import { Toast } from "@/components/ui/toast";
 import { api } from "@/lib/api";
 import { MODEL_FAMILIES } from "@/types";
@@ -66,6 +66,7 @@ export function SettingsPage() {
   const [isImportingCodexAccount, setIsImportingCodexAccount] = useState(false);
   const [isImportingCodexRt, setIsImportingCodexRt] = useState(false);
   const [codexAccountActionId, setCodexAccountActionId] = useState<string | null>(null);
+  const [exportingCodexRtId, setExportingCodexRtId] = useState<string | null>(null);
   const tabFromUrl = new URLSearchParams(location.search).get("tab");
   const initialTab = ["general", "codexAccounts", "clients", "router", "usage", "tools"].includes(tabFromUrl || "")
     ? tabFromUrl || "general"
@@ -384,6 +385,20 @@ export function SettingsPage() {
     }
   };
 
+  const copyCodexRefreshToken = async (accountId?: string) => {
+    const actionId = accountId || "active";
+    setExportingCodexRtId(actionId);
+    try {
+      const response = await api.exportCodexRefreshToken(accountId);
+      await navigator.clipboard.writeText(response.refreshToken);
+      setToast({ message: t("clients.codex_rt_export_success"), type: 'success' });
+    } catch (error) {
+      setToast({ message: t("clients.codex_rt_export_failed") + ': ' + (error as Error).message, type: 'error' });
+    } finally {
+      setExportingCodexRtId(null);
+    }
+  };
+
   const renderUsageBar = (
     label: string,
     windowLabel: string,
@@ -496,6 +511,15 @@ export function SettingsPage() {
             <Download className="mr-2 h-4 w-4" />
             {t("clients.codex_import_current")}
           </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => copyCodexRefreshToken()}
+            disabled={codexAccounts.length === 0 || exportingCodexRtId === "active" || isImportingCodexAccount || isImportingCodexRt || Boolean(codexAccountActionId)}
+          >
+            <ClipboardCopy className="mr-2 h-4 w-4" />
+            {t("clients.codex_export_active_rt")}
+          </Button>
         </div>
       </div>
       {codexAccounts.length === 0 ? (
@@ -550,15 +574,23 @@ export function SettingsPage() {
                   variant={account.active ? "default" : "outline"}
                   size="sm"
                   onClick={() => activateCodexAccount(account.id)}
-                  disabled={account.active || codexAccountActionId === account.id || isImportingCodexAccount || isImportingCodexRt}
+                  disabled={account.active || codexAccountActionId === account.id || exportingCodexRtId === account.id || isImportingCodexAccount || isImportingCodexRt}
                 >
                   {account.active ? t("clients.codex_account_active") : t("clients.codex_account_activate")}
                 </Button>
                 <Button
                   variant="outline"
                   size="sm"
+                  onClick={() => copyCodexRefreshToken(account.id)}
+                  disabled={codexAccountActionId === account.id || exportingCodexRtId === account.id || isImportingCodexAccount || isImportingCodexRt}
+                >
+                  <ClipboardCopy className="h-4 w-4" />
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
                   onClick={() => deleteCodexAccount(account.id)}
-                  disabled={codexAccountActionId === account.id || isImportingCodexAccount || isImportingCodexRt}
+                  disabled={codexAccountActionId === account.id || exportingCodexRtId === account.id || isImportingCodexAccount || isImportingCodexRt}
                 >
                   <Trash2 className="h-4 w-4" />
                 </Button>

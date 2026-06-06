@@ -219,7 +219,8 @@ function resolveConfiguredModel(
   modelName: string,
   providers: any[],
   skipHealthCheck?: boolean,
-  scenarioType?: string
+  scenarioType?: string,
+  enableFallback?: boolean
 ): string | null {
   const route = parseConfiguredRoute(modelName);
   if (!route) {
@@ -239,7 +240,7 @@ function resolveConfiguredModel(
 
   // Check if there is an active fallback promotion for this primary model
   // If a fallback succeeded globally, use the promoted model instead
-  if (scenarioType && !skipHealthCheck) {
+  if (enableFallback === true && scenarioType && !skipHealthCheck) {
     const fallbackPromotion = getFallbackPromotionStore();
     const promoted = fallbackPromotion.getPromotion(providerName, routeModel, scenarioType, providers);
     if (promoted) {
@@ -381,7 +382,8 @@ function resolveFamilyModel(
   providers: any[],
   lastUsage?: Usage,
   modelExtended?: boolean,
-  globalFallback?: RouterFallbackConfig
+  globalFallback?: RouterFallbackConfig,
+  enableFallback?: boolean
 ): { model: string; scenarioType: RouterScenarioType; isFallback: boolean } | null {
   const longContextThreshold = familyConfig.longContextThreshold || 60000;
   const effectiveTokenCount = Math.max(tokenCount, getUsageInputTokens(lastUsage));
@@ -392,13 +394,15 @@ function resolveFamilyModel(
   const extendedThreshold = 200000;
   const shouldUseExtended = modelExtended || effectiveTokenCount > extendedThreshold;
   if (shouldUseExtended && familyConfig.extendedContext) {
-    const model = resolveConfiguredModel(familyConfig.extendedContext, providers, false, 'extendedContext');
+    const model = resolveConfiguredModel(familyConfig.extendedContext, providers, false, 'extendedContext', enableFallback);
     if (model) {
       req.log.info(`Family: using extended context model (1M+), tokens: ${effectiveTokenCount}, estimated: ${tokenCount}, explicit: ${modelExtended}`);
       return { model, scenarioType: 'extendedContext', isFallback: false };
     }
 
-    const fallbackResult = resolveScenarioFallbackModel('extendedContext', providers, familyConfig.fallback, globalFallback, family);
+    const fallbackResult = enableFallback
+      ? resolveScenarioFallbackModel('extendedContext', providers, familyConfig.fallback, globalFallback, family)
+      : null;
     if (fallbackResult) {
       req.log.info(`Family: using extended context fallback model (1M+), tokens: ${effectiveTokenCount}, estimated: ${tokenCount}, explicit: ${modelExtended}`);
       return { model: fallbackResult, scenarioType: 'extendedContext', isFallback: true };
@@ -414,14 +418,16 @@ function resolveFamilyModel(
     (familyConfig.longContext || familyConfig.fallback?.longContext?.length || globalFallback?.longContext?.length)
   ) {
     const primary = familyConfig.longContext
-      ? resolveConfiguredModel(familyConfig.longContext, providers, false, 'longContext')
+      ? resolveConfiguredModel(familyConfig.longContext, providers, false, 'longContext', enableFallback)
       : null;
     if (primary) {
       req.log.info(`Family: using long context model, tokens: ${effectiveTokenCount}, estimated: ${tokenCount}`);
       return { model: primary, scenarioType: 'longContext', isFallback: false };
     }
 
-    const fallbackResult = resolveScenarioFallbackModel('longContext', providers, familyConfig.fallback, globalFallback, family);
+    const fallbackResult = enableFallback
+      ? resolveScenarioFallbackModel('longContext', providers, familyConfig.fallback, globalFallback, family)
+      : null;
     if (fallbackResult) {
       req.log.info(`Family: using long context fallback model, tokens: ${effectiveTokenCount}, estimated: ${tokenCount}`);
       return { model: fallbackResult, scenarioType: 'longContext', isFallback: true };
@@ -436,12 +442,14 @@ function resolveFamilyModel(
     req.body.tools.some((tool: any) => tool.type?.startsWith("web_search")) &&
     familyConfig.webSearch
   ) {
-    const model = resolveConfiguredModel(familyConfig.webSearch, providers, false, 'webSearch');
+    const model = resolveConfiguredModel(familyConfig.webSearch, providers, false, 'webSearch', enableFallback);
     if (model) {
       return { model, scenarioType: 'webSearch', isFallback: false };
     }
 
-    const fallbackResult = resolveScenarioFallbackModel('webSearch', providers, familyConfig.fallback, globalFallback, family);
+    const fallbackResult = enableFallback
+      ? resolveScenarioFallbackModel('webSearch', providers, familyConfig.fallback, globalFallback, family)
+      : null;
     if (fallbackResult) {
       req.log.info(`Family: using webSearch fallback model`);
       return { model: fallbackResult, scenarioType: 'webSearch', isFallback: true };
@@ -451,12 +459,14 @@ function resolveFamilyModel(
   }
 
   if (req.body.thinking && familyConfig.think) {
-    const model = resolveConfiguredModel(familyConfig.think, providers, false, 'think');
+    const model = resolveConfiguredModel(familyConfig.think, providers, false, 'think', enableFallback);
     if (model) {
       return { model, scenarioType: 'think', isFallback: false };
     }
 
-    const fallbackResult = resolveScenarioFallbackModel('think', providers, familyConfig.fallback, globalFallback, family);
+    const fallbackResult = enableFallback
+      ? resolveScenarioFallbackModel('think', providers, familyConfig.fallback, globalFallback, family)
+      : null;
     if (fallbackResult) {
       req.log.info(`Family: using think fallback model`);
       return { model: fallbackResult, scenarioType: 'think', isFallback: true };
@@ -466,12 +476,14 @@ function resolveFamilyModel(
   }
 
   if (familyConfig.default) {
-    const model = resolveConfiguredModel(familyConfig.default, providers, false, 'default');
+    const model = resolveConfiguredModel(familyConfig.default, providers, false, 'default', enableFallback);
     if (model) {
       return { model, scenarioType: 'default', isFallback: false };
     }
 
-    const fallbackResult = resolveScenarioFallbackModel('default', providers, familyConfig.fallback, globalFallback, family);
+    const fallbackResult = enableFallback
+      ? resolveScenarioFallbackModel('default', providers, familyConfig.fallback, globalFallback, family)
+      : null;
     if (fallbackResult) {
       req.log.info(`Family: using default fallback model`);
       return { model: fallbackResult, scenarioType: 'default', isFallback: true };
@@ -492,17 +504,20 @@ const getUseModel = async (
   const projectSpecificRouter = await getProjectSpecificRouter(req, configService);
   const providers = configService.get<any[]>("providers") || [];
   const Router = projectSpecificRouter || configService.get("Router");
-  const globalFallback = configService.get<RouterFallbackConfig>('fallback');
+  const enableFallback = Router?.enableFallback === true;
+  const globalFallback = enableFallback ? configService.get<RouterFallbackConfig>('fallback') : undefined;
 
   // Handle explicit provider,model format
   if (req.body.model.includes(",")) {
-    const model = resolveConfiguredModel(req.body.model, providers, false, 'default');
+    const model = resolveConfiguredModel(req.body.model, providers, false, 'default', enableFallback);
     if (model) {
       return { model, scenarioType: 'default' };
     }
     req.log.warn(`Explicit model ${req.body.model} unavailable (fail pool), trying fallback`);
     // Try fallback for default scenario (explicit models are treated as default)
-    const fallbackResult = resolveScenarioFallbackModel('default', providers, undefined, globalFallback);
+    const fallbackResult = enableFallback
+      ? resolveScenarioFallbackModel('default', providers, undefined, globalFallback)
+      : null;
     if (fallbackResult) {
       req.log.info(`Using fallback for explicit model: ${fallbackResult}`);
       return { model: fallbackResult, scenarioType: 'default' };
@@ -525,7 +540,8 @@ const getUseModel = async (
       providers,
       lastUsage,
       modelExtended,
-      globalFallback
+      globalFallback,
+      enableFallback
     );
     if (familyResult) {
       // Return only model and scenarioType (isFallback is internal)
@@ -535,7 +551,7 @@ const getUseModel = async (
 
   const mappedModel = lookupModelMapping(req.body.model, Router?.models as Record<string, string> | undefined);
   if (mappedModel) {
-    const model = resolveConfiguredModel(mappedModel, providers, false, 'modelMapping');
+    const model = resolveConfiguredModel(mappedModel, providers, false, 'modelMapping', enableFallback);
     if (model) {
       req.log.info(`Using mapped model for ${req.body.model}: ${mappedModel}`);
       return { model, scenarioType: 'modelMapping' };
@@ -551,12 +567,14 @@ const getUseModel = async (
     req.log.info(
       `Using extended context (1M) model due to token count: ${effectiveTokenCount}, estimated: ${tokenCount}, threshold: ${extendedContextThreshold}`
     );
-    const model = resolveConfiguredModel(Router.extendedContext, providers, false, 'extendedContext');
+    const model = resolveConfiguredModel(Router.extendedContext, providers, false, 'extendedContext', enableFallback);
     if (model) {
       return { model, scenarioType: 'extendedContext' };
     }
     req.log.warn(`Extended context model ${Router.extendedContext} unavailable (fail pool), trying fallback`);
-    const fallbackResult = resolveScenarioFallbackModel('extendedContext', providers, undefined, globalFallback);
+    const fallbackResult = enableFallback
+      ? resolveScenarioFallbackModel('extendedContext', providers, undefined, globalFallback)
+      : null;
     if (fallbackResult) {
       return { model: fallbackResult, scenarioType: 'extendedContext' };
     }
@@ -570,12 +588,14 @@ const getUseModel = async (
     req.log.info(
       `Using long context model due to token count: ${effectiveTokenCount}, estimated: ${tokenCount}, threshold: ${longContextThreshold}`
     );
-    const model = resolveConfiguredModel(Router.longContext, providers, false, 'longContext');
+    const model = resolveConfiguredModel(Router.longContext, providers, false, 'longContext', enableFallback);
     if (model) {
       return { model, scenarioType: 'longContext' };
     }
     req.log.warn(`Long context model ${Router.longContext} unavailable (fail pool), trying fallback`);
-    const fallbackResult = resolveScenarioFallbackModel('longContext', providers, undefined, globalFallback);
+    const fallbackResult = enableFallback
+      ? resolveScenarioFallbackModel('longContext', providers, undefined, globalFallback)
+      : null;
     if (fallbackResult) {
       return { model: fallbackResult, scenarioType: 'longContext' };
     }
@@ -604,7 +624,7 @@ const getUseModel = async (
     globalRouter?.background
   ) {
     req.log.info(`Using background model for ${req.body.model}`);
-    const bgModel = resolveConfiguredModel(globalRouter.background, providers, false, 'background');
+    const bgModel = resolveConfiguredModel(globalRouter.background, providers, false, 'background', enableFallback);
     if (bgModel) {
       return { model: bgModel, scenarioType: 'background' };
     }
@@ -617,12 +637,14 @@ const getUseModel = async (
     req.body.tools.some((tool: any) => tool.type?.startsWith("web_search")) &&
     Router?.webSearch
   ) {
-    const model = resolveConfiguredModel(Router.webSearch, providers, false, 'webSearch');
+    const model = resolveConfiguredModel(Router.webSearch, providers, false, 'webSearch', enableFallback);
     if (model) {
       return { model, scenarioType: 'webSearch' };
     }
     req.log.warn(`WebSearch model ${Router.webSearch} unavailable (fail pool), trying fallback`);
-    const fallbackResult = resolveScenarioFallbackModel('webSearch', providers, undefined, globalFallback);
+    const fallbackResult = enableFallback
+      ? resolveScenarioFallbackModel('webSearch', providers, undefined, globalFallback)
+      : null;
     if (fallbackResult) {
       return { model: fallbackResult, scenarioType: 'webSearch' };
     }
@@ -631,12 +653,14 @@ const getUseModel = async (
   // if exits thinking, use the think model
   if (req.body.thinking && Router?.think) {
     req.log.info(`Using think model for ${req.body.thinking}`);
-    const model = resolveConfiguredModel(Router.think, providers, false, 'think');
+    const model = resolveConfiguredModel(Router.think, providers, false, 'think', enableFallback);
     if (model) {
       return { model, scenarioType: 'think' };
     }
     req.log.warn(`Think model ${Router.think} unavailable (fail pool), trying fallback`);
-    const fallbackResult = resolveScenarioFallbackModel('think', providers, undefined, globalFallback);
+    const fallbackResult = enableFallback
+      ? resolveScenarioFallbackModel('think', providers, undefined, globalFallback)
+      : null;
     if (fallbackResult) {
       return { model: fallbackResult, scenarioType: 'think' };
     }
@@ -644,12 +668,14 @@ const getUseModel = async (
   }
   // Default routing with health check
   if (Router?.default) {
-    const model = resolveConfiguredModel(Router.default, providers, false, 'default');
+    const model = resolveConfiguredModel(Router.default, providers, false, 'default', enableFallback);
     if (model) {
       return { model, scenarioType: 'default' };
     }
     req.log.warn(`Default model ${Router.default} unavailable (fail pool), trying fallback`);
-    const fallbackResult = resolveScenarioFallbackModel('default', providers, undefined, globalFallback);
+    const fallbackResult = enableFallback
+      ? resolveScenarioFallbackModel('default', providers, undefined, globalFallback)
+      : null;
     if (fallbackResult) {
       return { model: fallbackResult, scenarioType: 'default' };
     }
@@ -691,6 +717,7 @@ export const router = async (req: any, _res: any, context: RouterContext) => {
   }
   const projectSpecificRouter = await getProjectSpecificRouter(req, configService);
   const routerConfig = projectSpecificRouter || configService.get("Router");
+  const enableFallback = routerConfig?.enableFallback === true;
   const providers = configService.get<any[]>("providers") || [];
   const lastMessageUsage = sessionUsageCache.get(req.sessionId);
   const { messages, system = [], tools }: MessageCreateParamsBase = req.body;
@@ -763,7 +790,7 @@ export const router = async (req: any, _res: any, context: RouterContext) => {
       requestHasImages(req) &&
       !modelSupportsImages(model)
     ) {
-      const imageModel = resolveConfiguredModel(routerConfig.image, providers, false, 'image');
+      const imageModel = resolveConfiguredModel(routerConfig.image, providers, false, 'image', enableFallback);
       if (imageModel) {
         req.log.info(`Using image model fallback for ${model}`);
         model = imageModel;

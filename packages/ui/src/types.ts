@@ -168,6 +168,14 @@ export interface CodexAccountOperationResponse extends CodexAccountsResponse {
   config: Config;
 }
 
+export interface CodexRefreshTokenExportResponse {
+  success: boolean;
+  account: CodexAccount;
+  refreshToken: string;
+  refreshedAt?: string;
+  source: 'managed' | 'current';
+}
+
 export interface FallbackConfig {
   default?: string[];
   background?: string[];

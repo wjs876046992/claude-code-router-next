@@ -30,6 +30,7 @@ import {
   deleteCodexAccount,
   disableClient,
   enableClient,
+  exportCodexRefreshToken,
   importCodexAccountFromRefreshToken,
   importCurrentCodexAccount,
   isClientId,
@@ -699,6 +700,27 @@ export const createServer = async (config: any): Promise<any> => {
     } catch (error: any) {
       console.error("Failed to activate Codex account:", error);
       reply.status(500).send({ error: error.message || "Failed to activate Codex account" });
+    }
+  });
+
+  app.post("/api/clients/codex/accounts/:accountId/export-rt", async (req: any, reply: any) => {
+    try {
+      const { accountId } = req.params as { accountId: string };
+      const config = await readConfigFile();
+      return exportCodexRefreshToken(config, accountId);
+    } catch (error: any) {
+      console.error("Failed to export Codex refresh token:", error);
+      reply.status(500).send({ error: error.message || "Failed to export Codex refresh token" });
+    }
+  });
+
+  app.post("/api/clients/codex/accounts/export-rt", async (_req: any, reply: any) => {
+    try {
+      const config = await readConfigFile();
+      return exportCodexRefreshToken(config);
+    } catch (error: any) {
+      console.error("Failed to export active Codex refresh token:", error);
+      reply.status(500).send({ error: error.message || "Failed to export active Codex refresh token" });
     }
   });
 

@@ -238,6 +238,7 @@
     "codex_auth_path": "认证文件",
     "codex_import_current": "导入当前账号",
     "codex_import_rt": "通过 RT 导入",
+    "codex_export_active_rt": "导出当前 RT",
     "codex_rt_placeholder": "粘贴 refresh token (rt...)",
     "codex_account_label_placeholder": "可选：本地显示备注，不填则使用邮箱",
     "codex_accounts_empty": "还没有托管账号。先用 Codex 登录一个账号，再导入当前账号。",
@@ -249,6 +250,8 @@
     "codex_account_activate_failed": "切换 Codex 账号失败",
     "codex_account_delete_success": "已删除托管 Codex 账号",
     "codex_account_delete_failed": "删除 Codex 账号失败",
+    "codex_rt_export_success": "已复制最新 RT",
+    "codex_rt_export_failed": "导出 Codex RT 失败",
     "operation_failed": "操作失败"
   },
   "json_editor": {

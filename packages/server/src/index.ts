@@ -746,6 +746,17 @@ async function getServer(options: RunOptions = {}) {
                 // (e.g. cache_creation_input_tokens carried over from a different model)
                 const base = event === 'message_start' ? {} : existingUsage;
                 const mergedUsage = { ...base, ...data.usage };
+                req.log?.info?.({
+                  debug_log: true,
+                  reqId: req.id,
+                  phase: "usage_capture_anthropic_sse",
+                  event,
+                  provider: req.provider,
+                  model: getRequestModel(req),
+                  usageSessionId,
+                  capturedUsage: data.usage,
+                  mergedUsage,
+                });
 
                 // Belt-and-suspenders: some Anthropic-compatible providers (e.g. GLM)
                 // may embed OpenAI-style <= cached_tokens inside the SSE usage
@@ -780,6 +791,17 @@ async function getServer(options: RunOptions = {}) {
                   cache_read_input_tokens: respUsage.cache_read_input_tokens ?? existingUsage.cache_read_input_tokens ?? 0,
                   cache_creation_input_tokens: respUsage.cache_creation_input_tokens ?? existingUsage.cache_creation_input_tokens ?? 0,
                 };
+                req.log?.info?.({
+                  debug_log: true,
+                  reqId: req.id,
+                  phase: "usage_capture_responses_sse",
+                  event,
+                  provider: req.provider,
+                  model: getRequestModel(req),
+                  usageSessionId,
+                  capturedUsage: respUsage,
+                  mergedUsage,
+                });
                 sessionUsageCache.put(usageSessionId, mergedUsage);
               }
             }
@@ -891,6 +913,21 @@ async function getServer(options: RunOptions = {}) {
           });
         }
       }
+      const outputTokens = isFailedRequest ? 0 : (usage?.output_tokens || 0);
+      if (!isFailedRequest && req.body?.stream && rawInputTokens === 0 && outputTokens === 0) {
+        req.log?.warn?.({
+          debug_log: true,
+          reqId: req.id,
+          phase: "usage_zero_stream",
+          provider: req.provider,
+          originalModel: req.originalModel || req.body?.model || "",
+          model: getRequestModel(req),
+          usageSessionId: sessionId,
+          tokenCount: req.tokenCount,
+          cachedUsage: usage,
+          note: "Successful streaming request ended with zero usage. Check provider_stream_chunk usage_monitor and usage_capture_* logs.",
+        });
+      }
 
       appendUsage({
         id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -906,7 +943,7 @@ async function getServer(options: RunOptions = {}) {
         codexAccountEmail: req.codexAccountEmail,
         stream: req.body?.stream ?? false,
         inputTokens: rawInputTokens,
-        outputTokens: isFailedRequest ? 0 : (usage?.output_tokens || 0),
+        outputTokens,
         cacheReadInputTokens,
         cacheCreationInputTokens: usage?.cache_creation_input_tokens || 0,
         ttft: isFailedRequest ? null : speedStats.ttft,

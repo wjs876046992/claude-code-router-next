@@ -1,4 +1,4 @@
-import type { ClientApplyResponse, ClientId, ClientStatus, CodexAccountOperationResponse, CodexAccountsResponse, Config, Provider, Transformer, ProviderQuotaResponse } from '@/types';
+import type { ClientApplyResponse, ClientId, ClientStatus, CodexAccountOperationResponse, CodexAccountsResponse, CodexRefreshTokenExportResponse, Config, Provider, Transformer, ProviderQuotaResponse } from '@/types';
 
 // 日志聚合响应类型
 interface GroupedLogsResponse {
@@ -310,6 +310,13 @@ class ApiClient {
 
   async deleteCodexAccount(accountId: string): Promise<CodexAccountOperationResponse> {
     return this.delete<CodexAccountOperationResponse>(`/clients/codex/accounts/${encodeURIComponent(accountId)}`);
+  }
+
+  async exportCodexRefreshToken(accountId?: string): Promise<CodexRefreshTokenExportResponse> {
+    const endpoint = accountId
+      ? `/clients/codex/accounts/${encodeURIComponent(accountId)}/export-rt`
+      : '/clients/codex/accounts/export-rt';
+    return this.post<CodexRefreshTokenExportResponse>(endpoint, {});
   }
 
   // ========== Usage Statistics API methods ==========

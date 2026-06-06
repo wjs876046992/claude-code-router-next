@@ -556,6 +556,19 @@ export class AnthropicTransformer implements Transformer {
                   const promptTokens = chunk.usage?.prompt_tokens || 0;
                   // Keep Anthropic protocol semantics for Claude Code: input_tokens is net of cache reads.
                   const inputTokens = promptTokens - cachedTokens;
+                  this.logger?.info({
+                    debug_log: true,
+                    reqId: context.req.id,
+                    phase: "anthropic_transformer_usage",
+                    providerUsage: chunk.usage,
+                    mappedUsage: {
+                      input_tokens: inputTokens,
+                      output_tokens: chunk.usage?.completion_tokens || 0,
+                      cache_read_input_tokens: cachedTokens,
+                    },
+                    choicesLength: Array.isArray(chunk.choices) ? chunk.choices.length : undefined,
+                    finishReason: choice?.finish_reason,
+                  });
                   if (!stopReasonMessageDelta) {
                     stopReasonMessageDelta = {
                       type: "message_delta",

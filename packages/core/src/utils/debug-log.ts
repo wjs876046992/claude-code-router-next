@@ -101,13 +101,42 @@ export function logStreamChunk(
   chunkIndex: number,
   chunkStr: string
 ) {
+  const usageSummary = extractStreamUsageSummary(chunkStr);
   logger.info({
     debug_log: true,
     reqId,
     phase: "provider_stream_chunk",
     chunkIndex,
+    ...(usageSummary ? { usage_monitor: usageSummary } : {}),
     data: truncateBody(chunkStr, DEFAULT_OPTIONS.maxBodyLength),
   });
+}
+
+function extractStreamUsageSummary(chunkStr: string) {
+  const summaries: any[] = [];
+  for (const line of chunkStr.split(/\r?\n/)) {
+    if (!line.startsWith("data:")) continue;
+    const data = line.slice(5).trim();
+    if (!data || data === "[DONE]") continue;
+
+    try {
+      const parsed = JSON.parse(data);
+      const usage = parsed?.usage || parsed?.response?.usage;
+      if (usage) {
+        summaries.push({
+          path: parsed?.usage ? "usage" : "response.usage",
+          usage,
+          choicesLength: Array.isArray(parsed?.choices) ? parsed.choices.length : undefined,
+          finishReason: parsed?.choices?.[0]?.finish_reason,
+        });
+      }
+    } catch {
+      summaries.push({ parseError: true, data: truncateBody(data, 512) });
+    }
+  }
+
+  if (!summaries.length) return undefined;
+  return summaries.length === 1 ? summaries[0] : summaries;
 }
 
 export function logStreamEnd(logger: any, reqId: string, totalChunks: number) {

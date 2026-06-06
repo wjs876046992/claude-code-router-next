@@ -88,6 +88,14 @@ export interface CodexAccountOperationResult extends CodexAccountsResult {
   config: Record<string, any>;
 }
 
+export interface CodexRefreshTokenExportResult {
+  success: boolean;
+  account: CodexAccount;
+  refreshToken: string;
+  refreshedAt?: string;
+  source: "managed" | "current";
+}
+
 interface ClientDefinition {
   id: ClientId;
   name: string;
@@ -810,6 +818,26 @@ function writeCodexAuthObject(authPath: string, auth: Record<string, any>): void
   }
 }
 
+function getCodexAuthRefreshToken(auth: Record<string, any>): string | undefined {
+  const tokens = isObject(auth.tokens) ? auth.tokens : {};
+  return typeof tokens.refresh_token === "string" && tokens.refresh_token.trim()
+    ? tokens.refresh_token.trim()
+    : undefined;
+}
+
+function getCodexAuthRefreshTime(auth: Record<string, any>): number {
+  const raw = typeof auth.last_refresh === "string" ? auth.last_refresh : "";
+  const parsed = Date.parse(raw);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function isSameCodexAccount(auth: Record<string, any>, account: Omit<CodexAccount, "active">): boolean {
+  const metadata = extractCodexAuthMetadata(auth);
+  if (metadata.accountId && account.accountId && metadata.accountId === account.accountId) return true;
+  if (metadata.email && account.email && metadata.email === account.email) return true;
+  return safeAccountId(metadata.accountId || metadata.email || "") === account.id;
+}
+
 function getActiveCodexAccountId(config: Record<string, any>): string | undefined {
   const active = getRawClientConfig(config, "codex").activeAccountId;
   return typeof active === "string" && active ? active : undefined;
@@ -995,6 +1023,87 @@ export function importCurrentCodexAccount(
 ): CodexAccountOperationResult {
   const auth = readCodexAuthObject(getCodexAuthPath(config));
   return persistCodexAccountAuth(config, auth, label);
+}
+
+export function exportCodexRefreshToken(
+  config: Record<string, any>,
+  accountId?: string
+): CodexRefreshTokenExportResult {
+  const targetAccountId = accountId || getActiveCodexAccountId(config);
+  if (!targetAccountId) {
+    throw new Error("No active Codex account. Specify an account id or activate one first.");
+  }
+
+  const accounts = readCodexAccountsIndex();
+  const account = accounts.find((item) => item.id === targetAccountId);
+  if (!account) {
+    throw new Error(`Unknown Codex account: ${targetAccountId}`);
+  }
+
+  const storedAuthPath = getCodexAccountAuthPath(targetAccountId);
+  if (!fs.existsSync(storedAuthPath)) {
+    throw new Error(`Stored Codex auth file not found: ${storedAuthPath}`);
+  }
+
+  const candidates: Array<{ auth: Record<string, any>; source: "managed" | "current"; refreshedAt: number }> = [
+    {
+      auth: readCodexAuthObject(storedAuthPath),
+      source: "managed",
+      refreshedAt: 0,
+    },
+  ];
+  candidates[0].refreshedAt = getCodexAuthRefreshTime(candidates[0].auth);
+
+  const currentAuthPath = getCodexAuthPath(config);
+  if (getActiveCodexAccountId(config) === targetAccountId && fs.existsSync(currentAuthPath)) {
+    try {
+      const currentAuth = readCodexAuthObject(currentAuthPath);
+      if (isSameCodexAccount(currentAuth, account)) {
+        candidates.push({
+          auth: currentAuth,
+          source: "current",
+          refreshedAt: getCodexAuthRefreshTime(currentAuth),
+        });
+      }
+    } catch {
+      // Ignore malformed current auth and fall back to the managed snapshot.
+    }
+  }
+
+  const latest = candidates
+    .filter((candidate) => getCodexAuthRefreshToken(candidate.auth))
+    .sort((a, b) => b.refreshedAt - a.refreshedAt)[0];
+
+  if (!latest) {
+    throw new Error(`No refresh token found for Codex account: ${targetAccountId}`);
+  }
+
+  if (latest.source === "current") {
+    const storedRefreshTime = getCodexAuthRefreshTime(candidates[0].auth);
+    if (latest.refreshedAt > storedRefreshTime) {
+      writeCodexAuthObject(storedAuthPath, latest.auth);
+      const now = new Date().toISOString();
+      writeCodexAccountsIndex(accounts.map((item) => (
+        item.id === targetAccountId
+          ? { ...item, lastUsedAt: now, updatedAt: now }
+          : item
+      )));
+    }
+  }
+
+  const result = toCodexAccountsResult(config);
+  const resultAccount = result.accounts.find((item) => item.id === targetAccountId);
+  if (!resultAccount) {
+    throw new Error(`Unknown Codex account: ${targetAccountId}`);
+  }
+
+  return {
+    success: true,
+    account: resultAccount,
+    refreshToken: getCodexAuthRefreshToken(latest.auth)!,
+    refreshedAt: typeof latest.auth.last_refresh === "string" ? latest.auth.last_refresh : undefined,
+    source: latest.source,
+  };
 }
 
 async function exchangeCodexRefreshToken(refreshToken: string): Promise<Record<string, any>> {

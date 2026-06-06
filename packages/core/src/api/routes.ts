@@ -803,17 +803,23 @@ function shouldBypassTransformers(
  */
 function isCodexClient(req: any): boolean {
   const headers = req.headers || {};
+  const billingHeader = headers["x-anthropic-billing-header"] || "";
+  if (typeof billingHeader === "string" && billingHeader.includes("cc_version=")) {
+    return false;
+  }
+
   const userAgent = headers["user-agent"] || "";
   if (typeof userAgent === "string" && /codex/i.test(userAgent)) {
     return true;
   }
-  // Check model name — codex typically sends model names like gpt-5.x-xhigh
-  // or uses the codex provider
-  const model = req.body?.model || "";
-  if (typeof model === "string" && /gpt-5\.\d+-(xhigh|mini|fast|codex)/i.test(model)) {
+
+  const pathname = req.pathname || req.url || "";
+  if (typeof pathname === "string" && pathname.split("?", 1)[0].endsWith("/v1/responses")) {
     return true;
   }
-  return false;
+
+  const originalModel = req.originalModel || "";
+  return typeof originalModel === "string" && originalModel.toLowerCase() === "ccr-codex";
 }
 
 /**
