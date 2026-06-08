@@ -2,6 +2,40 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.3.0] - 2026-06-08
+
+### Added
+
+- **SQLite 用量存储**: 将本地用量数据从 JSONL 文件迁移到 SQLite 单文件数据库（`~/.claude-code-router/data/usage.sqlite`），提升查询性能和数据管理能力
+  - 采用 `better-sqlite3` 嵌入式数据库，对用户透明无感
+  - WAL 模式 + 索引优化，支持按时间、供应商、模型、场景、客户端类型等多维度高效查询
+  - 自动一次性迁移：首次启动时从旧 `usage.jsonl` 导入历史记录（`INSERT OR IGNORE` 保证幂等），迁移完成后不再重复导入
+  - 旧 `usage.jsonl` 保留为备份，不会被删除或截断
+- **180 天自动保留策略**: 自动清理超过 180 天的用量记录，在数据库初始化时和定期追加时执行，减少磁盘占用
+- **优雅关闭**: 新增 `close()` 函数支持 WAL checkpoint 和数据库连接清理
+
+### Changed
+
+- **数据库 schema 版本管理**: 通过 `PRAGMA user_version` 跟踪 schema 版本，为未来数据库迁移预留扩展路径
+- **Docker 构建**: Alpine 镜像增加 `python3`、`make`、`g++`（构建）和 `libstdc++`（运行时）依赖以支持 `better-sqlite3` 原生模块
+- **发布包**: CLI 发布依赖新增 `better-sqlite3`，确保用户安装后原生模块可正常解析
+- **Usage API 文档**: 新增 `docs/docs/server/api/usage-api.md`，完整记录存储位置、迁移行为、保留策略和 API 端点
+
+### Fixed
+
+- **用量统计浮点精度**: `ttft` 和 `tokensPerSecond` 字段使用 `parseFloat` 替代 `parseInt`，保留小数精度
+
+## [2.2.1] - 2026-06-07
+
+### Fixed
+
+- **Codex 用量统计缺少缓存数据**: 补齐 Responses API 与服务端 usage 归一化链路，正确统计并展示 `cache hit`、`cache creation` 与缓存命中率
+  - 兼容 `input_tokens_details.cached_tokens`
+  - 兼容 `input_tokens_details.cache_creation_tokens` / `cache_write_tokens`
+  - 兼容 `prompt_tokens_details.cached_tokens` / `cache_creation_tokens`
+  - 保证流式 `response.completed` 与非流式响应都能写入缓存统计
+- **Codex 客户端 TTFT 统计缺失**: `token-speed` 插件补充 `/v1/responses` 监听与 Responses API SSE 事件解析；避免用 `ccr-opus` 等模型族别名判断客户端类型，防止 Claude Code 请求被误判为 Codex 客户端
+
 ## [2.2.0] - 2026-06-06
 
 ### Added

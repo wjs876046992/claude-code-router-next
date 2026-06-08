@@ -102,6 +102,38 @@ function detectClientType(req: any): string {
   return "unknown";
 }
 
+function getUsageCacheReadInputTokens(usage: any): number {
+  return (
+    usage?.cache_read_input_tokens ??
+    usage?.input_tokens_details?.cached_tokens ??
+    usage?.prompt_tokens_details?.cached_tokens ??
+    0
+  );
+}
+
+function getUsageCacheCreationInputTokens(usage: any): number {
+  return (
+    usage?.cache_creation_input_tokens ??
+    usage?.input_tokens_details?.cache_creation_tokens ??
+    usage?.input_tokens_details?.cache_write_tokens ??
+    usage?.prompt_tokens_details?.cache_creation_tokens ??
+    usage?.prompt_tokens_details?.cache_write_tokens ??
+    0
+  );
+}
+
+function normalizeUsagePayload(usage: any): any {
+  if (!usage || typeof usage !== "object") return undefined;
+
+  return {
+    ...usage,
+    input_tokens: usage.input_tokens ?? usage.prompt_tokens ?? 0,
+    output_tokens: usage.output_tokens ?? usage.completion_tokens ?? 0,
+    cache_read_input_tokens: getUsageCacheReadInputTokens(usage),
+    cache_creation_input_tokens: getUsageCacheCreationInputTokens(usage),
+  };
+}
+
 function isRateLimitMessage(statusCode: number, message?: string): boolean {
   return statusCode === 429 ||
     Boolean(message && /rate[\s_]limit|too many|限流|频率限制|qps_limit|token_limit|quota exhausted|usage limit|limit reached/i.test(message));
@@ -286,17 +318,11 @@ function extractUsageFromPayload(payload: any): any | undefined {
   if (typeof body !== "object") return undefined;
 
   // Anthropic /v1/messages non-stream response.
-  if (body.usage) return body.usage;
+  if (body.usage) return normalizeUsagePayload(body.usage);
 
   // OpenAI Responses-style non-stream response.
   if (body.response?.usage) {
-    const usage = body.response.usage;
-    return {
-      input_tokens: usage.input_tokens || 0,
-      output_tokens: usage.output_tokens || 0,
-      cache_read_input_tokens: usage.cache_read_input_tokens || 0,
-      cache_creation_input_tokens: usage.cache_creation_input_tokens || 0,
-    };
+    return normalizeUsagePayload(body.response.usage);
   }
 
   return undefined;
@@ -742,10 +768,11 @@ async function getServer(options: RunOptions = {}) {
               // Capture usage from Anthropic SSE (message_delta, message_start)
               if (data?.usage) {
                 const existingUsage = sessionUsageCache.get(usageSessionId) || {};
+                const normalizedUsage = normalizeUsagePayload(data.usage);
                 // Reset cache on message_start to avoid stale fields from previous requests
                 // (e.g. cache_creation_input_tokens carried over from a different model)
                 const base = event === 'message_start' ? {} : existingUsage;
-                const mergedUsage = { ...base, ...data.usage };
+                const mergedUsage = { ...base, ...normalizedUsage };
                 req.log?.info?.({
                   debug_log: true,
                   reqId: req.id,
@@ -754,22 +781,15 @@ async function getServer(options: RunOptions = {}) {
                   provider: req.provider,
                   model: getRequestModel(req),
                   usageSessionId,
-                  capturedUsage: data.usage,
+                  capturedUsage: normalizedUsage,
                   mergedUsage,
                 });
 
-                // Belt-and-suspenders: some Anthropic-compatible providers (e.g. GLM)
-                // may embed OpenAI-style <= cached_tokens inside the SSE usage
-                // object even on the /v1/messages path.
-                if (data.usage?.prompt_tokens_details?.cached_tokens && !data.usage.cache_read_input_tokens) {
-                  mergedUsage.cache_read_input_tokens = data.usage.prompt_tokens_details.cached_tokens;
-                }
-
                 // Debug log for cache tokens
-                if (data.usage.cache_read_input_tokens || data.usage.cache_creation_input_tokens) {
+                if (normalizedUsage?.cache_read_input_tokens || normalizedUsage?.cache_creation_input_tokens) {
                   console.log('[Usage] Cache tokens:', {
-                    cache_read: data.usage.cache_read_input_tokens,
-                    cache_creation: data.usage.cache_creation_input_tokens
+                    cache_read: normalizedUsage?.cache_read_input_tokens,
+                    cache_creation: normalizedUsage?.cache_creation_input_tokens
                   });
                 }
                 sessionUsageCache.put(usageSessionId, mergedUsage);
@@ -778,7 +798,7 @@ async function getServer(options: RunOptions = {}) {
               // Capture usage from Responses API SSE (response.completed)
               // The Responses API format has usage nested under response.usage
               if (data?.response?.usage) {
-                const respUsage = data.response.usage;
+                const respUsage = normalizeUsagePayload(data.response.usage);
                 // Reset base on a fresh response.completed to prevent stale fields
                 // from a previous request leaking into the new one (same as the
                 // message_start sentinel used in the Anthropic path above).
@@ -786,10 +806,10 @@ async function getServer(options: RunOptions = {}) {
                   ? {} : (sessionUsageCache.get(usageSessionId) || {});
                 const mergedUsage = {
                   ...existingUsage,
-                  input_tokens: respUsage.input_tokens || 0,
-                  output_tokens: respUsage.output_tokens || 0,
-                  cache_read_input_tokens: respUsage.cache_read_input_tokens ?? existingUsage.cache_read_input_tokens ?? 0,
-                  cache_creation_input_tokens: respUsage.cache_creation_input_tokens ?? existingUsage.cache_creation_input_tokens ?? 0,
+                  input_tokens: respUsage?.input_tokens || 0,
+                  output_tokens: respUsage?.output_tokens || 0,
+                  cache_read_input_tokens: respUsage?.cache_read_input_tokens ?? existingUsage.cache_read_input_tokens ?? 0,
+                  cache_creation_input_tokens: respUsage?.cache_creation_input_tokens ?? existingUsage.cache_creation_input_tokens ?? 0,
                 };
                 req.log?.info?.({
                   debug_log: true,

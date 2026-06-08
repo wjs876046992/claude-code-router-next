@@ -865,8 +865,9 @@ function isCodexClient(req: any): boolean {
     return true;
   }
 
-  const originalModel = req.originalModel || "";
-  return typeof originalModel === "string" && originalModel.toLowerCase() === "ccr-codex";
+  const originalModel = req.originalModel || req.body?.model || "";
+  return typeof originalModel === "string" &&
+    originalModel.toLowerCase() === "ccr-codex";
 }
 
 /**

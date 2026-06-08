@@ -27,6 +27,16 @@ interface ResponsesAPIPayload {
     input_tokens: number;
     output_tokens: number;
     total_tokens: number;
+    input_tokens_details?: {
+      cached_tokens?: number;
+      cache_creation_tokens?: number;
+      cache_write_tokens?: number;
+    };
+    output_tokens_details?: {
+      reasoning_tokens?: number;
+    };
+    cache_read_input_tokens?: number;
+    cache_creation_input_tokens?: number;
   };
 }
 
@@ -67,6 +77,56 @@ interface ResponsesStreamEvent {
 export class OpenAIResponsesTransformer implements Transformer {
   name = "openai-responses";
   endPoint = "/v1/responses";
+
+  private getCacheReadInputTokens(usage: any): number {
+    return (
+      usage?.cache_read_input_tokens ??
+      usage?.input_tokens_details?.cached_tokens ??
+      usage?.prompt_tokens_details?.cached_tokens ??
+      0
+    );
+  }
+
+  private getCacheCreationInputTokens(usage: any): number {
+    return (
+      usage?.cache_creation_input_tokens ??
+      usage?.input_tokens_details?.cache_creation_tokens ??
+      usage?.input_tokens_details?.cache_write_tokens ??
+      usage?.prompt_tokens_details?.cache_creation_tokens ??
+      usage?.prompt_tokens_details?.cache_write_tokens ??
+      0
+    );
+  }
+
+  private buildResponsesUsage(usage?: any): ResponsesAPIPayload["usage"] {
+    const inputTokens =
+      usage?.input_tokens ??
+      usage?.prompt_tokens ??
+      0;
+    const outputTokens =
+      usage?.output_tokens ??
+      usage?.completion_tokens ??
+      0;
+    const cacheReadInputTokens = this.getCacheReadInputTokens(usage);
+    const cacheCreationInputTokens = this.getCacheCreationInputTokens(usage);
+
+    return {
+      input_tokens: inputTokens,
+      output_tokens: outputTokens,
+      total_tokens:
+        usage?.total_tokens ??
+        (inputTokens + outputTokens),
+      input_tokens_details: {
+        cached_tokens: cacheReadInputTokens,
+        cache_creation_tokens: cacheCreationInputTokens,
+      },
+      output_tokens_details: {
+        reasoning_tokens: usage?.output_tokens_details?.reasoning_tokens ?? 0,
+      },
+      cache_read_input_tokens: cacheReadInputTokens,
+      cache_creation_input_tokens: cacheCreationInputTokens,
+    };
+  }
 
   async transformRequestIn(
     request: UnifiedChatRequest
@@ -839,12 +899,7 @@ export class OpenAIResponsesTransformer implements Transformer {
       status,
       model,
       output,
-      usage: {
-        input_tokens: 0,
-        output_tokens: 0,
-        total_tokens: 0,
-        output_tokens_details: { reasoning_tokens: 0 },
-      },
+      usage: this.buildResponsesUsage(),
     });
 
     return new ReadableStream({
@@ -902,14 +957,8 @@ export class OpenAIResponsesTransformer implements Transformer {
                 model: data?.model || model,
                 output: outputItems.slice(),
                 usage: data?.usage ? {
-                  input_tokens: data.usage.prompt_tokens || 0,
-                  output_tokens: data.usage.completion_tokens || 0,
-                  total_tokens: data.usage.total_tokens || 0,
-                } : {
-                  input_tokens: 0,
-                  output_tokens: 0,
-                  total_tokens: 0,
-                },
+                  ...this.buildResponsesUsage(data.usage),
+                } : this.buildResponsesUsage(),
               },
             }));
           };
@@ -1039,12 +1088,7 @@ export class OpenAIResponsesTransformer implements Transformer {
       status,
       model,
       output,
-      usage: {
-        input_tokens: 0,
-        output_tokens: 0,
-        total_tokens: 0,
-        output_tokens_details: { reasoning_tokens: 0 },
-      },
+      usage: this.buildResponsesUsage(),
     });
 
     // Emit response.created + response.in_progress if not yet done.
@@ -1095,14 +1139,8 @@ export class OpenAIResponsesTransformer implements Transformer {
           model,
           output: outputItems,
           usage: usage ? {
-            input_tokens: usage.input_tokens || 0,
-            output_tokens: usage.output_tokens || 0,
-            total_tokens: (usage.input_tokens || 0) + (usage.output_tokens || 0),
-          } : {
-            input_tokens: 0,
-            output_tokens: 0,
-            total_tokens: 0,
-          },
+            ...this.buildResponsesUsage(usage),
+          } : this.buildResponsesUsage(),
         },
       });
     };
@@ -1375,9 +1413,7 @@ export class OpenAIResponsesTransformer implements Transformer {
       model: chatJson.model,
       output,
       usage: chatJson.usage ? {
-        input_tokens: chatJson.usage.prompt_tokens || 0,
-        output_tokens: chatJson.usage.completion_tokens || 0,
-        total_tokens: chatJson.usage.total_tokens || 0,
+        ...this.buildResponsesUsage(chatJson.usage),
       } : undefined,
     };
   }
@@ -1508,6 +1544,12 @@ export class OpenAIResponsesTransformer implements Transformer {
             prompt_tokens: responseData.usage.input_tokens || 0,
             completion_tokens: responseData.usage.output_tokens || 0,
             total_tokens: responseData.usage.total_tokens || 0,
+            prompt_tokens_details: {
+              cached_tokens: this.getCacheReadInputTokens(responseData.usage),
+              cache_creation_tokens: this.getCacheCreationInputTokens(responseData.usage),
+            },
+            cache_read_input_tokens: this.getCacheReadInputTokens(responseData.usage),
+            cache_creation_input_tokens: this.getCacheCreationInputTokens(responseData.usage),
           }
         : null,
     };

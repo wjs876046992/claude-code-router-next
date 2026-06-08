@@ -2,7 +2,8 @@ packages:
   - 'packages/*'
   - 'docs'
 allowBuilds:
+  better-sqlite3: true
   core-js: true
   core-js-pure: true
   esbuild: true
-  node: set this to true or false
+  node: false

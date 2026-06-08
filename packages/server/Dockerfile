@@ -1,31 +1,32 @@
 # ===========================
-# 构建阶段
+# Build stage
 # ===========================
 FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-# 安装 pnpm
-RUN npm install -g pnpm@latest && \
+# Install native build dependencies for better-sqlite3 and pnpm.
+RUN apk add --no-cache python3 make g++ && \
+    npm install -g pnpm@latest && \
     rm -rf /root/.npm
 
-# 复制工作区配置文件
+# Copy workspace configuration files.
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json tsconfig.base.json ./
 COPY scripts ./scripts
 COPY packages/shared/package.json ./packages/shared/
 COPY packages/core/package.json ./packages/core/
 COPY packages/server/package.json ./packages/server/
 
-# 安装所有依赖（包括开发依赖）并清理
+# Install dependencies, including dev dependencies required for builds.
 RUN pnpm install --frozen-lockfile && \
     pnpm store prune
 
-# 复制源代码并构建
+# Copy source code and build artifacts.
 COPY packages/shared ./packages/shared
 COPY packages/core ./packages/core
 COPY packages/server ./packages/server
 
-# 构建所有包
+# Build all required packages.
 WORKDIR /app/packages/core
 RUN pnpm build
 
@@ -37,12 +38,12 @@ RUN pnpm build && \
     rm -rf node_modules/.cache
 
 # ===========================
-# 生产阶段
+# Production stage
 # ===========================
 FROM node:20-alpine AS production
 
-# 安装 PM2、curl 和 pm2-logrotate
-RUN apk add --no-cache curl && \
+# Install PM2, curl, runtime libraries for better-sqlite3, and pm2-logrotate.
+RUN apk add --no-cache curl libstdc++ && \
     npm install -g pm2 pm2-logrotate --no-scripts && \
     pm2 install pm2-logrotate && \
     pm2 set pm2-logrotate:max_size 100M && \
@@ -52,29 +53,30 @@ RUN apk add --no-cache curl && \
 
 WORKDIR /app
 
-# 复制 core 包（workspace 依赖）
+# Copy the core package used by workspace dependencies.
 COPY --from=builder /app/packages/core ./packages/core
 
-# 复制生产依赖
+# Copy production dependencies and pnpm's root virtual store used by workspace symlinks.
+COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/packages/server/node_modules ./packages/server/node_modules
 
-# 从构建阶段复制 server bundle
+# Copy the server bundle from the build stage.
 COPY --from=builder /app/packages/server/dist ./packages/server/dist
-# 复制本地预先构建的 UI 产物到同一目录
+# Copy locally prebuilt UI assets into the same directory.
 COPY packages/ui/dist/. ./packages/server/dist/
 
-# 复制 PM2 配置文件
+# Copy PM2 configuration.
 COPY packages/server/ecosystem.config.cjs /app/
 
-# 创建日志目录
-RUN mkdir -p /root/.claude-code-router/logs
+# Create log and data directories.
+RUN mkdir -p /root/.claude-code-router/logs /root/.claude-code-router/data
 
-# 暴露端口
+# Expose the server port.
 EXPOSE 3456
 
-# 健康检查
+# Health check.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD curl -f http://127.0.0.1:3456/health || exit 1
 
-# 直接启动应用
+# Start the application.
 CMD ["pm2-runtime", "start", "/app/ecosystem.config.cjs"]

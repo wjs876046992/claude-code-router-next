@@ -101,6 +101,7 @@ delete pkg.scripts;
 pkg.files = ['dist/*', 'README.md', 'LICENSE'];
 pkg.dependencies = {
   '@wengine-ai/llms': `^${corePkg.version}`,
+  'better-sqlite3': serverPkg.dependencies['better-sqlite3'] || '^12.10.0',
   'lru-cache': `^11.2.2`,
 };
 pkg.peerDependencies = {

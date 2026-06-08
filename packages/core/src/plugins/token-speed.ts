@@ -160,10 +160,14 @@ export const tokenSpeedPlugin: CCRPlugin = {
       }
     };
 
+    const shouldTrackTokenSpeed = (url: string) => {
+      const pathname = new URL(`http://127.0.0.1${url}`).pathname;
+      return pathname.endsWith("/v1/messages") || pathname.endsWith("/v1/responses");
+    };
+
     // Add onRequest hook to capture actual request start time (before processing)
     fastify.addHook('onRequest', async (request) => {
-      const url = new URL(`http://127.0.0.1${request.url}`);
-      if (!url.pathname.endsWith("/v1/messages")) return;
+      if (!shouldTrackTokenSpeed(request.url)) return;
       (request as any).requestStartTime = performance.now();
     });
 
@@ -173,7 +177,9 @@ export const tokenSpeedPlugin: CCRPlugin = {
       if (!startTime) return;
       const requestId = (request as any).id || Date.now().toString();
 
-      // Extract session ID from request body metadata
+      // Extract session ID from request body metadata. Claude Code provides
+      // metadata.user_id, while Codex /v1/responses usually does not; fall back
+      // to the same request id used by usage tracking so TTFT can be joined.
       let sessionId: string | undefined;
       try {
         const userId = (request.body as any)?.metadata?.user_id;
@@ -192,7 +198,13 @@ export const tokenSpeedPlugin: CCRPlugin = {
         }
       } catch (error) {
       }
-      if (!sessionId) return;
+      if (!sessionId) {
+        const requestIdHeader = request.headers?.["x-request-id"];
+        const requestIdFromHeader = Array.isArray(requestIdHeader) ? requestIdHeader[0] : requestIdHeader;
+        sessionId = (request as any).sessionId ||
+          (typeof requestIdFromHeader === 'string' ? requestIdFromHeader : undefined) ||
+          requestId;
+      }
 
       // Get tokenizer for this specific request
       const tokenizer = await getTokenizerForRequest(request);
@@ -267,23 +279,30 @@ export const tokenSpeedPlugin: CCRPlugin = {
 
               const now = performance.now();
 
-              // Record first token time when we receive any content-related event
-              // This includes: content_block_start, content_block_delta, text_block
-              if (!stats.firstTokenTime && (
+              const eventType = data.event || data.data?.type;
+
+              // Record first token time when we receive any content/tool delta.
+              // Claude/Anthropic uses content_block_*; Codex/OpenAI Responses uses
+              // response.output_text.delta and response.function_call_arguments.delta.
+              const isFirstTokenEvent =
                 data.event === 'content_block_start' ||
                 data.event === 'content_block_delta' ||
                 data.event === 'text_block' ||
-                data.event === 'content_block'
-              )) {
+                data.event === 'content_block' ||
+                eventType === 'response.output_text.delta' ||
+                eventType === 'response.function_call_arguments.delta' ||
+                eventType === 'response.reasoning_summary_text.delta';
+
+              if (!stats.firstTokenTime && isFirstTokenEvent) {
                 stats.firstTokenTime = now;
                 stats.timeToFirstToken = Math.round(now - stats.startTime);
               }
 
-              // Detect content_block_delta event (incremental tokens)
-              // Support multiple delta types: text_delta, input_json_delta, thinking_delta
+              let text = '';
+
+              // Detect Anthropic content_block_delta event (incremental tokens)
               if (data.event === 'content_block_delta' && data.data?.delta) {
                 const deltaType = data.data.delta.type;
-                let text = '';
 
                 // Extract text based on delta type
                 if (deltaType === 'text_delta') {
@@ -293,25 +312,34 @@ export const tokenSpeedPlugin: CCRPlugin = {
                 } else if (deltaType === 'thinking_delta') {
                   text = data.data.delta.thinking || '';
                 }
+              }
 
-                // Calculate tokens if we have text content
-                if (text) {
-                  const tokenCount = tokenizer
-                    ? (tokenizer.encodeText ? tokenizer.encodeText(text).length : estimateTokens(text))
-                    : estimateTokens(text);
+              // Detect Responses API delta events (Codex)
+              if (
+                eventType === 'response.output_text.delta' ||
+                eventType === 'response.function_call_arguments.delta' ||
+                eventType === 'response.reasoning_summary_text.delta'
+              ) {
+                text = typeof data.data?.delta === 'string' ? data.data.delta : '';
+              }
 
-                  stats.tokenCount += tokenCount;
-                  stats.lastTokenTime = now;
+              // Calculate tokens if we have text content
+              if (text) {
+                const tokenCount = tokenizer
+                  ? (tokenizer.encodeText ? tokenizer.encodeText(text).length : estimateTokens(text))
+                  : estimateTokens(text);
 
-                  // Record timestamps for each token (for sliding window calculation)
-                  for (let i = 0; i < tokenCount; i++) {
-                    stats.tokenTimestamps.push(now);
-                  }
+                stats.tokenCount += tokenCount;
+                stats.lastTokenTime = now;
+
+                // Record timestamps for each token (for sliding window calculation)
+                for (let i = 0; i < tokenCount; i++) {
+                  stats.tokenTimestamps.push(now);
                 }
               }
 
-              // Output final statistics when message ends
-              if (data.event === 'message_stop') {
+              // Output final statistics when message/response ends
+              if (data.event === 'message_stop' || eventType === 'response.completed' || eventType === 'response.failed') {
                 // Clear timer
                 if (outputTimer) {
                   clearInterval(outputTimer);

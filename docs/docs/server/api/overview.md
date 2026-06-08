@@ -9,6 +9,7 @@ Claude Code Router Server provides a complete HTTP API with support for:
 - **Messages API**: Message interface compatible with Anthropic Claude API
 - **Configuration API**: Read and update server configuration
 - **Logs API**: View and manage service logs
+- **Usage API**: Query and clear request usage statistics
 - **Tools API**: Calculate token counts
 
 ## Basic Information
@@ -45,6 +46,14 @@ curl -H "x-api-key: your-api-key" http://localhost:3456/api/config
 | `/api/logs/files` | GET | Get list of log files |
 | `/api/logs` | GET | Get log content |
 | `/api/logs` | DELETE | Clear logs |
+
+### Usage Statistics
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/usage` | GET | Get paginated usage records with summary |
+| `/api/usage/summary` | GET | Get usage summary only |
+| `/api/usage` | DELETE | Clear all usage data or rows before a date |
 
 ### Service Management
 

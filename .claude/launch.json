@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "server",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "@wengine-ai/claude-code-router-server", "exec", "ts-node", "--transpile-only", "src/index.ts"],
+      "port": 3456
+    },
+    {
+      "name": "ui",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["dev:ui"],
+      "port": 5173
+    }
+  ]
+}

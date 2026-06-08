@@ -24,8 +24,8 @@ try {
 
   // Build the server application
   console.log('Building server application...');
-  // 使用 minify 和 tree-shaking 优化体积；external lru-cache to avoid esbuild bundling issues
-  execSync('pnpm exec esbuild src/index.ts --bundle --platform=node --minify --tree-shaking=true --external:lru-cache --outfile=dist/index.js', {
+  // Use minify and tree-shaking to reduce bundle size; externalize native/runtime modules.
+  execSync('pnpm exec esbuild src/index.ts --bundle --platform=node --minify --tree-shaking=true --external:lru-cache --external:better-sqlite3 --outfile=dist/index.js', {
     stdio: 'inherit',
     cwd: serverDir
   });
