@@ -13,6 +13,20 @@ VERSION=$(node -e "console.log(require(process.argv[1]).version)" "$ROOT_DIR/pac
 IMAGE_NAME="ccr/router"
 IMAGE_TAG="${VERSION}"
 LATEST_TAG="latest"
+PUBLISH_DRY_RUN="${PUBLISH_DRY_RUN:-0}"
+
+# Ensure packages/cli/package.json is restored if the script aborts mid-publish.
+# The RETURN trap inside publish_npm() does not fire on set -e aborts.
+CLI_BACKUP_ORIGINAL="$ROOT_DIR/packages/cli/.backup/package.json.original"
+trap 'if [ -f "$CLI_BACKUP_ORIGINAL" ]; then mv "$CLI_BACKUP_ORIGINAL" "$ROOT_DIR/packages/cli/package.json" 2>/dev/null || true; fi' EXIT
+
+if [ "$PUBLISH_DRY_RUN" = "true" ]; then
+  PUBLISH_DRY_RUN="1"
+fi
+
+if [ "$PUBLISH_DRY_RUN" = "1" ]; then
+  echo "DRY RUN 模式：执行打包校验，但不会发布 npm 包或 Docker 镜像。"
+fi
 
 echo "========================================="
 echo "发布 Claude Code Router v${VERSION}"
@@ -40,6 +54,93 @@ case "$PUBLISH_TYPE" in
     ;;
 esac
 
+require_npm_login() {
+  if [ "$PUBLISH_DRY_RUN" = "1" ]; then
+    return 0
+  fi
+
+  if ! npm whoami &>/dev/null; then
+    echo "错误: 未登录 npm，请先运行: npm login"
+    exit 1
+  fi
+}
+
+validate_cli_dist() {
+  local cli_dir="$1"
+  local dist_dir="$cli_dir/dist"
+
+  node - "$cli_dir/package.json" "$dist_dir" <<'EOF'
+const fs = require('fs');
+const path = require('path');
+
+const packagePath = process.argv[2];
+const distDir = process.argv[3];
+const pkg = JSON.parse(fs.readFileSync(packagePath, 'utf8'));
+
+if (pkg.peerDependencies?.node) {
+  throw new Error('publish package must not include peerDependencies.node');
+}
+if (!pkg.engines?.node) {
+  throw new Error('publish package must include engines.node');
+}
+
+const required = ['cli.js', 'index.html', 'tiktoken_bg.wasm'];
+for (const file of required) {
+  if (!fs.existsSync(path.join(distDir, file))) {
+    throw new Error(`missing required CLI dist artifact: ${file}`);
+  }
+}
+
+const forbidden = ['index.js', 'package.json'];
+for (const file of forbidden) {
+  if (fs.existsSync(path.join(distDir, file))) {
+    throw new Error(`stale CLI dist artifact must not be published: dist/${file}`);
+  }
+}
+EOF
+}
+
+validate_cli_pack() {
+  local cli_dir="$1"
+
+  echo "校验 CLI npm 包内容..."
+  local pack_json
+  pack_json=$(cd "$cli_dir" && npm pack --dry-run --json)
+
+  PACK_JSON="$pack_json" node <<'EOF'
+const pack = JSON.parse(process.env.PACK_JSON);
+const files = new Set((pack[0]?.files || []).map((file) => file.path.replace(/^package\//, '')));
+const required = [
+  'dist/cli.js',
+  'dist/index.html',
+  'dist/tiktoken_bg.wasm',
+  'package.json',
+];
+const forbidden = [
+  'dist/index.js',
+  'dist/package.json',
+];
+
+for (const file of required) {
+  if (!files.has(file)) {
+    throw new Error(`npm pack is missing required file: ${file}`);
+  }
+}
+
+for (const file of forbidden) {
+  if (files.has(file)) {
+    throw new Error(`npm pack includes forbidden stale file: ${file}`);
+  }
+}
+
+console.log(JSON.stringify({
+  package: pack[0]?.name,
+  version: pack[0]?.version,
+  files: Array.from(files).sort(),
+}, null, 2));
+EOF
+}
+
 # Publish core npm package (@wengine-ai/llms)
 publish_core_npm() {
   echo ""
@@ -47,10 +148,7 @@ publish_core_npm() {
   echo "发布 npm 包 @wengine-ai/llms"
   echo "========================================="
 
-  if ! npm whoami &>/dev/null; then
-    echo "错误: 未登录 npm，请先运行: npm login"
-    exit 1
-  fi
+  require_npm_login
 
   CORE_DIR="$ROOT_DIR/packages/core"
   CORE_VERSION=$(node -e "console.log(require(process.argv[1]).version)" "$CORE_DIR/package.json")
@@ -59,11 +157,16 @@ publish_core_npm() {
   cp "$ROOT_DIR/LICENSE" "$CORE_DIR/" 2>/dev/null || echo "LICENSE 文件不存在，跳过..."
 
   cd "$CORE_DIR"
-  echo "执行 npm publish..."
-  npm publish --access public
+  if [ "$PUBLISH_DRY_RUN" = "1" ]; then
+    echo "执行 npm pack dry-run..."
+    npm pack --dry-run --json
+    echo "✅ Core npm 包 dry-run 校验成功!"
+  else
+    echo "执行 npm publish..."
+    npm publish --access public
+    echo "✅ Core npm 包发布成功!"
+  fi
 
-  echo ""
-  echo "✅ Core npm 包发布成功!"
   echo "   包名: @wengine-ai/llms@${CORE_VERSION}"
 }
 
@@ -74,10 +177,7 @@ publish_npm() {
   echo "发布 npm 包 @wengine-ai/claude-code-router-next"
   echo "========================================="
 
-  if ! npm whoami &>/dev/null; then
-    echo "错误: 未登录 npm，请先运行: npm login"
-    exit 1
-  fi
+  require_npm_login
 
   CLI_DIR="$ROOT_DIR/packages/cli"
   BACKUP_DIR="$CLI_DIR/.backup"
@@ -98,20 +198,18 @@ const corePkg = JSON.parse(fs.readFileSync(process.env.CORE_PKG_PATH, 'utf8'));
 
 pkg.name = '@wengine-ai/claude-code-router-next';
 delete pkg.scripts;
+delete pkg.peerDependencies;
 pkg.files = ['dist/*', 'README.md', 'LICENSE'];
 pkg.dependencies = {
   '@wengine-ai/llms': `^${corePkg.version}`,
-  'better-sqlite3': serverPkg.dependencies['better-sqlite3'] || '^12.10.0',
+  'better-sqlite3': serverPkg.dependencies['better-sqlite3'],
   'lru-cache': `^11.2.2`,
-};
-pkg.peerDependencies = {
-  node: '>=18.0.0',
 };
 pkg.engines = {
   node: '>=18.0.0',
 };
 
-fs.writeFileSync(process.env.PUBLISH_PKG_PATH, JSON.stringify(pkg, null, 2));
+fs.writeFileSync(process.env.PUBLISH_PKG_PATH, JSON.stringify(pkg, null, 2) + '\n');
 EOF
 
   mv "$CLI_DIR/package.json" "$BACKUP_DIR/package.json.original"
@@ -127,15 +225,26 @@ EOF
   cp "$ROOT_DIR/README.md" "$CLI_DIR/"
   cp "$ROOT_DIR/LICENSE" "$CLI_DIR/" 2>/dev/null || echo "LICENSE 文件不存在，跳过..."
 
+  validate_cli_dist "$CLI_DIR"
+  validate_cli_pack "$CLI_DIR"
+
   cd "$CLI_DIR"
-  echo "执行 npm publish..."
-  npm publish --access public
+  if [ "$PUBLISH_DRY_RUN" = "1" ]; then
+    echo "DRY RUN: 跳过 npm publish。"
+  else
+    echo "执行 npm publish..."
+    npm publish --access public
+  fi
 
   restore_cli_package_json
   trap - RETURN
 
   echo ""
-  echo "✅ npm 包发布成功!"
+  if [ "$PUBLISH_DRY_RUN" = "1" ]; then
+    echo "✅ npm 包 dry-run 校验成功!"
+  else
+    echo "✅ npm 包发布成功!"
+  fi
   echo "   包名: @wengine-ai/claude-code-router-next@${VERSION}"
 }
 
@@ -145,6 +254,11 @@ publish_docker() {
   echo "========================================="
   echo "发布 Docker 镜像"
   echo "========================================="
+
+  if [ "$PUBLISH_DRY_RUN" = "1" ]; then
+    echo "DRY RUN: 跳过 Docker 构建和推送。"
+    return 0
+  fi
 
   if ! docker info &>/dev/null; then
     echo "错误: Docker 未运行"

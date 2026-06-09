@@ -224,10 +224,10 @@ export function UsageStats() {
   const scenarios = summary ? Object.keys(summary.byScenario) : [];
   const clients = summary?.byClient ? Object.keys(summary.byClient) : [];
 
-  // Daily chart data (last 14 days)
+  // Daily chart data (respect the selected date range)
   const dailyData = summary?.byDay ? Object.entries(summary.byDay)
     .sort(([a], [b]) => a.localeCompare(b))
-    .slice(-14) : [];
+    : [];
   const maxDailyTokens = Math.max(1, ...dailyData.map(([, d]) =>
     computeEffectiveInputTokens(d.inputTokens, d.cacheReadInputTokens, d.cacheCreationInputTokens) + d.outputTokens
   ));
