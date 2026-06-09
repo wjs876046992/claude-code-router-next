@@ -540,37 +540,70 @@ function formatDuration(ms: number): string {
     }
 }
 
-// Read timing data from token-speed temp file (duration and TTFT are accurate;
-// tokensPerSecond is NOT used because it relies on estimateTokens which overestimates).
+// Read timing data from token-speed temp files.
 async function getTokenSpeedTiming(sessionId: string): Promise<{
     durationMs: number;
     ttftMs: number;
+    tokensPerSecond: number;
     timestamp: number;
 } | null> {
     try {
         const tempDir = path.join(tmpdir(), 'claude-code-router');
         try { await fs.access(tempDir); } catch { return null; }
 
-        const statsFilePath = path.join(tempDir, `session-${sessionId}.json`);
-        try { await fs.access(statsFilePath); } catch { return null; }
+        const files = await fs.readdir(tempDir);
+        const exactFile = `session-${sessionId}.json`;
+        const timestampedPattern = new RegExp(`^session-${sessionId}-\\d+\\.json$`);
+        const candidateFiles = files.filter((file) => file === exactFile || timestampedPattern.test(file));
+        if (candidateFiles.length === 0) return null;
 
-        const content = await fs.readFile(statsFilePath, 'utf-8');
-        const data = JSON.parse(content);
+        let latestData: any = null;
+        let latestTimestamp = 0;
+        for (const file of candidateFiles) {
+            try {
+                const filePath = path.join(tempDir, file);
+                const content = await fs.readFile(filePath, 'utf-8');
+                const data = JSON.parse(content);
+                const filenameTimestamp = parseNumericValue(file.match(/-(\\d+)\\.json$/)?.[1]);
+                const fileStats = await fs.stat(filePath);
+                const timestamp = parseNumericValue(data.timestamp) || filenameTimestamp || fileStats.mtimeMs;
+                if (!latestData || timestamp >= latestTimestamp) {
+                    latestData = data;
+                    latestTimestamp = timestamp;
+                }
+            } catch {
+                // Ignore corrupt temp files and continue scanning candidates.
+            }
+        }
+        if (!latestData) return null;
+        const data = latestData;
 
         // Parse duration (e.g. "9.99s") and TTFT (e.g. "9994ms")
         const durationMs = parseDurationToMs(data.duration);
         const ttftMs = parseDurationToMs(data.timeToFirstToken);
-        if (!durationMs) return null;
+        if (!durationMs && !data.tokensPerSecond) return null;
 
-        return { durationMs, ttftMs, timestamp: data.timestamp || 0 };
+        return {
+            durationMs,
+            ttftMs,
+            tokensPerSecond: parseNumericValue(data.tokensPerSecond),
+            timestamp: data.timestamp || 0
+        };
     } catch {
         return null;
     }
 }
 
+function parseNumericValue(value: any): number {
+    if (value == null) return 0;
+    if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+    const parsed = parseFloat(String(value));
+    return Number.isFinite(parsed) ? parsed : 0;
+}
+
 // Parse duration strings like "9.99s", "9994ms", "1m30s" to milliseconds
 function parseDurationToMs(value: any): number {
-    if (typeof value === 'number') return value;
+    if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
     if (typeof value !== 'string') return 0;
 
     const str = value.trim();
@@ -882,9 +915,9 @@ export async function parseStatusLineData(input: StatusLineInput, presetName?: s
         const usage = formatUsage(inputTokens, outputTokens);
         const [formattedInputTokens, formattedOutputTokens] = usage.split(" ");
 
-        // Calculate token speed using current_usage.output_tokens (accurate, from LLM)
-        // divided by decode duration from token-speed temp file.
-        // Note: transcript does NOT contain usage data, so we must use context_window.
+        // Calculate token speed from the token-speed temp file. Prefer recomputing with
+        // current_usage.output_tokens when Claude Code provides it; otherwise fall back
+        // to the measured tokensPerSecond written by the token-speed plugin.
         const currentOutputTokens = input.context_window?.current_usage?.output_tokens || 0;
         const timingData = await getTokenSpeedTiming(input.session_id);
         let tokenSpeed = 0;
@@ -892,11 +925,13 @@ export async function parseStatusLineData(input: StatusLineInput, presetName?: s
 
         if (timingData) {
             const ageInSeconds = (Date.now() - timingData.timestamp) / 1000;
-            isStreaming = ageInSeconds <= 3 && currentOutputTokens > 0;
+            isStreaming = ageInSeconds <= 3 && (currentOutputTokens > 0 || timingData.tokensPerSecond > 0);
 
             if (currentOutputTokens > 0 && timingData.durationMs > 0) {
                 const decodeDurationMs = Math.max(timingData.durationMs - timingData.ttftMs, 100);
                 tokenSpeed = Math.round(currentOutputTokens / (decodeDurationMs / 1000));
+            } else if (timingData.tokensPerSecond > 0) {
+                tokenSpeed = Math.round(timingData.tokensPerSecond);
             }
         }
 

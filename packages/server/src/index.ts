@@ -381,7 +381,13 @@ async function registerPluginsFromConfig(serverInstance: any, config: any): Prom
             outputHandlers: [
               {
                 type: 'temp-file',
-                enabled: true
+                enabled: true,
+                config: {
+                  subdirectory: 'claude-code-router',
+                  extension: 'json',
+                  includeTimestamp: true,
+                  prefix: 'session'
+                }
               }
             ],
             ...options
