@@ -540,13 +540,20 @@ function formatDuration(ms: number): string {
     }
 }
 
-// Read timing data from token-speed temp files.
-async function getTokenSpeedTiming(sessionId: string): Promise<{
+const MAX_TOKEN_SPEED = 999;
+const USAGE_DB_FILE = path.join(HOME_DIR, "data", "usage.sqlite");
+const TOKEN_SPEED_VARIABLE_PATTERN = /\{\{\s*tokenSpeed\s*\}\}/;
+const TOKEN_TIMING_VARIABLE_PATTERN = /\{\{\s*(tokenSpeed|isStreaming|streamingIndicator|timeToFirstToken)\s*\}\}/;
+
+type TokenSpeedTiming = {
     durationMs: number;
     ttftMs: number;
     tokensPerSecond: number;
     timestamp: number;
-} | null> {
+};
+
+// Read timing data from token-speed temp files.
+async function getTokenSpeedTiming(sessionId: string): Promise<TokenSpeedTiming | null> {
     try {
         const tempDir = path.join(tmpdir(), 'claude-code-router');
         try { await fs.access(tempDir); } catch { return null; }
@@ -599,6 +606,65 @@ function parseNumericValue(value: any): number {
     if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
     const parsed = parseFloat(String(value));
     return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function hasTokenSpeedValue(value: any): boolean {
+    return Math.round(parseNumericValue(value)) > 0;
+}
+
+function normalizeTokenSpeed(value: any): number {
+    const speed = Math.round(parseNumericValue(value));
+    if (speed <= 0) return 0;
+    return Math.min(speed, MAX_TOKEN_SPEED);
+}
+
+function calculateEstimatedTokenSpeed(outputTokens: number, durationMs: number, ttftMs: number): number {
+    if (outputTokens <= 0 || durationMs <= 0) return 0;
+    const decodeDurationMs = Math.max(durationMs - Math.max(ttftMs, 0), 1000);
+    return Math.round(outputTokens / (decodeDurationMs / 1000));
+}
+
+function readLatestUsageSpeedFromSqlite(sessionId: string): number {
+    try {
+        const Database = require('better-sqlite3');
+        const db = new Database(USAGE_DB_FILE, { readonly: true, fileMustExist: true });
+        try {
+            const row = db.prepare(`
+                SELECT tokens_per_second
+                FROM usage_records
+                WHERE session_id = ? AND status = 'success' AND tokens_per_second IS NOT NULL
+                ORDER BY timestamp DESC
+                LIMIT 1
+            `).get(sessionId) as { tokens_per_second?: unknown } | undefined;
+            const speed = Math.round(parseNumericValue(row?.tokens_per_second));
+            return speed > 0 ? speed : 0;
+        } finally {
+            db.close();
+        }
+    } catch {
+        return 0;
+    }
+}
+
+function moduleNeedsTokenSpeedData(module: StatusLineModuleConfig): boolean {
+    return module.type === "speed" || TOKEN_SPEED_VARIABLE_PATTERN.test(module.text || "");
+}
+
+function moduleNeedsTokenTimingData(module: StatusLineModuleConfig): boolean {
+    return module.type === "speed" || TOKEN_TIMING_VARIABLE_PATTERN.test(module.text || "");
+}
+
+function getRenderedModules(theme: StatusLineThemeConfig, isPowerline: boolean): StatusLineModuleConfig[] {
+    const modules = theme.modules || [];
+    return isPowerline ? modules.slice(0, 10) : modules;
+}
+
+function themeNeedsTokenSpeedData(theme: StatusLineThemeConfig, isPowerline: boolean): boolean {
+    return getRenderedModules(theme, isPowerline).some(moduleNeedsTokenSpeedData);
+}
+
+function themeNeedsTokenTimingData(theme: StatusLineThemeConfig, isPowerline: boolean): boolean {
+    return getRenderedModules(theme, isPowerline).some(moduleNeedsTokenTimingData);
 }
 
 // Parse duration strings like "9.99s", "9994ms", "1m30s" to milliseconds
@@ -807,6 +873,9 @@ export async function parseStatusLineData(input: StatusLineInput, presetName?: s
         }
 
         const theme = projectTheme || effectiveTheme;
+        const isPowerline = currentStyle === 'powerline';
+        const needsTokenTimingData = themeNeedsTokenTimingData(theme, isPowerline);
+        const needsTokenSpeedData = themeNeedsTokenSpeedData(theme, isPowerline);
 
         // Get current working directory and Git branch
         const workDir = input.workspace.current_dir;
@@ -915,33 +984,42 @@ export async function parseStatusLineData(input: StatusLineInput, presetName?: s
         const usage = formatUsage(inputTokens, outputTokens);
         const [formattedInputTokens, formattedOutputTokens] = usage.split(" ");
 
-        // Calculate token speed from the token-speed temp file. Prefer recomputing with
-        // current_usage.output_tokens when Claude Code provides it; otherwise fall back
-        // to the measured tokensPerSecond written by the token-speed plugin.
-        const currentOutputTokens = input.context_window?.current_usage?.output_tokens || 0;
-        const timingData = await getTokenSpeedTiming(input.session_id);
-        let tokenSpeed = 0;
+        let formattedTokenSpeed = '';
         let isStreaming = false;
-
-        if (timingData) {
-            const ageInSeconds = (Date.now() - timingData.timestamp) / 1000;
-            isStreaming = ageInSeconds <= 3 && (currentOutputTokens > 0 || timingData.tokensPerSecond > 0);
-
-            if (currentOutputTokens > 0 && timingData.durationMs > 0) {
-                const decodeDurationMs = Math.max(timingData.durationMs - timingData.ttftMs, 100);
-                tokenSpeed = Math.round(currentOutputTokens / (decodeDurationMs / 1000));
-            } else if (timingData.tokensPerSecond > 0) {
-                tokenSpeed = Math.round(timingData.tokensPerSecond);
-            }
-        }
-
-        const formattedTokenSpeed = tokenSpeed > 0 ? Math.min(tokenSpeed, 999).toString() : '';
-        const streamingIndicator = isStreaming ? '[Streaming]' : '';
-
-        // Format time to first token
+        let streamingIndicator = '';
         let formattedTimeToFirstToken = '';
-        if (timingData?.ttftMs) {
-            formattedTimeToFirstToken = formatDuration(timingData.ttftMs);
+
+        if (needsTokenTimingData) {
+            const currentOutputTokens = input.context_window?.current_usage?.output_tokens || 0;
+            const timingData = await getTokenSpeedTiming(input.session_id);
+            let tokenSpeed = 0;
+
+            if (timingData) {
+                const ageInSeconds = (Date.now() - timingData.timestamp) / 1000;
+                isStreaming = ageInSeconds <= 3 && (currentOutputTokens > 0 || hasTokenSpeedValue(timingData.tokensPerSecond));
+
+                if (needsTokenSpeedData) {
+                    // Prefer measured speed from token-speed over any derived estimate.
+                    tokenSpeed = normalizeTokenSpeed(timingData.tokensPerSecond);
+
+                    if (!tokenSpeed) {
+                        tokenSpeed = normalizeTokenSpeed(readLatestUsageSpeedFromSqlite(input.session_id));
+                    }
+
+                    if (!tokenSpeed && currentOutputTokens > 0 && timingData.durationMs > 0) {
+                        tokenSpeed = normalizeTokenSpeed(calculateEstimatedTokenSpeed(currentOutputTokens, timingData.durationMs, timingData.ttftMs));
+                    }
+                }
+
+                if (timingData.ttftMs) {
+                    formattedTimeToFirstToken = formatDuration(timingData.ttftMs);
+                }
+            } else if (needsTokenSpeedData) {
+                tokenSpeed = normalizeTokenSpeed(readLatestUsageSpeedFromSqlite(input.session_id));
+            }
+
+            formattedTokenSpeed = tokenSpeed > 0 ? tokenSpeed.toString() : '';
+            streamingIndicator = isStreaming ? '[Streaming]' : '';
         }
 
         // Process context window data
@@ -998,9 +1076,6 @@ export async function parseStatusLineData(input: StatusLineInput, presetName?: s
             version: input.version || '',
             sessionId: input.session_id.substring(0, 8)
         };
-
-        // Determine the style to use
-        const isPowerline = currentStyle === 'powerline';
 
         // Render status line based on style
         if (isPowerline) {

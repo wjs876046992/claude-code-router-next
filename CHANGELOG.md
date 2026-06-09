@@ -2,10 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
-## [2.3.2] - 2026-06-09
+## [2.3.3] - 2026-06-09
 
 ### Fixed
 
+- **状态栏 token 速率上限**: 修复 token 速率显示异常大数字（如 7000）的问题，统一限幅最大 999 t/s；调整速率来源优先级为插件实测值 > SQLite usage 记录 > 累计 token 估算；仅在主题需要 speed 相关变量时才执行 token-speed I/O 和 usage fallback，避免不必要的文件/数据库读取
 - **CLI 发布包 Node peer 依赖**: 移除发布包中的 `peerDependencies.node`，只保留 `engines.node`，避免 npm 自动安装 `node` 包导致 `better-sqlite3` 使用错误 Node ABI 编译
 - **CLI stale dist 发布风险**: CLI 构建前会清理 `packages/cli/dist`，防止旧的 `dist/index.js`、`dist/package.json` 混入 npm 发布包
 - **发布前校验**: `scripts/release.sh` 增加 `PUBLISH_DRY_RUN=1` 和 npm pack preflight，发布前校验必需产物、拒绝 stale dist 文件并确保不会生成 `peerDependencies.node`
