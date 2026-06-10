@@ -232,7 +232,8 @@ ui (standalone frontend application)
 
 ## Development Notes
 
-1. **Node.js version**: Requires >= 18.0.0
+1. **CCR service management**: Always use `ccr restart` instead of `ccr stop` followed by `ccr start`. Stopping the service interrupts all active LLM routing, making the current Claude Code session unusable. Restarting minimizes downtime.
+2. **Node.js version**: Requires >= 18.0.0
 2. **Package manager**: Uses pnpm (monorepo depends on workspace protocol)
 3. **TypeScript**: All packages use TypeScript, but UI package is ESM module
 4. **Build tools**:

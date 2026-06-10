@@ -406,6 +406,78 @@ class AliyunCodingPlanQuotaAdapter extends BaseQuotaAdapter {
   }
 }
 
+class XfyunCodingPlanQuotaAdapter extends BaseQuotaAdapter {
+  async queryQuota(
+    provider: LLMProvider,
+    timeoutMs: number,
+    proxyUrl?: string
+  ): Promise<ProviderQuotaResult | null> {
+    // quotaToken should contain the iFlytek MaaS console cookie string.
+    if (!provider.quotaToken) return null;
+
+    const authorization = extractCookieValue(provider.quotaToken, "atp-auth-token") ||
+      extractCookieValue(provider.quotaToken, "tenantToken") ||
+      provider.quotaToken;
+
+    const fetchOptions: RequestInit & { dispatcher?: unknown } = {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
+        Origin: "https://maas.xfyun.cn",
+        Referer: "https://maas.xfyun.cn/packageSubscription",
+        Authorization: authorization.trim(),
+        Cookie: provider.quotaToken,
+      },
+      signal: AbortSignal.timeout(timeoutMs),
+    };
+
+    if (proxyUrl) {
+      try {
+        const { ProxyAgent } = await import("undici");
+        fetchOptions.dispatcher = new ProxyAgent(new URL(proxyUrl).toString());
+      } catch {
+        // Continue without proxy
+      }
+    }
+
+    try {
+      const response = await fetch(
+        "https://maas.xfyun.cn/api/v1/gpt-finetune/coding-plan/list?page=1&size=10",
+        fetchOptions
+      );
+      if (!response.ok) return null;
+
+      const payload = await response.json();
+      if (payload?.succeed === false || payload?.failed === true) return null;
+
+      const plan = findXfyunCodingPlan(payload, provider.apiKey);
+      const usage = plan?.codingPlanUsageDTO || plan?.usage || plan;
+      if (!usage || typeof usage !== "object") return null;
+
+      const result: ProviderQuotaResult = {};
+
+      const used5h = parseOptionalNumber(usage.rp5hUsage);
+      const total5h = parseOptionalNumber(usage.rp5hLimit);
+      if (used5h !== undefined) result.usedDailyBalance = used5h;
+      if (total5h !== undefined) result.limitDaily = total5h;
+
+      const usedWeek = parseOptionalNumber(usage.rpwUsage);
+      const totalWeek = parseOptionalNumber(usage.rpwLimit);
+      if (usedWeek !== undefined) result.usedBalance = usedWeek;
+      if (totalWeek !== undefined) result.totalBalance = totalWeek;
+
+      if (result.remainingBalance === undefined && totalWeek !== undefined && usedWeek !== undefined) {
+        result.remainingBalance = Math.max(0, totalWeek - usedWeek);
+      }
+
+      return this.hasQuotaData(result) ? result : null;
+    } catch {
+      return null;
+    }
+  }
+}
+
 class KimiCodingPlanQuotaAdapter extends BaseQuotaAdapter {
   async queryQuota(
     provider: LLMProvider,
@@ -581,6 +653,7 @@ const openRouterQuotaAdapter = new OpenRouterQuotaAdapter();
 const siliconFlowQuotaAdapter = new SiliconFlowQuotaAdapter();
 const zhipuQuotaAdapter = new ZhipuQuotaAdapter();
 const aliyunCodingPlanQuotaAdapter = new AliyunCodingPlanQuotaAdapter();
+const xfyunCodingPlanQuotaAdapter = new XfyunCodingPlanQuotaAdapter();
 const kimiCodingPlanQuotaAdapter = new KimiCodingPlanQuotaAdapter();
 const miniMaxCodingPlanQuotaAdapter = new MiniMaxCodingPlanQuotaAdapter();
 
@@ -638,6 +711,19 @@ export function getQuotaAdapter(baseUrl: string): QuotaAdapter | null {
     return aliyunCodingPlanQuotaAdapter;
   }
 
+  // iFlytek Coding Plan quota adapter - model API hosts use xf-yun.com,
+  // while the quota endpoint lives under maas.xfyun.cn.
+  if (
+    hostname === "xf-yun.com" ||
+    hostname.endsWith(".xf-yun.com") ||
+    hostname === "xfyun.cn" ||
+    hostname.endsWith(".xfyun.cn") ||
+    hostname === "xfyun.com" ||
+    hostname.endsWith(".xfyun.com")
+  ) {
+    return xfyunCodingPlanQuotaAdapter;
+  }
+
   return null;
 }
 
@@ -647,6 +733,43 @@ function getSiliconFlowEndpoint(baseUrl: string): string {
   return isCnEndpoint
     ? "https://api.siliconflow.cn/v1/user/info"
     : "https://api.siliconflow.com/v1/user/info";
+}
+
+function findXfyunCodingPlan(payload: any, providerApiKey?: string): any | null {
+  const plans = collectXfyunCodingPlans(payload);
+  if (plans.length === 0) return null;
+
+  const providerKeyParts = String(providerApiKey || "")
+    .split(":")
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  const matched = plans.find((plan) => {
+    const credential = plan?.codingPlanAppCredentialDTO || plan?.appCredential || plan;
+    const planApiKey = String(credential?.apiKey || credential?.api_key || "").trim();
+    return planApiKey && providerKeyParts.some((part) => part.includes(planApiKey) || planApiKey.includes(part));
+  });
+
+  return matched || plans[0];
+}
+
+function collectXfyunCodingPlans(value: any): any[] {
+  if (!value || typeof value !== "object") return [];
+
+  if (!Array.isArray(value) && value.codingPlanUsageDTO) {
+    return [value];
+  }
+
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => collectXfyunCodingPlans(item));
+  }
+
+  return Object.values(value).flatMap((item) => collectXfyunCodingPlans(item));
+}
+
+function extractCookieValue(cookie: string, name: string): string | undefined {
+  const match = cookie.match(new RegExp(`(?:^|;\\s*)${name}=([^;]+)`));
+  return match ? decodeURIComponent(match[1]) : undefined;
 }
 
 function getHostname(baseUrl: string): string | null {
