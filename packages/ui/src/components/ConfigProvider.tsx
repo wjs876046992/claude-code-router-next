@@ -1,12 +1,13 @@
 import { createContext, useContext, useState, useEffect } from 'react';
 import type { ReactNode, Dispatch, SetStateAction } from 'react';
 import { api } from '@/lib/api';
-import type { Config, StatusLineConfig } from '@/types';
+import type { Config } from '@/types';
 
 interface ConfigContextType {
   config: Config | null;
   setConfig: Dispatch<SetStateAction<Config | null>>;
   error: Error | null;
+  refreshConfig: () => Promise<void>;
 }
 
 const ConfigContext = createContext<ConfigContextType | undefined>(undefined);
@@ -53,6 +54,25 @@ export function ConfigProvider({ children }: ConfigProviderProps) {
     fetchConfig();
   }, [apiKey]);
 
+  const loadConfigFromServer = async () => {
+    const data = await api.getConfig();
+
+    // Pass through the raw server data as-is so we never write back
+    // fields that the user didn't configure. Components handle missing
+    // fields with defensive defaults at render time.
+    const validConfig = { ...data } as Config;
+
+    // Only normalise nested structures that the UI mutates directly
+    if (data.Providers && !Array.isArray(data.Providers)) {
+      validConfig.Providers = [];
+    }
+    if (data.transformers && !Array.isArray(data.transformers)) {
+      validConfig.transformers = [];
+    }
+
+    return validConfig;
+  };
+
   useEffect(() => {
     const fetchConfig = async () => {
       // Prevent duplicate API calls in React StrictMode
@@ -61,24 +81,9 @@ export function ConfigProvider({ children }: ConfigProviderProps) {
         return;
       }
       setHasFetched(true);
-      
+
       try {
-        // Try to fetch config regardless of API key presence
-        const data = await api.getConfig();
-
-        // Pass through the raw server data as-is so we never write back
-        // fields that the user didn't configure. Components handle missing
-        // fields with defensive defaults at render time.
-        const validConfig = { ...data } as Config;
-
-        // Only normalise nested structures that the UI mutates directly
-        if (data.Providers && !Array.isArray(data.Providers)) {
-          validConfig.Providers = [];
-        }
-        if (data.transformers && !Array.isArray(data.transformers)) {
-          validConfig.transformers = [];
-        }
-        
+        const validConfig = await loadConfigFromServer();
         setConfig(validConfig);
       } catch (err) {
         console.error('Failed to fetch config:', err);
@@ -131,8 +136,21 @@ export function ConfigProvider({ children }: ConfigProviderProps) {
     fetchConfig();
   }, [hasFetched, apiKey]);
 
+  const refreshConfig = async () => {
+    try {
+      const validConfig = await loadConfigFromServer();
+      setConfig(validConfig);
+      setError(null);
+    } catch (err) {
+      console.error('Failed to refresh config:', err);
+      if ((err as Error).message !== 'Unauthorized') {
+        setError(err as Error);
+      }
+    }
+  };
+
   return (
-    <ConfigContext.Provider value={{ config, setConfig, error }}>
+    <ConfigContext.Provider value={{ config, setConfig, error, refreshConfig }}>
       {children}
     </ConfigContext.Provider>
   );

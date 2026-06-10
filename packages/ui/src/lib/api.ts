@@ -1,20 +1,4 @@
-import type { ClientApplyResponse, ClientId, ClientStatus, CodexAccountOperationResponse, CodexAccountsResponse, CodexRefreshTokenExportResponse, Config, Provider, Transformer, ProviderQuotaResponse } from '@/types';
-
-// 日志聚合响应类型
-interface GroupedLogsResponse {
-  grouped: boolean;
-  groups: { [reqId: string]: Array<{ timestamp: string; level: string; message: string; source?: string; reqId?: string }> };
-  summary: {
-    totalRequests: number;
-    totalLogs: number;
-    requests: Array<{
-      reqId: string;
-      logCount: number;
-      firstLog: string;
-      lastLog: string;
-    }>;
-  };
-}
+import type { ClientApplyResponse, ClientId, ClientStatus, CodexAccountOperationResponse, CodexAccountsResponse, CodexRefreshTokenExportResponse, Config, ProviderQuotaResponse } from '@/types';
 
 // API Client Class for handling requests with baseUrl and apikey authentication
 class ApiClient {
@@ -173,61 +157,6 @@ class ApiClient {
   // Update entire configuration
   async updateConfig(config: Config): Promise<{ success: boolean; message?: string }> {
     return this.post<{ success: boolean; message?: string }>('/config', config);
-  }
-
-  // Get providers
-  async getProviders(): Promise<Provider[]> {
-    return this.get<Provider[]>('/api/providers');
-  }
-
-  // Add a new provider
-  async addProvider(provider: Provider): Promise<Provider> {
-    return this.post<Provider>('/api/providers', provider);
-  }
-
-  // Update a provider
-  async updateProvider(index: number, provider: Provider): Promise<Provider> {
-    return this.post<Provider>(`/api/providers/${index}`, provider);
-  }
-
-  // Delete a provider
-  async deleteProvider(index: number): Promise<void> {
-    return this.delete<void>(`/api/providers/${index}`);
-  }
-
-  // Toggle a provider
-  async toggleProvider(name: string, enabled: boolean): Promise<{ success: boolean; message: string }> {
-    return this.patch<{ success: boolean; message: string }>(`/providers/${encodeURIComponent(name)}/toggle`, { enabled });
-  }
-
-  // Get transformers
-  async getTransformers(): Promise<Transformer[]> {
-    return this.get<Transformer[]>('/api/transformers');
-  }
-
-  // Add a new transformer
-  async addTransformer(transformer: Transformer): Promise<Transformer> {
-    return this.post<Transformer>('/api/transformers', transformer);
-  }
-
-  // Update a transformer
-  async updateTransformer(index: number, transformer: Transformer): Promise<Transformer> {
-    return this.post<Transformer>(`/api/transformers/${index}`, transformer);
-  }
-
-  // Delete a transformer
-  async deleteTransformer(index: number): Promise<void> {
-    return this.delete<void>(`/api/transformers/${index}`);
-  }
-
-  // Get configuration (new endpoint)
-  async getConfigNew(): Promise<Config> {
-    return this.get<Config>('/config');
-  }
-
-  // Save configuration (new endpoint)
-  async saveConfig(config: Config): Promise<unknown> {
-    return this.post<Config>('/config', config);
   }
 
   // Restart service

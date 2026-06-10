@@ -6,7 +6,7 @@ const ProviderService = _llmsModule.ProviderService;
 const startActiveProbe = _llmsModule.startActiveProbe;
 const resetActiveProbeService = _llmsModule.resetActiveProbeService;
 import { getHealthStore } from "@wengine-ai/llms";
-import { readConfigFile, writeConfigFile, backupConfigFile } from "./utils";
+import { readConfigFile, readConfigFileRaw, writeConfigFile, backupConfigFile } from "./utils";
 import { join } from "path";
 import fastifyStatic from "@fastify/static";
 import { readdirSync, statSync, readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync, rmSync } from "fs";
@@ -511,9 +511,10 @@ export const createServer = async (config: any): Promise<any> => {
     return { "input_tokens": tokenCount }
   });
 
-  // Add endpoint to read config.json with access control
+  // Return raw (un-interpolated) config so that $VAR placeholders survive UI round-trips.
+  // The runtime path (readConfigFile) still interpolates env vars for actual request processing.
   app.get("/api/config", async (req: any, reply: any) => {
-    return await readConfigFile();
+    return await readConfigFileRaw();
   });
 
   app.get("/api/transformers", async (req: any, reply: any) => {

@@ -117,7 +117,7 @@ function cleanUpConfigModels(config: any, deletedModels: string[], providerName?
 
 export function Providers() {
   const { t } = useTranslation();
-  const { config, setConfig } = useConfig();
+  const { config, refreshConfig } = useConfig();
   const [isSaving, setIsSaving] = useState(false);
   const [editingProviderIndex, setEditingProviderIndex] = useState<number | null>(null);
   const [deletingProviderIndex, setDeletingProviderIndex] = useState<number | null>(null);
@@ -241,8 +241,6 @@ export function Providers() {
     };
 
     const newConfig = { ...config, Providers: newProviders };
-    setConfig(newConfig);
-
     setIsSaving(true);
     try {
       const response = await api.updateConfig(newConfig);
@@ -251,9 +249,13 @@ export function Providers() {
       } else {
         setToast({ message: response.message || t('app.config_saved_failed'), type: 'error' });
       }
+      // Re-fetch from server so UI reflects the exact persisted state
+      await refreshConfig();
     } catch (e) {
       console.error("Failed to toggle provider:", e);
       setToast({ message: t('app.config_saved_failed') + ': ' + (e as Error).message, type: 'error' });
+      // Revert to server state on failure
+      await refreshConfig();
     } finally {
       setIsSaving(false);
     }
@@ -325,7 +327,6 @@ export function Providers() {
       if (deletedModels.length > 0) {
         newConfig = cleanUpConfigModels(newConfig, deletedModels, editingProviderName);
       }
-      setConfig(newConfig);
       // Persist to server immediately
       setIsSaving(true);
       try {
@@ -335,9 +336,13 @@ export function Providers() {
         } else {
           setToast({ message: response.message || t('app.config_saved_failed'), type: 'error' });
         }
+        // Re-fetch from server so UI reflects the exact persisted state
+        await refreshConfig();
       } catch (e) {
         console.error('Failed to persist provider changes:', e);
         setToast({ message: t('app.config_saved_failed') + ': ' + (e as Error).message, type: 'error' });
+        // Revert to server state on failure
+        await refreshConfig();
       } finally {
         setIsSaving(false);
       }
@@ -395,7 +400,6 @@ export function Providers() {
     if (deletedModels.length > 0) {
       newConfig = cleanUpConfigModels(newConfig, deletedModels, deletedProviderName);
     }
-    setConfig(newConfig);
     setDeletingProviderIndex(null);
     // Persist to server immediately
     try {
@@ -405,9 +409,13 @@ export function Providers() {
       } else {
         setToast({ message: response.message || t('app.config_saved_failed'), type: 'error' });
       }
+      // Re-fetch from server so UI reflects the exact persisted state
+      await refreshConfig();
     } catch (e) {
       console.error('Failed to persist provider removal:', e);
       setToast({ message: t('app.config_saved_failed') + ': ' + (e as Error).message, type: 'error' });
+      // Revert to server state on failure
+      await refreshConfig();
     }
   };
 

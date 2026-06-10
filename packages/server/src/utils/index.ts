@@ -65,6 +65,13 @@ const confirm = async (query: string): Promise<boolean> => {
   return answer.toLowerCase() !== "n";
 };
 
+// Read config file without env-var interpolation.
+// Used by the UI layer so that $VAR placeholders are preserved on round-trip.
+export const readConfigFileRaw = async () => {
+  const raw = await fs.readFile(CONFIG_FILE, "utf-8");
+  return JSON5.parse(raw);
+};
+
 export const readConfigFile = async () => {
   try {
     const config = await fs.readFile(CONFIG_FILE, "utf-8");
