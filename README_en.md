@@ -283,11 +283,24 @@ If you want the Claude Code Router UI to fetch and display your monthly **Qwen C
 5. Select the request, find the **`Cookie`** header under **Request Headers**, and copy its entire value.
 6. Paste this copied cookie string as the **`quotaToken`** property inside the Alibaba Cloud provider block in your `config.json`.
 
-![Alibaba Cloud Quota Cookie Acquisition](blog/images/aliyun-quota-auth.png)
-
 Once configured, the Provider list in the Web UI will display your real-time Qwen Coding Plan remaining quota progress bar and refresh status:
 
+![Alibaba Cloud Quota Cookie Acquisition](blog/images/aliyun-quota-auth.png)
+
 ![Alibaba Cloud Quota Progress Display](blog/images/aliyun-quota-display.png)
+
+### 🔑 Xfyun Coding Plan Quota Token (Cookie) Guide
+
+If you want the Claude Code Router UI to fetch and display your Xfyun Coding Plan quota bars in real time, open the Xfyun Coding Plan subscription/quota page, open DevTools Network, refresh the page, and copy the request `Cookie` as `quotaToken`:
+
+1. Log in to the Xfyun Coding Plan subscription/quota page.
+2. Open Developer Tools (F12) and switch to the **Network** tab.
+3. Refresh the page.
+4. In the request list, find the quota-query request for that page and click it.
+5. Under **Headers** → **Request Headers**, copy the full `Cookie` value.
+6. Paste it into the `quotaToken` field in your `config.json`, or into the **Quota Query Token** input in the UI.
+
+> **Note**: This token is not long-lived and may expire. When it expires, you need to add it again manually.
 
 ### 3. Running Claude Code with the Router
 

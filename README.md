@@ -261,11 +261,24 @@ npm install -g @wengine-ai/claude-code-router-next@latest && ccr restart
 5. 在右侧 **Headers (标头)** 的 **Request Headers (请求头)** 中找到 **`Cookie`** 这一项，将其右侧的完整超长内容复制下来。
 6. 在您的 `config.json` 中，将这个 cookie 填入阿里云 provider 下的 **`quotaToken`** 属性中即可！
 
-![阿里云用量 Cookie 获取方式](blog/images/aliyun-quota-auth.png)
-
 配置成功后，Web UI 的 Provider 列表中将会实时展示您的套餐剩余用量额度条与刷新状态：
 
+![阿里云用量 Cookie 获取方式](blog/images/aliyun-quota-auth.png)
+
 ![阿里云用量额度条展示](blog/images/aliyun-quota-display.png)
+
+### 🔑 讯飞 Coding Plan 用量 Token (Cookie) 获取引导
+
+如果您想让 Claude Code Router 的后台 Web UI 实时拉取并可视化展示您的 **讯飞 Coding Plan** 剩余用量额度条，您需要进入讯飞 Coding Plan 订阅查询页面，打开浏览器开发者工具的 Network 面板，刷新页面后复制请求中的 `Cookie` 作为 `quotaToken` 填入配置：
+
+1. 登录讯飞 Coding Plan 订阅查询页面。
+2. 按键盘 `F12` 打开浏览器开发者工具，并切换到 **Network (网络)** 标签页。
+3. 刷新页面。
+4. 在左侧网络请求列表中，找到订阅查询页面对应的用量查询请求并点击。
+5. 在右侧 **Headers (标头)** 的 **Request Headers (请求头)** 中找到 **`Cookie`** 这一项，将其右侧的完整内容复制下来。
+6. 在您的 `config.json` 中，将这个 cookie 填入讯飞 provider 下的 **`quotaToken`** 属性中，或者粘贴到 UI 的 **限额查询 Token** 输入框中即可。
+
+> **注意**: 这个 token 不是长期有效的，可能会过期；过期后需要重新手动添加。
 
 ### 3. 使用 Router 运行 Claude Code
 
