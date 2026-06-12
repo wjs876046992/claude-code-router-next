@@ -9,16 +9,16 @@ function HomepageHeader() {
 
   const content = {
     en: {
-      title: 'Route Claude Code',
+      title: 'Route Claude Code & Codex',
       highlight: 'to Any LLM',
-      subtitle: 'Use Claude Code without an Anthropic account. Connect to DeepSeek, Gemini, Groq, and more.',
+      subtitle: 'Use Claude Code and Codex with any LLM provider. Connect to DeepSeek, Gemini, Groq, and more.',
       getStarted: 'Get Started',
       github: 'View on GitHub',
     },
     'zh-CN': {
-      title: '将 Claude Code',
+      title: '将 Claude Code & Codex',
       highlight: '路由到任何 LLM',
-      subtitle: '无需 Anthropic 账户即可使用 Claude Code。支持连接 DeepSeek、Gemini、Groq 等提供商。',
+      subtitle: '无需官方限制即可使用 Claude Code 和 Codex。支持连接 DeepSeek、Gemini、Groq 等提供商。',
       getStarted: '开始使用',
       github: '查看 GitHub',
     }

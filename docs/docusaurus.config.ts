@@ -4,7 +4,7 @@ import { themes as prismThemes } from 'prism-react-renderer';
 
 const config: Config = {
   title: 'Claude Code Router',
-  tagline: 'Use Claude Code without an Anthropics account and route it to another LLM provider',
+  tagline: 'Use Claude Code and Codex with any LLM provider, allowing flexible request/response routing and client configuration management',
   favicon: 'img/favicon.ico',
 
   url: 'https://musistudio.github.io',

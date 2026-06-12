@@ -8,7 +8,7 @@
 
 > [从CLI工具风格看工具渐进式披露](/blog/zh/从CLI工具风格看工具渐进式披露.md)
 
-> 一款强大的工具，可将 Claude Code 请求路由到不同的模型，并自定义任何请求。 
+> 一款强大的工具，可将 Claude Code 和 Codex 请求路由到不同的模型，并自定义任何请求。 
 
 ![](blog/images/claude-code.png)
 

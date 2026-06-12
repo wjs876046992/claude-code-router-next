@@ -8,15 +8,31 @@ All notable changes to this project will be documented in this file.
 
 - **讯飞 Coding Plan 用量查询**: 支持将讯飞 MaaS 控制台订阅查询页面的 `Cookie` 作为 `quotaToken`，在 Web UI 中自动查询并展示 5h / 7d 限额；该 token 可能会过期，过期后需要重新手动添加。
 
+## [2.3.4] - 2026-06-10
+
+### Fixed
+
+- **Raw config round-trip**: 添加 `readConfigFileRaw()` 读取未插值的原始配置，确保 UI 保存时 `$VAR` 环境变量占位符不被替换；保存/切换/删除 provider 后从服务端重新拉取配置，避免乐观更新导致 UI 状态与服务端不一致；移除 UI 中未使用的 API 方法（`getProviders`、`addProvider` 等）
+
 ## [2.3.3] - 2026-06-09
 
 ### Fixed
 
 - **状态栏 token 速率上限**: 修复 token 速率显示异常大数字（如 7000）的问题，统一限幅最大 999 t/s；调整速率来源优先级为插件实测值 > SQLite usage 记录 > 累计 token 估算；仅在主题需要 speed 相关变量时才执行 token-speed I/O 和 usage fallback，避免不必要的文件/数据库读取
+
+## [2.3.2] - 2026-06-09
+
+### Fixed
+
+- **状态栏 token 速率显示**: 状态栏支持读取 timestamped token-speed 临时文件，并在 Claude Code 未提供当前输出 token 时回退使用插件记录的 `tokensPerSecond`
+
+## [2.3.1] - 2026-06-08
+
+### Fixed
+
 - **CLI 发布包 Node peer 依赖**: 移除发布包中的 `peerDependencies.node`，只保留 `engines.node`，避免 npm 自动安装 `node` 包导致 `better-sqlite3` 使用错误 Node ABI 编译
 - **CLI stale dist 发布风险**: CLI 构建前会清理 `packages/cli/dist`，防止旧的 `dist/index.js`、`dist/package.json` 混入 npm 发布包
 - **发布前校验**: `scripts/release.sh` 增加 `PUBLISH_DRY_RUN=1` 和 npm pack preflight，发布前校验必需产物、拒绝 stale dist 文件并确保不会生成 `peerDependencies.node`
-- **状态栏 token 速率显示**: 状态栏支持读取 timestamped token-speed 临时文件，并在 Claude Code 未提供当前输出 token 时回退使用插件记录的 `tokensPerSecond`
 
 ## [2.3.0] - 2026-06-08
 
@@ -86,29 +102,3 @@ All notable changes to this project will be documented in this file.
 
 - 修复 macOS 休眠/唤醒后健康探针调度异常
 - 改进 Codex 账户管理
-
-## [2.1.27] - 2026-06-04
-
-### Fixed
-
-- 修复 DeepSeek 和 GLM API 的 `tool_choice` 错误
-
-## [2.1.26] - 2026-06-04
-
-### Fixed
-
-- 添加缺失的 `/api/providers/health` 端点用于 UI 轮询
-- 即使未配置 fallback 也记录健康失败
-- 修复 Gemini `thought_signature` 400 错误
-- 修复转发到下游提供商时未剥离 thinking signature 的问题
-
-## [2.1.0] - 2026-06-03
-
-### Added
-
-- 用量统计与限额监控
-- 状态栏 token 计数优化（包含缓存 token）
-
-### Changed
-
-- 版本号统一管理
