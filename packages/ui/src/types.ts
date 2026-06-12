@@ -130,6 +130,18 @@ export interface ClientApplyResponse {
   config: Config;
 }
 
+export interface ProjectConfigEntry {
+  id: string;
+  path: string;
+  configPath: string;
+  Router: Record<string, any>;
+  ccrTakeover?: boolean;
+}
+
+export interface ProjectsResponse {
+  projects: ProjectConfigEntry[];
+}
+
 export interface CodexAccount {
   id: string;
   label: string;

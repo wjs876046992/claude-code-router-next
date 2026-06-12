@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.3.6] - 2026-06-12
+
+### Added
+
+- **项目级 CCR 接管**: Web UI 项目配置页新增「CCR 接管」开关，开启后会将 `ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN`、模型族路由环境变量（`ANTHROPIC_DEFAULT_OPUS_MODEL`/`ANTHROPIC_DEFAULT_SONNET_MODEL`/`ANTHROPIC_DEFAULT_HAIKU_MODEL`/`ANTHROPIC_MODEL`/`ANTHROPIC_REASONING_MODEL`）、auto-compact 相关配置（`CLAUDE_CODE_AUTO_COMPACT_WINDOW`/`CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`/`autoCompactEnabled`）以及状态栏 `statusLine: ccr statusline` 同步写入该项目的 `.claude/settings.local.json`，使该项目的 Claude Code CLI 无需 `ccr code` 即可直接通过 CCR 路由，同时保留原有的 `permissions`/`hooks` 等配置。
+- **接管开关备份/还原机制**: 关闭接管时会将当前 ccr 管理的配置备份到 `~/.claude-code-router/<project-id>/settings.local.backup.json`，并从 `.claude/settings.local.json` 中移除 ccr 相关字段；重新开启接管时优先恢复备份，没有备份则按当前全局配置重新生成，避免个性化配置丢失。
+- **项目配置页改进**: 项目卡片支持折叠/展开；关闭「使用全局配置」后正确同步全局路由的 fallback 与模型族配置；保存/新增项目接口返回结果中包含 `ccrTakeover` 状态，修复保存后接管状态短暂显示为关闭的问题。
+
 ## [2.3.5] - 2026-06-10
 
 ### Added

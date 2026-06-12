@@ -108,13 +108,13 @@ const getProjectSpecificRouter = async (
       // First try to read sessionConfig file
       try {
         const sessionConfig = JSON.parse(await readFile(sessionConfigPath, "utf8"));
-        if (sessionConfig && sessionConfig.Router) {
+        if (sessionConfig && sessionConfig.Router && Object.keys(sessionConfig.Router).length > 0) {
           return sessionConfig.Router;
         }
       } catch {}
       try {
         const projectConfig = JSON.parse(await readFile(projectConfigPath, "utf8"));
-        if (projectConfig && projectConfig.Router) {
+        if (projectConfig && projectConfig.Router && Object.keys(projectConfig.Router).length > 0) {
           return projectConfig.Router;
         }
       } catch {}
@@ -505,7 +505,9 @@ const getUseModel = async (
   const providers = configService.get<any[]>("providers") || [];
   const Router = projectSpecificRouter || configService.get("Router");
   const enableFallback = Router?.enableFallback === true;
-  const globalFallback = enableFallback ? configService.get<RouterFallbackConfig>('fallback') : undefined;
+  const globalFallback = enableFallback
+    ? (Router?.fallback as RouterFallbackConfig | undefined) || configService.get<RouterFallbackConfig>('fallback')
+    : undefined;
 
   // Handle explicit provider,model format
   if (req.body.model.includes(",")) {
@@ -617,18 +619,17 @@ const getUseModel = async (
     }
   }
   // Use the background model for any Claude Haiku variant
-  const globalRouter = configService.get("Router");
   if (
     req.body.model?.includes("claude") &&
     req.body.model?.includes("haiku") &&
-    globalRouter?.background
+    Router?.background
   ) {
     req.log.info(`Using background model for ${req.body.model}`);
-    const bgModel = resolveConfiguredModel(globalRouter.background, providers, false, 'background', enableFallback);
+    const bgModel = resolveConfiguredModel(Router.background, providers, false, 'background', enableFallback);
     if (bgModel) {
       return { model: bgModel, scenarioType: 'background' };
     }
-    req.log.warn(`Background model ${globalRouter.background} unavailable (fail pool), falling through`);
+    req.log.warn(`Background model ${Router.background} unavailable (fail pool), falling through`);
     // Fall through to other routing logic
   }
   // The priority of websearch must be higher than thinking.

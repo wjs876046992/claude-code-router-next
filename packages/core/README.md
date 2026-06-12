@@ -93,6 +93,7 @@ npm install -g @wengine-ai/claude-code-router-next@latest && ccr restart
 
 | 版本 | 发布内容 |
 | --- | --- |
+| **v2.3.6** | <ul><li>**项目级 CCR 接管**：Web UI 项目配置页新增「CCR 接管」开关，开启后会将 `ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN`、模型族路由环境变量、auto-compact 设置及状态栏命令同步写入该项目的 `.claude/settings.local.json`，使该项目的 Claude Code CLI 无需 `ccr code` 即可直接通过 CCR 路由；关闭接管时会备份当前配置，下次重新接管自动还原，避免个性化配置丢失。</li><li>**项目配置页折叠与同步修复**：项目卡片支持折叠/展开；关闭「使用全局配置」后正确同步全局路由的 fallback 与模型族配置。</li></ul> |
 | **v2.1.36** | <ul><li>**Codex 最新 RT 导出**：Codex 账号管理支持导出当前或指定托管账号的最新 refresh token，CLI 新增 `ccr clients codex export-rt [account-id]`，Web UI 新增复制最新 RT 按钮，并会在当前 auth 文件更新时同步托管快照。</li></ul> |
 | **v2.1.35** | <ul><li>**定时唤醒稳定性修复**：提供商定时唤醒在 macOS 睡眠/唤醒或系统时间跳变后会重新计算下一次触发时间，避免错过或重复执行唤醒任务。</li></ul> |
 | **v2.1.34** | <ul><li>**本地客户端配置接管**：新增 Client Configuration 管理能力，可通过 UI/API/CLI 启用、禁用或恢复本地 Claude Code、Codex 等客户端配置，并自动写入 CCR 代理地址与模型别名。</li><li>**Codex 本地账号代管理**：新增 Codex 账号管理页与 `ccr clients codex` 命令，支持导入当前登录账号、通过 refresh token 导入、切换激活账号、删除托管账号，并对官方 auth 文件做备份与替换。</li><li>**Codex 账号列表缓存优化**：Codex 账号页优先读取本地固化账号与限额缓存，页面刷新无需等待官方 usage 接口；当前账号后台 1 分钟刷新一次，非当前账号 30 分钟刷新一次。</li><li>**Codex / OpenAI Responses API 兼容**：新增 `openai-responses` Transformer，支持 Codex 使用 Responses API wire format 接入 CCR，并完成 Chat/Anthropic 与 Responses 的流式、非流式转换。</li><li>**状态栏视觉升级**：状态栏新增彩色渐变 Context 上下文占用进度条，提升长上下文使用情况的可读性。</li></ul> |

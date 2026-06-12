@@ -134,11 +134,13 @@ export class OpenAIResponsesTransformer implements Transformer {
     delete request.temperature;
     delete request.max_tokens;
 
-    // 处理 reasoning 参数
+    // Handle reasoning parameter — preserve the original summary level from Codex
+    // instead of hardcoding "detailed". Codex may send "auto" or "concise" to
+    // control reasoning summary verbosity, which affects auto-compact behavior.
     if (request.reasoning) {
       (request as any).reasoning = {
         effort: request.reasoning.effort,
-        summary: "detailed",
+        summary: request.reasoning.summary || "auto",
       };
     }
 

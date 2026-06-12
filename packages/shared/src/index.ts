@@ -1,5 +1,6 @@
 export * from "./constants";
 export * from "./client-integrations";
+export * from "./projectConfig";
 
 // Export preset-related functionality
 export * from './preset/types';

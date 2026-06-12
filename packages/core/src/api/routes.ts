@@ -55,6 +55,23 @@ function normalizeResponsesBody(body: any): void {
         tool_call_id: item.call_id,
         content: typeof item.output === "string" ? item.output : JSON.stringify(item.output),
       });
+    } else if (item.type === "reasoning") {
+      // Preserve reasoning items (thinking summaries from auto-compact) so the
+      // downstream model can see compacted context. Convert to an assistant
+      // message with thinking content so non-OpenAI providers can process it.
+      const summaryText = Array.isArray(item.summary)
+        ? item.summary
+            .filter((s: any) => s.type === "summary_text" && s.text)
+            .map((s: any) => s.text)
+            .join("\n")
+        : "";
+      if (summaryText) {
+        messages.push({
+          role: "assistant",
+          content: [{ type: "text", text: `[reasoning]\n${summaryText}` }],
+          _reasoningItem: true,  // marker for transformRequestIn to restore
+        });
+      }
     } else if (item.role) {
       // user / assistant / system messages
       let content = item.content;
@@ -117,6 +134,16 @@ function normalizeResponsesBody(body: any): void {
   if (body.reasoning && typeof body.reasoning === "object") {
     body.reasoning = { enabled: true, effort: body.reasoning.effort };
   }
+  // Remove Responses API-specific fields that are meaningless for third-party
+  // providers. CCR does not implement a conversation store, so:
+  //   - store: OpenAI server-side conversation storage (not supported by CCR)
+  //   - previous_response_id: references a stored response (CCR cannot resolve it)
+  //   - include: requests extra data in response (not supported by third-party APIs)
+  // Keeping these fields would either cause errors at third-party providers or
+  // silently be ignored, breaking auto-compact context continuity.
+  delete body.store;
+  delete body.previous_response_id;
+  delete body.include;
 }
 
 // Extend FastifyInstance to include custom services

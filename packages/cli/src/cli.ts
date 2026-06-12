@@ -59,6 +59,7 @@ Commands:
   statusline    Integrated statusline
   code          Execute claude command
   model         Interactive model selection and configuration
+  model --project  Configure model routing for the current project only
   preset        Manage presets (export, install, list, delete)
   install       Install preset from GitHub marketplace
   clients       Manage client integrations (Claude Code, Codex)
@@ -75,6 +76,7 @@ Examples:
   ccr code "Write a Hello World"
   ccr my-preset "Write a Hello World"    # Use preset configuration
   ccr model
+  ccr model --project                    # Configure model routing for this project only
   ccr preset export my-config            # Export current config as preset
   ccr preset install /path/to/preset     # Install a preset from directory
   ccr preset list                        # List all presets
@@ -274,7 +276,7 @@ async function main() {
       break;
     // ADD THIS CASE
     case "model":
-      await runModelSelector();
+      await runModelSelector({ project: process.argv.slice(3).includes("--project") });
       break;
     case "preset":
       await handlePresetCommand(process.argv.slice(3));

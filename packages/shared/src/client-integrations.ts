@@ -536,6 +536,74 @@ const claudeCodeAdapter: ClientAdapter = {
   },
 };
 
+/**
+ * Apply ccr takeover settings (base URL, auth token, model family routing,
+ * auto-compact, status line) to a project's `.claude/settings.local.json`,
+ * mirroring what `claudeCodeAdapter.enable` does for `~/.claude/settings.json`.
+ */
+export function applyCcrProjectTakeover(settings: Record<string, any>, config: Record<string, any>): void {
+  if (!isObject(settings.env)) settings.env = {};
+
+  settings.env.ANTHROPIC_BASE_URL = getCcrBaseUrl(config);
+  settings.env.ANTHROPIC_AUTH_TOKEN = config.APIKEY || "test";
+  applyClaudeModelFamilies(settings, config);
+  applyClaudeAutoCompactSettings(settings);
+
+  if (config?.StatusLine?.enabled) {
+    settings.statusLine = {
+      type: "command",
+      command: "ccr statusline",
+      padding: 0,
+    };
+  } else if (settings.statusLine?.command === "ccr statusline") {
+    delete settings.statusLine;
+  }
+}
+
+/**
+ * Remove ccr-managed fields from a project's `.claude/settings.local.json`,
+ * preserving any unrelated settings (permissions, hooks, etc.).
+ */
+export function removeCcrProjectTakeover(settings: Record<string, any>): void {
+  if (isObject(settings.env)) {
+    if (isCcrBaseUrl(settings.env.ANTHROPIC_BASE_URL)) {
+      delete settings.env.ANTHROPIC_BASE_URL;
+      delete settings.env.ANTHROPIC_AUTH_TOKEN;
+    }
+
+    for (const key of CLAUDE_MODEL_ENV_KEYS) {
+      if (typeof settings.env[key] === "string" && settings.env[key].startsWith("ccr-")) {
+        delete settings.env[key];
+      }
+    }
+
+    for (const [key, value] of Object.entries(CLAUDE_AUTO_COMPACT_ENV)) {
+      if (settings.env[key] === value) {
+        delete settings.env[key];
+      }
+    }
+
+    if (Object.keys(settings.env).length === 0) {
+      delete settings.env;
+    }
+  }
+
+  if (settings.statusLine?.command === "ccr statusline") {
+    delete settings.statusLine;
+  }
+
+  if (settings.autoCompactEnabled === true) {
+    delete settings.autoCompactEnabled;
+  }
+}
+
+/**
+ * Whether a project's `.claude/settings.local.json` is currently taken over by ccr.
+ */
+export function isCcrProjectTakeoverActive(settings: Record<string, any>): boolean {
+  return isClaudeManaged(settings);
+}
+
 function parseTomlString(raw: string | undefined): string | undefined {
   if (!raw) return undefined;
   const trimmed = raw.trim();

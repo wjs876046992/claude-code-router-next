@@ -16,6 +16,30 @@ export const REFERENCE_COUNT_FILE = path.join(os.tmpdir(), "claude-code-referenc
 // Claude projects directory
 export const CLAUDE_PROJECTS_DIR = path.join(os.homedir(), ".claude", "projects");
 
+/**
+ * Convert an absolute project path to the Claude Code project folder id
+ * (matches the directory naming convention used under ~/.claude/projects/<id>).
+ */
+export function getClaudeProjectId(projectPath: string): string {
+  return projectPath.replace(/[\\/.]/g, "-");
+}
+
+/**
+ * Get the CCR project-level config directory for a given project path.
+ * This is where per-project Router overrides are stored:
+ * ~/.claude-code-router/<project-id>/config.json
+ */
+export function getProjectConfigDir(projectPath: string = process.cwd()): string {
+  return path.join(HOME_DIR, getClaudeProjectId(projectPath));
+}
+
+/**
+ * Get the CCR project-level config file path for a given project path.
+ */
+export function getProjectConfigPath(projectPath: string = process.cwd()): string {
+  return path.join(getProjectConfigDir(projectPath), "config.json");
+}
+
 
 export interface DefaultConfig {
   LOG: boolean;

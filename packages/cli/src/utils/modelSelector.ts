@@ -1,6 +1,12 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { select, input, confirm } from '@inquirer/prompts';
+import {
+  getProjectConfigPath,
+  readProjectConfig,
+  writeProjectConfig,
+  type ProjectConfig,
+} from '@wengine-ai/claude-code-router-shared';
 
 // ANSI color codes
 const RESET = "\x1B[0m";
@@ -47,6 +53,15 @@ interface ModelResult {
   modelName: string;
   modelType: string;
 }
+
+const SCENARIOS: { key: string; label: string }[] = [
+  { key: 'default', label: 'Default Model' },
+  { key: 'background', label: 'Background Model' },
+  { key: 'think', label: 'Think Model' },
+  { key: 'longContext', label: 'Long Context Model' },
+  { key: 'webSearch', label: 'Web Search Model' },
+  { key: 'image', label: 'Image Model' },
+];
 
 const AVAILABLE_TRANSFORMERS = [
   'anthropic',
@@ -431,18 +446,23 @@ async function addNewProvider(config: Config): Promise<ModelResult | null> {
   return null;
 }
 
-export async function runModelSelector(): Promise<void> {
+export async function runModelSelector(options: { project?: boolean } = {}): Promise<void> {
   console.clear();
-  
+
   try {
+    if (options.project) {
+      await runProjectModelSelector();
+      return;
+    }
+
     let config = loadConfig();
     displayCurrentConfig(config);
-    
+
     const action = await selectModelType() as string;
-    
+
     if (action === 'addModel') {
       const result = await addNewModel(config);
-      
+
       if (result) {
         config = loadConfig();
         config.Router[result.modelType] = `${result.providerName},${result.modelName}`;
@@ -453,13 +473,111 @@ export async function runModelSelector(): Promise<void> {
       const selectedModel = await selectModel(config, action) as string;
       config.Router[action] = selectedModel;
       saveConfig(config);
-      
+
       console.log(`${GREEN}✓ ${action} model updated to: ${selectedModel}${RESET}`);
     }
-    
+
     displayCurrentConfig(config);
   } catch (error: any) {
     console.error(`${YELLOW}Error:${RESET}`, error.message);
     process.exit(1);
   }
+}
+
+function displayProjectConfig(
+  globalConfig: Config,
+  projectConfig: ProjectConfig,
+  projectPath: string,
+  projectConfigPath: string
+): void {
+  console.log(`\n${BOLDCYAN}═══════════════════════════════════════════════${RESET}`);
+  console.log(`${BOLDCYAN}        Project-Level Model Configuration${RESET}`);
+  console.log(`${BOLDCYAN}═══════════════════════════════════════════════${RESET}\n`);
+
+  console.log(`${BOLDCYAN}Project:${RESET}    ${projectPath}`);
+  console.log(`${BOLDCYAN}Config file:${RESET} ${projectConfigPath}${fs.existsSync(projectConfigPath) ? '' : ` ${DIM}(not created yet)${RESET}`}\n`);
+
+  const formatModel = (value: string | undefined, isOverride: boolean) => {
+    if (!value) {
+      return `${DIM}Not configured${RESET}`;
+    }
+    const [provider, model] = value.split(',');
+    const tag = isOverride ? `${GREEN}[project]${RESET}` : `${DIM}[global]${RESET}`;
+    return `${tag} ${YELLOW}${provider}${RESET} | ${model}`;
+  };
+
+  for (const { key, label } of SCENARIOS) {
+    const projectValue = projectConfig.Router?.[key] as string | undefined;
+    const globalValue = globalConfig.Router?.[key] as string | undefined;
+    console.log(`${BOLDCYAN}${label}:${RESET}`);
+    console.log(`  ${formatModel(projectValue || globalValue, !!projectValue)}\n`);
+  }
+
+  console.log(`${BOLDCYAN}═══════════════════════════════════════════════${RESET}`);
+  console.log(`${BOLDCYAN}        Set/Update Project Model${RESET}`);
+  console.log(`${BOLDCYAN}═══════════════════════════════════════════════${RESET}\n`);
+}
+
+async function selectProjectAction(hasOverrides: boolean) {
+  const choices: any[] = SCENARIOS.map(s => ({ name: s.label, value: s.key }));
+
+  if (hasOverrides) {
+    choices.push({ name: `${YELLOW}- Remove a project override${RESET}`, value: 'remove' });
+  }
+
+  return await select({
+    message: `\n${BOLDYELLOW}Which model configuration do you want to set for this project?${RESET}`,
+    choices
+  });
+}
+
+async function selectOverrideToRemove(projectConfig: ProjectConfig): Promise<string | null> {
+  const keys = SCENARIOS.filter(s => !!projectConfig.Router?.[s.key]);
+
+  if (keys.length === 0) {
+    console.log(`${YELLOW}No project-level overrides to remove${RESET}`);
+    return null;
+  }
+
+  return await select({
+    message: `\n${BOLDYELLOW}Select override to remove:${RESET}`,
+    choices: keys.map(s => ({ name: s.label, value: s.key }))
+  }) as string;
+}
+
+async function runProjectModelSelector(): Promise<void> {
+  const globalConfig = loadConfig();
+  const projectPath = process.cwd();
+  const projectConfigPath = getProjectConfigPath(projectPath);
+  const projectConfig = (await readProjectConfig(projectPath)) || { Router: {} };
+  if (!projectConfig.Router) {
+    projectConfig.Router = {};
+  }
+
+  displayProjectConfig(globalConfig, projectConfig, projectPath, projectConfigPath);
+
+  if (!globalConfig.Providers || globalConfig.Providers.length === 0) {
+    console.log(`${YELLOW}No providers configured in global config. Run "ccr model" to add a provider first.${RESET}`);
+    return;
+  }
+
+  const hasOverrides = SCENARIOS.some(s => !!projectConfig.Router?.[s.key]);
+  const action = await selectProjectAction(hasOverrides) as string;
+
+  if (action === 'remove') {
+    const keyToRemove = await selectOverrideToRemove(projectConfig);
+    if (keyToRemove) {
+      delete projectConfig.Router[keyToRemove];
+      await writeProjectConfig(projectPath, projectConfig);
+      console.log(`${GREEN}✓ Removed project override for ${keyToRemove}${RESET}`);
+    }
+  } else {
+    const selectedModel = await selectModel(globalConfig, action) as string;
+    projectConfig.Router[action] = selectedModel;
+    await writeProjectConfig(projectPath, projectConfig);
+    console.log(`${GREEN}✓ Project ${action} model updated to: ${selectedModel}${RESET}`);
+  }
+
+  const updatedProjectConfig = (await readProjectConfig(projectPath)) || { Router: {} };
+  displayProjectConfig(loadConfig(), updatedProjectConfig, projectPath, projectConfigPath);
 }

@@ -1,4 +1,4 @@
-import type { ClientApplyResponse, ClientId, ClientStatus, CodexAccountOperationResponse, CodexAccountsResponse, CodexRefreshTokenExportResponse, Config, ProviderQuotaResponse } from '@/types';
+import type { ClientApplyResponse, ClientId, ClientStatus, CodexAccountOperationResponse, CodexAccountsResponse, CodexRefreshTokenExportResponse, Config, ProjectConfigEntry, ProjectsResponse, ProviderQuotaResponse } from '@/types';
 
 // API Client Class for handling requests with baseUrl and apikey authentication
 class ApiClient {
@@ -246,6 +246,28 @@ class ApiClient {
       ? `/clients/codex/accounts/${encodeURIComponent(accountId)}/export-rt`
       : '/clients/codex/accounts/export-rt';
     return this.post<CodexRefreshTokenExportResponse>(endpoint, {});
+  }
+
+  // ========== Project-Level Configuration API methods ==========
+
+  async getProjects(): Promise<ProjectsResponse> {
+    return this.get<ProjectsResponse>('/projects');
+  }
+
+  async addProject(path: string): Promise<ProjectConfigEntry> {
+    return this.post<ProjectConfigEntry>('/projects', { path });
+  }
+
+  async updateProject(id: string, Router: Record<string, any>): Promise<ProjectConfigEntry> {
+    return this.put<ProjectConfigEntry>(`/projects/${encodeURIComponent(id)}`, { Router });
+  }
+
+  async deleteProject(id: string): Promise<{ success: boolean }> {
+    return this.delete<{ success: boolean }>(`/projects/${encodeURIComponent(id)}`);
+  }
+
+  async setProjectTakeover(id: string, enabled: boolean): Promise<{ id: string; path: string; ccrTakeover: boolean }> {
+    return this.put<{ id: string; path: string; ccrTakeover: boolean }>(`/projects/${encodeURIComponent(id)}/takeover`, { enabled });
   }
 
   // ========== Usage Statistics API methods ==========

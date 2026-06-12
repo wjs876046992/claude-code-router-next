@@ -7,7 +7,7 @@ const startActiveProbe = _llmsModule.startActiveProbe;
 const resetActiveProbeService = _llmsModule.resetActiveProbeService;
 import { getHealthStore } from "@wengine-ai/llms";
 import { readConfigFile, readConfigFileRaw, writeConfigFile, backupConfigFile } from "./utils";
-import { join } from "path";
+import { join, isAbsolute, normalize } from "path";
 import fastifyStatic from "@fastify/static";
 import { readdirSync, statSync, readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync, rmSync } from "fs";
 import { homedir } from "os";
@@ -41,6 +41,15 @@ import {
   type PresetFile,
   type ManifestFile,
   type PresetMetadata,
+  listProjectConfigs,
+  readProjectConfigById,
+  readProjectConfig,
+  writeProjectConfig,
+  deleteProjectConfig,
+  getClaudeProjectId,
+  getProjectConfigPath,
+  getCcrTakeoverStatus,
+  setCcrTakeover,
 } from "@wengine-ai/claude-code-router-shared";
 import fastifyMultipart from "@fastify/multipart";
 import AdmZip from "adm-zip";
@@ -736,6 +745,125 @@ export const createServer = async (config: any): Promise<any> => {
     } catch (error: any) {
       console.error("Failed to delete Codex account:", error);
       reply.status(500).send({ error: error.message || "Failed to delete Codex account" });
+    }
+  });
+
+  // ========== Project-Level Configuration API ==========
+
+  app.get("/api/projects", async (_req: any, reply: any) => {
+    try {
+      const projects = await listProjectConfigs();
+      const projectsWithTakeover = await Promise.all(
+        projects.map(async (project) => ({
+          ...project,
+          ccrTakeover: await getCcrTakeoverStatus(project.path),
+        }))
+      );
+      return { projects: projectsWithTakeover };
+    } catch (error: any) {
+      console.error("Failed to list project configs:", error);
+      reply.status(500).send({ error: error.message || "Failed to list project configs" });
+    }
+  });
+
+  app.post("/api/projects", async (req: any, reply: any) => {
+    try {
+      const { path: rawPath } = req.body || {};
+      if (!rawPath || typeof rawPath !== "string" || !isAbsolute(rawPath)) {
+        reply.status(400).send({ error: "A valid absolute project path is required" });
+        return;
+      }
+
+      const projectPath = normalize(rawPath).replace(/[\\/]+$/, "") || rawPath;
+
+      const existing = await readProjectConfig(projectPath);
+      if (existing) {
+        reply.status(409).send({ error: "Project is already configured" });
+        return;
+      }
+
+      await writeProjectConfig(projectPath, { Router: {} });
+      return {
+        id: getClaudeProjectId(projectPath),
+        path: projectPath,
+        configPath: getProjectConfigPath(projectPath),
+        Router: {},
+        ccrTakeover: await getCcrTakeoverStatus(projectPath),
+      };
+    } catch (error: any) {
+      console.error("Failed to add project config:", error);
+      reply.status(500).send({ error: error.message || "Failed to add project config" });
+    }
+  });
+
+  app.put("/api/projects/:id", async (req: any, reply: any) => {
+    try {
+      const { id } = req.params as { id: string };
+      const { Router } = req.body || {};
+      if (!Router || typeof Router !== "object") {
+        reply.status(400).send({ error: "Router must be an object" });
+        return;
+      }
+
+      const existing = await readProjectConfigById(id);
+      if (!existing) {
+        reply.status(404).send({ error: "Project config not found" });
+        return;
+      }
+
+      await writeProjectConfig(existing.path, { Router });
+      return {
+        id,
+        path: existing.path,
+        configPath: existing.configPath,
+        Router,
+        ccrTakeover: await getCcrTakeoverStatus(existing.path),
+      };
+    } catch (error: any) {
+      console.error("Failed to update project config:", error);
+      reply.status(500).send({ error: error.message || "Failed to update project config" });
+    }
+  });
+
+  app.put("/api/projects/:id/takeover", async (req: any, reply: any) => {
+    try {
+      const { id } = req.params as { id: string };
+      const { enabled } = req.body || {};
+      if (typeof enabled !== "boolean") {
+        reply.status(400).send({ error: "enabled must be a boolean" });
+        return;
+      }
+
+      const existing = await readProjectConfigById(id);
+      if (!existing) {
+        reply.status(404).send({ error: "Project config not found" });
+        return;
+      }
+
+      const config = await readConfigFile();
+      await setCcrTakeover(existing.path, enabled, config);
+
+      return { id, path: existing.path, ccrTakeover: enabled };
+    } catch (error: any) {
+      console.error("Failed to update ccr takeover status:", error);
+      reply.status(500).send({ error: error.message || "Failed to update ccr takeover status" });
+    }
+  });
+
+  app.delete("/api/projects/:id", async (req: any, reply: any) => {
+    try {
+      const { id } = req.params as { id: string };
+      const existing = await readProjectConfigById(id);
+      if (!existing) {
+        reply.status(404).send({ error: "Project config not found" });
+        return;
+      }
+
+      await deleteProjectConfig(existing.path);
+      return { success: true };
+    } catch (error: any) {
+      console.error("Failed to delete project config:", error);
+      reply.status(500).send({ error: error.message || "Failed to delete project config" });
     }
   });
 

@@ -10,6 +10,7 @@ import { MultiCombobox } from "@/components/ui/multi-combobox";
 import { useConfig } from "./ConfigProvider";
 import { StatusLineConfigDialog } from "./StatusLineConfigDialog";
 import { UsageStats } from "./UsageStats";
+import { ProjectsPage } from "./ProjectsPage";
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { LogViewer } from '@/components/LogViewer';
 import type { ClientApplyResponse, ClientId, ClientStatus, CodexAccount, CodexAccountOperationResponse, CodexAccountsResponse, StatusLineConfig, FallbackConfig } from "@/types";
@@ -68,7 +69,7 @@ export function SettingsPage() {
   const [codexAccountActionId, setCodexAccountActionId] = useState<string | null>(null);
   const [exportingCodexRtId, setExportingCodexRtId] = useState<string | null>(null);
   const tabFromUrl = new URLSearchParams(location.search).get("tab");
-  const initialTab = ["general", "codexAccounts", "clients", "router", "usage", "tools"].includes(tabFromUrl || "")
+  const initialTab = ["general", "codexAccounts", "clients", "router", "projects", "usage", "tools"].includes(tabFromUrl || "")
     ? tabFromUrl || "general"
     : "general";
 
@@ -692,6 +693,7 @@ export function SettingsPage() {
               <TabsTrigger value="codexAccounts">{t("settings.tabs.codex_accounts")}</TabsTrigger>
               <TabsTrigger value="clients">{t("settings.tabs.clients")}</TabsTrigger>
               <TabsTrigger value="router">{t("settings.tabs.router")}</TabsTrigger>
+              <TabsTrigger value="projects">{t("settings.tabs.projects")}</TabsTrigger>
               <TabsTrigger value="usage">{t("settings.tabs.usage")}</TabsTrigger>
               <TabsTrigger value="tools">{t("settings.tabs.tools")}</TabsTrigger>
             </TabsList>
@@ -1293,6 +1295,11 @@ export function SettingsPage() {
                   </div>
                 )}
               </div>
+            </TabsContent>
+
+            {/* Projects Tab */}
+            <TabsContent value="projects" className="space-y-4">
+              <ProjectsPage />
             </TabsContent>
 
             {/* Usage Tab */}

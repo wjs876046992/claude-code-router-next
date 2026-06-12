@@ -1,0 +1,193 @@
+import path from "node:path";
+import fs from "node:fs/promises";
+import {
+  HOME_DIR,
+  getProjectConfigDir,
+  getProjectConfigPath,
+} from "./constants";
+import {
+  applyCcrProjectTakeover,
+  removeCcrProjectTakeover,
+  isCcrProjectTakeoverActive,
+} from "./client-integrations";
+
+export interface ProjectConfig {
+  projectPath?: string;
+  Router?: Record<string, any>;
+  [key: string]: any;
+}
+
+export interface ProjectConfigEntry {
+  id: string;
+  path: string;
+  configPath: string;
+  Router: Record<string, any>;
+}
+
+/**
+ * Read the project-level config for a given project path.
+ * Returns null if no project-level config has been created yet.
+ */
+export async function readProjectConfig(projectPath: string): Promise<ProjectConfig | null> {
+  const configPath = getProjectConfigPath(projectPath);
+  try {
+    const raw = await fs.readFile(configPath, "utf-8");
+    const data = JSON.parse(raw);
+    return data && typeof data === "object" ? data : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Write the project-level config for a given project path.
+ * Always stores `projectPath` alongside `Router` so the project can be
+ * identified later (e.g. when listing all configured projects).
+ */
+export async function writeProjectConfig(projectPath: string, config: ProjectConfig): Promise<void> {
+  const dir = getProjectConfigDir(projectPath);
+  await fs.mkdir(dir, { recursive: true });
+  const data: ProjectConfig = { ...config, projectPath, Router: config.Router || {} };
+  await fs.writeFile(getProjectConfigPath(projectPath), JSON.stringify(data, null, 2), "utf-8");
+}
+
+/**
+ * Delete the project-level config directory for a given project path.
+ */
+export async function deleteProjectConfig(projectPath: string): Promise<void> {
+  await fs.rm(getProjectConfigDir(projectPath), { recursive: true, force: true });
+}
+
+/**
+ * List all projects that have a project-level config under ~/.claude-code-router/.
+ */
+export async function listProjectConfigs(): Promise<ProjectConfigEntry[]> {
+  let entries: string[];
+  try {
+    entries = await fs.readdir(HOME_DIR);
+  } catch {
+    return [];
+  }
+
+  const projects: ProjectConfigEntry[] = [];
+  for (const id of entries) {
+    if (!id.startsWith("-")) continue;
+
+    const configPath = path.join(HOME_DIR, id, "config.json");
+    try {
+      const raw = await fs.readFile(configPath, "utf-8");
+      const data = JSON.parse(raw);
+      if (!data || typeof data !== "object") continue;
+      projects.push({
+        id,
+        path: typeof data.projectPath === "string" ? data.projectPath : id,
+        configPath,
+        Router: data.Router || {},
+      });
+    } catch {
+      // Not a project config directory (or unreadable), skip
+    }
+  }
+
+  return projects;
+}
+
+/**
+ * Find a project config entry by its id (the directory name under HOME_DIR).
+ */
+export async function readProjectConfigById(id: string): Promise<ProjectConfigEntry | null> {
+  const configPath = path.join(HOME_DIR, id, "config.json");
+  try {
+    const raw = await fs.readFile(configPath, "utf-8");
+    const data = JSON.parse(raw);
+    if (!data || typeof data !== "object") return null;
+    return {
+      id,
+      path: typeof data.projectPath === "string" ? data.projectPath : id,
+      configPath,
+      Router: data.Router || {},
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Path to a project's `.claude/settings.local.json` file.
+ */
+export function getClaudeSettingsLocalPath(projectPath: string): string {
+  return path.join(projectPath, ".claude", "settings.local.json");
+}
+
+/**
+ * Read a project's `.claude/settings.local.json`, returning `{}` if missing or invalid.
+ */
+export async function readClaudeSettingsLocal(projectPath: string): Promise<Record<string, any>> {
+  try {
+    const raw = await fs.readFile(getClaudeSettingsLocalPath(projectPath), "utf-8");
+    const data = JSON.parse(raw);
+    return data && typeof data === "object" ? data : {};
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Whether the project's `.claude/settings.local.json` currently routes
+ * Claude Code traffic through ccr.
+ */
+export async function getCcrTakeoverStatus(projectPath: string): Promise<boolean> {
+  const settings = await readClaudeSettingsLocal(projectPath);
+  return isCcrProjectTakeoverActive(settings);
+}
+
+/**
+ * Path to the backup of a project's ccr-managed `.claude/settings.local.json`,
+ * taken when takeover is disabled so it can be restored on the next takeover.
+ */
+function getCcrTakeoverBackupPath(projectPath: string): string {
+  return path.join(getProjectConfigDir(projectPath), "settings.local.backup.json");
+}
+
+/**
+ * Enable or disable "ccr takeover" for a project's `.claude/settings.local.json`.
+ *
+ * When enabling, this restores a previous takeover backup if one exists
+ * (preserving any customizations made while ccr was managing the project);
+ * otherwise it mirrors the global ccr-managed Claude Code settings:
+ * `ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN`, model family routing env vars,
+ * auto-compact settings, and the status line command.
+ *
+ * When disabling, the current (ccr-managed) settings are backed up before the
+ * ccr-managed fields are removed, so re-enabling takeover later restores them
+ * instead of losing any personalized adjustments.
+ */
+export async function setCcrTakeover(projectPath: string, enabled: boolean, config: Record<string, any>): Promise<void> {
+  const settingsPath = getClaudeSettingsLocalPath(projectPath);
+  const backupPath = getCcrTakeoverBackupPath(projectPath);
+  const settings = await readClaudeSettingsLocal(projectPath);
+
+  if (enabled) {
+    try {
+      const backupRaw = await fs.readFile(backupPath, "utf-8");
+      const backupSettings = JSON.parse(backupRaw);
+      if (backupSettings && typeof backupSettings === "object") {
+        await fs.mkdir(path.dirname(settingsPath), { recursive: true });
+        await fs.writeFile(settingsPath, JSON.stringify(backupSettings, null, 2), "utf-8");
+        return;
+      }
+    } catch {
+      // No usable backup, fall through to generating fresh takeover settings.
+    }
+    applyCcrProjectTakeover(settings, config);
+  } else {
+    if (isCcrProjectTakeoverActive(settings)) {
+      await fs.mkdir(path.dirname(backupPath), { recursive: true });
+      await fs.writeFile(backupPath, JSON.stringify(settings, null, 2), "utf-8");
+    }
+    removeCcrProjectTakeover(settings);
+  }
+
+  await fs.mkdir(path.dirname(settingsPath), { recursive: true });
+  await fs.writeFile(settingsPath, JSON.stringify(settings, null, 2), "utf-8");
+}
