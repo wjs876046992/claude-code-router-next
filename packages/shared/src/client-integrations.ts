@@ -15,6 +15,7 @@ export interface ClientConfig {
   modelAlias?: string;
   activeAccountId?: string;
   autoSwitchAccounts?: boolean;
+  autoRefreshTokens?: boolean;
   quota?: {
     limit5h?: number;
     limit7d?: number;
@@ -96,6 +97,13 @@ export interface CodexRefreshTokenExportResult {
   source: "managed" | "current";
 }
 
+export interface CodexTokenRefreshResult {
+  id: string;
+  label: string;
+  refreshed: boolean;
+  error?: string;
+}
+
 interface ClientDefinition {
   id: ClientId;
   name: string;
@@ -124,6 +132,7 @@ const CLIENT_DEFINITIONS: Record<ClientId, ClientDefinition> = {
       modelAlias: "",
       activeAccountId: "",
       autoSwitchAccounts: true,
+      autoRefreshTokens: true,
       quota: {},
     },
   },
@@ -137,6 +146,7 @@ const CLIENT_DEFINITIONS: Record<ClientId, ClientDefinition> = {
       modelAlias: "ccr-opus",
       activeAccountId: "",
       autoSwitchAccounts: true,
+      autoRefreshTokens: true,
       quota: {},
     },
   },
@@ -147,6 +157,12 @@ const CODEX_ACCOUNTS_DIR = path.join(HOME_DIR, "codex-accounts");
 const CODEX_ACCOUNTS_INDEX_PATH = path.join(CODEX_ACCOUNTS_DIR, "accounts.json");
 const CODEX_OAUTH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const CODEX_OAUTH_TOKEN_URL = "https://auth.openai.com/oauth/token";
+// Proactively refresh a Codex account's tokens once the access_token is within
+// this many seconds of expiry, regardless of whether the account is active.
+const CODEX_TOKEN_REFRESH_MARGIN_SECONDS = 24 * 60 * 60;
+// Force a refresh at least this often even if the access_token is still valid,
+// so the refresh_token itself never goes unused long enough to expire.
+const CODEX_TOKEN_REFRESH_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const LEGACY_STATUSLINE_BACKUP_PATH = path.join(HOME_DIR, ".statusline-backup.json");
 const LEGACY_MODEL_BACKUP_PATH = path.join(HOME_DIR, ".model-env-backup.json");
 const CLAUDE_MODEL_ENV_KEYS = [
@@ -947,6 +963,12 @@ function getCodexAuthRefreshTime(auth: Record<string, any>): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function getCodexAccessTokenExpiry(auth: Record<string, any>): number | undefined {
+  const tokens = isObject(auth.tokens) ? auth.tokens : {};
+  const payload = decodeJwtPayload(tokens.access_token);
+  return typeof payload.exp === "number" ? payload.exp * 1000 : undefined;
+}
+
 function isSameCodexAccount(auth: Record<string, any>, account: Omit<CodexAccount, "active">): boolean {
   const metadata = extractCodexAuthMetadata(auth);
   if (metadata.accountId && account.accountId && metadata.accountId === account.accountId) return true;
@@ -1286,6 +1308,130 @@ export async function importCodexAccountFromRefreshToken(
 ): Promise<CodexAccountOperationResult> {
   const auth = await exchangeCodexRefreshToken(refreshToken);
   return persistCodexAccountAuth(config, auth, label);
+}
+
+/**
+ * Exchange a managed Codex account's stored refresh_token for a fresh
+ * access_token/refresh_token pair and persist the result, independent of
+ * whether the account is currently active.
+ *
+ * If the account is the active one and `~/.codex/auth.json` holds a newer
+ * `last_refresh` (e.g. the official Codex CLI already refreshed it during
+ * use), that newer refresh_token is exchanged instead so the stored snapshot
+ * never refreshes with a stale/already-rotated token. The refreshed tokens
+ * are written back to the managed snapshot and, for the active account,
+ * also synced to `~/.codex/auth.json`.
+ */
+export async function refreshCodexAccountTokens(
+  config: Record<string, any>,
+  accountId: string
+): Promise<CodexAccountOperationResult> {
+  const accounts = readCodexAccountsIndex();
+  const account = accounts.find((item) => item.id === accountId);
+  if (!account) {
+    throw new Error(`Unknown Codex account: ${accountId}`);
+  }
+
+  const storedAuthPath = getCodexAccountAuthPath(accountId);
+  if (!fs.existsSync(storedAuthPath)) {
+    throw new Error(`Stored Codex auth file not found: ${storedAuthPath}`);
+  }
+
+  const storedAuth = readCodexAuthObject(storedAuthPath);
+  let sourceAuth = storedAuth;
+
+  const isActive = getActiveCodexAccountId(config) === accountId;
+  const currentAuthPath = getCodexAuthPath(config);
+  if (isActive && fs.existsSync(currentAuthPath)) {
+    try {
+      const currentAuth = readCodexAuthObject(currentAuthPath);
+      if (
+        isSameCodexAccount(currentAuth, account) &&
+        getCodexAuthRefreshTime(currentAuth) > getCodexAuthRefreshTime(storedAuth)
+      ) {
+        sourceAuth = currentAuth;
+      }
+    } catch {
+      // Ignore malformed current auth and fall back to the managed snapshot.
+    }
+  }
+
+  const refreshToken = getCodexAuthRefreshToken(sourceAuth);
+  if (!refreshToken) {
+    throw new Error(`No refresh token found for Codex account: ${accountId}`);
+  }
+
+  const refreshedAuth = await exchangeCodexRefreshToken(refreshToken);
+  writeCodexAuthObject(storedAuthPath, refreshedAuth);
+
+  const metadata = extractCodexAuthMetadata(refreshedAuth);
+  const accountIndex = accounts.findIndex((item) => item.id === accountId);
+  accounts[accountIndex] = {
+    ...accounts[accountIndex],
+    email: metadata.email || accounts[accountIndex].email,
+    plan: metadata.plan || accounts[accountIndex].plan,
+    accountId: metadata.accountId || accounts[accountIndex].accountId,
+    authMode: metadata.authMode || accounts[accountIndex].authMode,
+    updatedAt: new Date().toISOString(),
+  };
+  writeCodexAccountsIndex(accounts);
+
+  if (isActive) {
+    createBackup("codex-auth", currentAuthPath);
+    writeCodexAuthObject(currentAuthPath, refreshedAuth);
+  }
+
+  const result = toCodexAccountsResult(config);
+  return {
+    ...result,
+    success: true,
+    account: result.accounts.find((item) => item.id === accountId),
+    config,
+  };
+}
+
+/**
+ * Refresh tokens for every managed Codex account whose access_token is close
+ * to expiry or whose tokens haven't been refreshed in a long time, regardless
+ * of whether the account is currently active. Intended to be called
+ * periodically so refresh_tokens never go unused long enough to expire.
+ */
+export async function refreshDueCodexAccounts(
+  config: Record<string, any>,
+  options?: { marginSeconds?: number; maxAgeMs?: number }
+): Promise<CodexTokenRefreshResult[]> {
+  const marginMs = (options?.marginSeconds ?? CODEX_TOKEN_REFRESH_MARGIN_SECONDS) * 1000;
+  const maxAgeMs = options?.maxAgeMs ?? CODEX_TOKEN_REFRESH_MAX_AGE_MS;
+  const now = Date.now();
+
+  const results: CodexTokenRefreshResult[] = [];
+  for (const account of readCodexAccountsIndex()) {
+    const storedAuthPath = getCodexAccountAuthPath(account.id);
+    if (!fs.existsSync(storedAuthPath)) continue;
+
+    let auth: Record<string, any>;
+    try {
+      auth = readCodexAuthObject(storedAuthPath);
+    } catch {
+      continue;
+    }
+    if (!getCodexAuthRefreshToken(auth)) continue;
+
+    const expiry = getCodexAccessTokenExpiry(auth);
+    const lastRefresh = getCodexAuthRefreshTime(auth);
+    const needsRefresh =
+      (typeof expiry === "number" && expiry - now <= marginMs) ||
+      now - lastRefresh >= maxAgeMs;
+    if (!needsRefresh) continue;
+
+    try {
+      await refreshCodexAccountTokens(config, account.id);
+      results.push({ id: account.id, label: account.label, refreshed: true });
+    } catch (error) {
+      results.push({ id: account.id, label: account.label, refreshed: false, error: errorMessage(error) });
+    }
+  }
+  return results;
 }
 
 export function activateCodexAccount(

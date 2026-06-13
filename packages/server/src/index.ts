@@ -12,6 +12,7 @@ import {
   listCodexAccounts,
   listPresets,
   markActiveCodexAccountLimitedAndSwitch,
+  refreshDueCodexAccounts,
 } from "@wengine-ai/claude-code-router-shared";
 import { createStream } from 'rotating-file-stream';
 import { sessionUsageCache, extractSessionIdFromUserId } from "@wengine-ai/llms";
@@ -285,6 +286,31 @@ async function switchCodexAccountAfterRateLimit(reason?: string): Promise<void> 
   }
 }
 
+const CODEX_TOKEN_REFRESH_INTERVAL_MS = 30 * 60 * 1000;
+
+async function runCodexTokenRefreshCycle(): Promise<void> {
+  try {
+    const config = await readConfigFile();
+    if (config.Clients?.codex?.autoRefreshTokens === false) return;
+    const results = await refreshDueCodexAccounts(config);
+    for (const result of results) {
+      if (result.refreshed) {
+        console.log(`[Codex] Refreshed tokens for account ${result.label} (${result.id})`);
+      } else {
+        console.warn(`[Codex] Failed to refresh tokens for account ${result.label} (${result.id}): ${result.error}`);
+      }
+    }
+  } catch (error) {
+    console.error("[Codex] Token refresh cycle failed:", error);
+  }
+}
+
+/** Periodically refresh managed Codex account tokens, active or not, so refresh_tokens never go stale. */
+function startCodexTokenRefreshScheduler(): void {
+  setTimeout(() => void runCodexTokenRefreshCycle(), 60_000);
+  setInterval(() => void runCodexTokenRefreshCycle(), CODEX_TOKEN_REFRESH_INTERVAL_MS);
+}
+
 function extractUsageFromPayload(payload: any): any | undefined {
   if (!payload) return undefined;
 
@@ -392,6 +418,8 @@ async function getServer(options: RunOptions = {}) {
   await initializeClaudeConfig();
   await initDir();
   const config = await initConfig();
+
+  startCodexTokenRefreshScheduler();
 
   // Check if Providers is configured
   const providers = config.Providers || config.providers || [];

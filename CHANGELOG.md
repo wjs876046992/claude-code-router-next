@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [2.3.9] - 2026-06-13
 
+### Added
+
+- **Codex 代管理账号令牌自动刷新**: 新增后台调度器（启动 60 秒后首次执行，之后每 30 分钟一次），自动检查所有 Codex 代管理账号——无论是否为当前激活账号——当 `access_token` 距过期不足 24 小时，或自上次刷新已超过 7 天时，使用 `refresh_token` 自动换取新 token 并写回账号存储；若为当前激活账号，同时备份并同步覆盖 `~/.codex/auth.json`。换取前会优先比对 `~/.codex/auth.json` 中是否存在更新的 `last_refresh`（如官方 Codex CLI 自行刷新过），避免用过期的 refresh_token 换取失败。可通过 `Clients.codex.autoRefreshTokens` 关闭（默认开启）。
+
 ### Fixed
 
 - **运行时 fallback 重试未遵循项目级 `enableFallback`**: 请求实际发出后失败（如限流）触发的重试 fallback（`handleFallback`）此前直接读取全局 `Router.enableFallback` 与全局顶层 `fallback` 配置，忽略项目级路由的 `enableFallback: false` 与项目自定义的 `Router.fallback`；现在 `router()` 会将解析出的项目级 `enableFallback`/`fallback` 通过请求上下文传递给运行时重试逻辑，确保两处 fallback 判定使用同一份配置。
