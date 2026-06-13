@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.3.8] - 2026-06-13
+
+### Added
+
+- **可配置上下文窗口**: 设置页新增 `ContextWindow` 配置项，用于控制 Claude Code / Codex 接管时的自动压缩上下文窗口，默认 `200000` tokens。
+
+### Changed
+
+- **接管配置同步上下文窗口**: Claude Code 接管时根据全局 `ContextWindow` 写入 `CLAUDE_CODE_AUTO_COMPACT_WINDOW`；Codex 接管时写入 `model_context_window` 与 `model_auto_compact_token_limit`（约 90%），确保 CCR 模型别名也能在真实模型溢出前触发自动压缩。
+
+### Fixed
+
+- **项目路由会话识别修复**: 兼容 `metadata.user_id` 为 JSON 字符串（`{"session_id":"..."}`）、对象（`{session_id: "..."}`）和 legacy（`user_..._session_<id>`）三种格式；对 session id 增加安全校验（仅允许 `[A-Za-z0-9_-]+`），防止路径穿越。
+- **项目 session 缓存修复**: `searchProjectBySession()` 仅缓存成功命中的 session → project 映射，不再缓存未命中和错误结果，避免 Claude Code 首次请求时 session 文件尚未创建导致项目级路由被长期判定为未命中。
+- **关闭模型族路由后别名映射旁路修复**: 当项目 `enableFamilyRouting` 为 `false` 时，`ccr-opus`/`ccr-sonnet`/`ccr-haiku` 等 CCR 注入的族路由别名不再被 `Router.models` 中遗留的别名映射（如接管 Codex 时写入的 `ccr-opus -> <旧 default>`）拦截，正确回退到项目自定义的 scenario 路由（`default`/`background`/`think`/`longContext` 等）。
+
 ## [2.3.7] - 2026-06-13
 
 ### Fixed

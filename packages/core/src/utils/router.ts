@@ -9,6 +9,7 @@ import { TokenizerService } from "../services/tokenizer";
 import { getHealthStore } from "../services/provider-health";
 import { getQuotaResult } from "../services/quota-store";
 import { getFallbackPromotionStore } from "./fallback-promotion";
+import { extractSessionIdFromUserId, normalizeSessionId } from "./session-id";
 
 // Types from @anthropic-ai/sdk
 interface Tool {
@@ -137,7 +138,7 @@ function normalizeModelName(modelName: string): string {
   return normalized.trim().toLowerCase();
 }
 
-function extractModelFamily(modelName: string): { family: string | null; extended: boolean } {
+function extractModelFamily(modelName: string): { family: string | null; extended: boolean; isCcrAlias: boolean } {
   const normalized = normalizeModelName(modelName);
 
   // Check for [1m] suffix for extended context
@@ -147,7 +148,7 @@ function extractModelFamily(modelName: string): { family: string | null; extende
   // Match ccr-opus, ccr-sonnet, ccr-haiku format (injected by CCR into Claude Code settings)
   const ccrMatch = cleanModel.match(/^ccr-(opus|sonnet|haiku)$/i);
   if (ccrMatch) {
-    return { family: ccrMatch[1].toLowerCase(), extended };
+    return { family: ccrMatch[1].toLowerCase(), extended, isCcrAlias: true };
   }
 
   // Match standard Claude model names: claude-opus-4-20250514, claude-sonnet-4-20250514, etc.
@@ -155,9 +156,9 @@ function extractModelFamily(modelName: string): { family: string | null; extende
     /claude-(?:\d+-\d+-|\d+-)?(sonnet|opus|haiku)(?:-|$)/i
   ) || cleanModel.match(/claude-(sonnet|opus|haiku)(?:-|$)/i);
   if (claudeMatch) {
-    return { family: claudeMatch[1].toLowerCase(), extended };
+    return { family: claudeMatch[1].toLowerCase(), extended, isCcrAlias: false };
   }
-  return { family: null, extended };
+  return { family: null, extended, isCcrAlias: false };
 }
 
 function lookupModelMapping(
@@ -529,7 +530,7 @@ const getUseModel = async (
   }
 
   // Model family routing: extract opus/sonnet/haiku and use family-specific config
-  const { family, extended: modelExtended } = extractModelFamily(req.body.model);
+  const { family, extended: modelExtended, isCcrAlias } = extractModelFamily(req.body.model);
   const familyConfig = Router?.families?.[family || ''] as RouterFamilyConfig | undefined;
   if (familyConfig && Router?.enableFamilyRouting) {
     req.log.info(`Using model family routing for: ${family}${modelExtended ? ' (1M)' : ''}`);
@@ -551,7 +552,13 @@ const getUseModel = async (
     }
   }
 
-  const mappedModel = lookupModelMapping(req.body.model, Router?.models as Record<string, string> | undefined);
+  // ccr-opus/ccr-sonnet/ccr-haiku are aliases CCR injects for family routing.
+  // When family routing is disabled, treat them as plain unmapped models so
+  // they fall through to scenario-based default routing, rather than being
+  // intercepted by a Router.models[alias] entry written during client takeover.
+  const mappedModel = isCcrAlias && !Router?.enableFamilyRouting
+    ? null
+    : lookupModelMapping(req.body.model, Router?.models as Record<string, string> | undefined);
   if (mappedModel) {
     const model = resolveConfiguredModel(mappedModel, providers, false, 'modelMapping', enableFallback);
     if (model) {
@@ -709,12 +716,9 @@ export const router = async (req: any, _res: any, context: RouterContext) => {
   // Save original request model before routing (for usage stats mapping)
   req.originalModel = req.body.model;
 
-  // Parse sessionId from metadata.user_id
-  if (req.body.metadata?.user_id) {
-    const parts = req.body.metadata.user_id.split("_session_");
-    if (parts.length > 1) {
-      req.sessionId = parts[1];
-    }
+  const sessionId = extractSessionIdFromUserId(req.body.metadata?.user_id);
+  if (sessionId) {
+    req.sessionId = sessionId;
   }
   const projectSpecificRouter = await getProjectSpecificRouter(req, configService);
   const routerConfig = projectSpecificRouter || configService.get("Router");
@@ -812,10 +816,11 @@ export const router = async (req: any, _res: any, context: RouterContext) => {
   return;
 };
 
-// Memory cache for sessionId to project name mapping
-// null value indicates previously searched but not found
-// Uses Map instead of lru-cache to avoid esbuild bundling issues
-const sessionProjectCache = new Map<string, string | null>();
+// Memory cache for sessionId to project name mapping.
+// Only positive results are cached because Claude Code may create the
+// <sessionId>.jsonl file after the first routed request.
+// Uses Map instead of lru-cache to avoid esbuild bundling issues.
+const sessionProjectCache = new Map<string, string>();
 const SESSION_CACHE_MAX = 1000;
 
 function trimCache(): void {
@@ -829,13 +834,14 @@ function trimCache(): void {
 export const searchProjectBySession = async (
   sessionId: string
 ): Promise<string | null> => {
+  const safeSessionId = normalizeSessionId(sessionId);
+  if (!safeSessionId) {
+    return null;
+  }
+
   // Check cache first
-  if (sessionProjectCache.has(sessionId)) {
-    const result = sessionProjectCache.get(sessionId);
-    if (!result || result === '') {
-      return null;
-    }
-    return result;
+  if (sessionProjectCache.has(safeSessionId)) {
+    return sessionProjectCache.get(safeSessionId) || null;
   }
 
   try {
@@ -854,7 +860,7 @@ export const searchProjectBySession = async (
       const sessionFilePath = join(
         CLAUDE_PROJECTS_DIR,
         folderName,
-        `${sessionId}.jsonl`
+        `${safeSessionId}.jsonl`
       );
       try {
         const fileStat = await stat(sessionFilePath);
@@ -871,21 +877,15 @@ export const searchProjectBySession = async (
     for (const result of results) {
       if (result) {
         // Cache the found result
-        sessionProjectCache.set(sessionId, result);
+        sessionProjectCache.set(safeSessionId, result);
         trimCache();
         return result;
       }
     }
 
-    // Cache not found result (null value means previously searched but not found)
-    sessionProjectCache.set(sessionId, '');
-    trimCache();
     return null; // No matching project found
   } catch (error) {
     console.error("Error searching for project by session:", error);
-    // Cache null result on error to avoid repeated errors
-    sessionProjectCache.set(sessionId, '');
-    trimCache();
     return null;
   }
 };

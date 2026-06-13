@@ -48,6 +48,8 @@ declare module "@wengine-ai/llms" {
   // Export utilities
   export const calculateTokenCount: (messages: any[], system: any, tools: any[]) => number;
   export const searchProjectBySession: (sessionId: string) => Promise<string | null>;
+  export const extractSessionIdFromUserId: (userId: unknown) => string | undefined;
+  export const normalizeSessionId: (sessionId: unknown) => string | undefined;
 
   // Export rate limit info captured from upstream provider response headers
   export interface RateLimitInfo {

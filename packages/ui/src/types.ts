@@ -217,6 +217,8 @@ export interface Config {
   API_TIMEOUT_MS: string;
   PROXY_URL: string;
   CUSTOM_ROUTER_PATH?: string;
+  // Default context window (tokens) for client takeover auto-compaction
+  ContextWindow?: number;
   // Allow extra fields from config file
   [key: string]: any;
 }

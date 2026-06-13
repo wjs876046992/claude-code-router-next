@@ -66,6 +66,8 @@
     "port": "Port",
     "apikey": "API Key",
     "timeout": "API Timeout (ms)",
+    "context_window": "Context Window (tokens)",
+    "context_window_desc": "Default context window used when taking over Claude Code / Codex; auto-compaction triggers at ~90%. Defaults to 200000 — a larger window is not always better (higher cost and more context drift).",
     "proxy_url": "Proxy URL",
     "custom_router_path": "Custom Router Script Path",
     "custom_router_path_placeholder": "Enter absolute path to custom router script file"

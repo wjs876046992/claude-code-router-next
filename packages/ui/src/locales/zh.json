@@ -66,6 +66,8 @@
     "port": "端口",
     "apikey": "API 密钥",
     "timeout": "API 超时时间 (毫秒)",
+    "context_window": "上下文窗口 (tokens)",
+    "context_window_desc": "接管 Claude Code / Codex 时使用的默认上下文窗口，触达约 90% 时自动压缩。默认 200000，上下文并非越大越好（成本更高且易产生漂移）。",
     "proxy_url": "代理地址",
     "custom_router_path": "自定义路由脚本路径",
     "custom_router_path_placeholder": "输入自定义路由脚本文件的绝对路径"

@@ -14,7 +14,7 @@ import {
   markActiveCodexAccountLimitedAndSwitch,
 } from "@wengine-ai/claude-code-router-shared";
 import { createStream } from 'rotating-file-stream';
-import { sessionUsageCache } from "@wengine-ai/llms";
+import { sessionUsageCache, extractSessionIdFromUserId } from "@wengine-ai/llms";
 const _healthModule = require("@wengine-ai/llms") as any;
 const getHealthStore: () => any = _healthModule.getHealthStore;
 import { SSEParserTransform } from "./utils/SSEParser.transform";
@@ -34,26 +34,11 @@ function getUsageSessionId(req: any): string {
   if (req.usageSessionId) return req.usageSessionId;
 
   // Try to extract from metadata.user_id first (same as token-speed plugin)
-  try {
-    const userId = req.body?.metadata?.user_id;
-    if (userId && typeof userId === 'string') {
-      // Try JSON format first: {"session_id":"xxx"}
-      try {
-        const parsed = JSON.parse(userId);
-        if (parsed.session_id) {
-          req.usageSessionId = parsed.session_id;
-          return req.usageSessionId;
-        }
-      } catch {
-        // Fallback to legacy format: user_..._session_xxx
-        const match = userId.match(/_session_([a-f0-9-]+)/i);
-        if (match) {
-          req.usageSessionId = match[1];
-          return req.usageSessionId;
-        }
-      }
-    }
-  } catch {}
+  const sessionId = extractSessionIdFromUserId(req.body?.metadata?.user_id);
+  if (sessionId) {
+    req.usageSessionId = sessionId;
+    return req.usageSessionId;
+  }
 
   const requestIdHeader = req.headers?.["x-request-id"];
   const requestId = Array.isArray(requestIdHeader) ? requestIdHeader[0] : requestIdHeader;

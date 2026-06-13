@@ -816,6 +816,19 @@ export function SettingsPage() {
                   />
                 </div>
                 <div className="space-y-2">
+                  <Label htmlFor="context-window">{t("toplevel.context_window")}</Label>
+                  <Input
+                    id="context-window"
+                    type="number"
+                    value={config.ContextWindow ?? 200000}
+                    onChange={(e) =>
+                      setConfig({ ...config, ContextWindow: parseInt(e.target.value, 10) || 200000 })
+                    }
+                    placeholder="200000"
+                  />
+                  <p className="text-xs text-gray-500">{t("toplevel.context_window_desc")}</p>
+                </div>
+                <div className="space-y-2">
                   <Label htmlFor="proxy-url">{t("toplevel.proxy_url")}</Label>
                   <Input
                     id="proxy-url"

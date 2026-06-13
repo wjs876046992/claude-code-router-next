@@ -162,8 +162,31 @@ const CLAUDE_AUTO_COMPACT_ENV = {
   CLAUDE_CODE_SIMPLE: "1",
 };
 
+// Default context window (in tokens) used to drive client-side auto-compaction
+// when the user has not configured a global `ContextWindow`. It feeds both
+// Claude Code's CLAUDE_CODE_AUTO_COMPACT_WINDOW and Codex's model_context_window,
+// so compaction fires before the routed model overflows. A larger window is not
+// always better: it raises cost and can cause context drift.
+const DEFAULT_CONTEXT_WINDOW = 200000;
+
 function isObject(value: unknown): value is Record<string, any> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+/**
+ * Resolve the configured context window (in tokens) from the global config,
+ * falling back to DEFAULT_CONTEXT_WINDOW. Accepts a number or a numeric string.
+ */
+function getContextWindow(config: Record<string, any>): number {
+  const value = config?.ContextWindow;
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return Math.floor(value);
+  }
+  if (typeof value === "string" && /^\d+$/.test(value.trim())) {
+    const parsed = parseInt(value.trim(), 10);
+    if (parsed > 0) return parsed;
+  }
+  return DEFAULT_CONTEXT_WINDOW;
 }
 
 function errorMessage(error: unknown): string {
@@ -380,13 +403,13 @@ function applyClaudeModelFamilies(settings: Record<string, any>, config: Record<
   }
 }
 
-function applyClaudeAutoCompactSettings(settings: Record<string, any>): void {
+function applyClaudeAutoCompactSettings(settings: Record<string, any>, config: Record<string, any>): void {
   settings.autoCompactEnabled = true;
   if (!isObject(settings.env)) settings.env = {};
   if (settings.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE === "0.8") {
     delete settings.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE;
   }
-  settings.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = CLAUDE_AUTO_COMPACT_ENV.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
+  settings.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = String(getContextWindow(config));
   settings.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE = CLAUDE_AUTO_COMPACT_ENV.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE;
 }
 
@@ -431,6 +454,17 @@ function removeClaudeManagedFields(settings: Record<string, any>): void {
       }
     }
 
+    // The auto-compact window is set to a dynamic value (from ContextWindow),
+    // so remove it unconditionally; the rest are removed only when they still
+    // hold the ccr-managed default.
+    delete settings.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
+    for (const [key, value] of Object.entries(CLAUDE_AUTO_COMPACT_ENV)) {
+      if (key === "CLAUDE_CODE_AUTO_COMPACT_WINDOW") continue;
+      if (settings.env[key] === value) {
+        delete settings.env[key];
+      }
+    }
+
     if (Object.keys(settings.env).length === 0) {
       delete settings.env;
     }
@@ -438,6 +472,10 @@ function removeClaudeManagedFields(settings: Record<string, any>): void {
 
   if (settings.statusLine?.command === "ccr statusline") {
     delete settings.statusLine;
+  }
+
+  if (settings.autoCompactEnabled === true) {
+    delete settings.autoCompactEnabled;
   }
 }
 
@@ -500,7 +538,7 @@ const claudeCodeAdapter: ClientAdapter = {
     settings.env.ANTHROPIC_BASE_URL = getCcrBaseUrl(config);
     settings.env.ANTHROPIC_AUTH_TOKEN = config.APIKEY || "test";
     applyClaudeModelFamilies(settings, config);
-    applyClaudeAutoCompactSettings(settings);
+    applyClaudeAutoCompactSettings(settings, config);
 
     if (config?.StatusLine?.enabled) {
       settings.statusLine = {
@@ -547,7 +585,7 @@ export function applyCcrProjectTakeover(settings: Record<string, any>, config: R
   settings.env.ANTHROPIC_BASE_URL = getCcrBaseUrl(config);
   settings.env.ANTHROPIC_AUTH_TOKEN = config.APIKEY || "test";
   applyClaudeModelFamilies(settings, config);
-  applyClaudeAutoCompactSettings(settings);
+  applyClaudeAutoCompactSettings(settings, config);
 
   if (config?.StatusLine?.enabled) {
     settings.statusLine = {
@@ -577,7 +615,12 @@ export function removeCcrProjectTakeover(settings: Record<string, any>): void {
       }
     }
 
+    // The auto-compact window is set to a dynamic value (from ContextWindow),
+    // so remove it unconditionally; the rest are removed only when they still
+    // hold the ccr-managed default.
+    delete settings.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
     for (const [key, value] of Object.entries(CLAUDE_AUTO_COMPACT_ENV)) {
+      if (key === "CLAUDE_CODE_AUTO_COMPACT_WINDOW") continue;
       if (settings.env[key] === value) {
         delete settings.env[key];
       }
@@ -677,7 +720,12 @@ function quoteTomlString(value: string): string {
   return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
-function setTopLevelTomlValues(content: string, values: Record<string, string>): string {
+// Numbers are emitted as bare TOML integers/floats; strings are quoted.
+function formatTomlValue(value: string | number): string {
+  return typeof value === "number" ? String(value) : quoteTomlString(value);
+}
+
+function setTopLevelTomlValues(content: string, values: Record<string, string | number>): string {
   const lines = content ? content.split(/\r?\n/) : [];
   const replaced = new Set<string>();
   const firstSectionIndex = lines.findIndex((line) => /^\s*\[[^\]]+\]\s*(?:#.*)?$/.test(line));
@@ -686,14 +734,14 @@ function setTopLevelTomlValues(content: string, values: Record<string, string>):
   for (let index = 0; index < topLevelEnd; index += 1) {
     const match = stripTomlComment(lines[index]).trim().match(/^([A-Za-z0-9_.-]+)\s*=/);
     if (match && Object.prototype.hasOwnProperty.call(values, match[1])) {
-      lines[index] = `${match[1]} = ${quoteTomlString(values[match[1]])}`;
+      lines[index] = `${match[1]} = ${formatTomlValue(values[match[1]])}`;
       replaced.add(match[1]);
     }
   }
 
   const missing = Object.entries(values)
     .filter(([key]) => !replaced.has(key))
-    .map(([key, value]) => `${key} = ${quoteTomlString(value)}`);
+    .map(([key, value]) => `${key} = ${formatTomlValue(value)}`);
 
   if (missing.length > 0) {
     lines.splice(topLevelEnd, 0, ...missing, topLevelEnd === 0 ? "" : "");
@@ -1402,9 +1450,16 @@ const codexAdapter: ClientAdapter = {
 
     let content = getCodexContent(filePath);
     content = removeTomlSection(content, "model_providers.ccr");
+    const contextWindow = getContextWindow(config);
     content = setTopLevelTomlValues(content, {
       model: alias,
       model_provider: "ccr",
+      // Pin the context window so Codex triggers auto-compaction before the
+      // routed (often third-party) model overflows. Codex's built-in catalogue
+      // doesn't know the ccr alias and would otherwise fall back to a window
+      // that doesn't match the real model, breaking compaction timing.
+      model_context_window: contextWindow,
+      model_auto_compact_token_limit: Math.floor(contextWindow * 0.9),
     });
     const apiKey = typeof config.APIKEY === "string" ? config.APIKEY : "";
     const authSection = apiKey
@@ -1436,6 +1491,8 @@ const codexAdapter: ClientAdapter = {
 
     if (getTopLevelTomlValue(content, "model_provider") === "ccr") {
       keysToRemove.add("model_provider");
+      keysToRemove.add("model_context_window");
+      keysToRemove.add("model_auto_compact_token_limit");
     }
 
     const activeModel = getTopLevelTomlValue(content, "model");

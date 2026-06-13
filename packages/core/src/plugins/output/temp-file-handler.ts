@@ -68,19 +68,6 @@ export class TempFileOutputHandler implements OutputHandler {
   }
 
   /**
-   * Extract session ID from user_id string
-   * Format: "user_..._session_<uuid>"
-   */
-  private extractSessionId(userId: string): string | null {
-    try {
-      const match = userId.match(/_session_([a-f0-9-]+)/i);
-      return match ? match[1] : null;
-    } catch {
-      return null;
-    }
-  }
-
-  /**
    * Get file path for temp file
    */
   private getFilePath(sessionId: string): string {

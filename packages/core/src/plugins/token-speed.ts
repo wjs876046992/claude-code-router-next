@@ -3,6 +3,7 @@ import { CCRPlugin, CCRPluginOptions } from './types';
 import { SSEParserTransform } from '../utils/sse';
 import { OutputHandlerConfig, OutputOptions, outputManager } from './output';
 import { ITokenizer, TokenizerConfig } from '../types/tokenizer';
+import { extractSessionIdFromUserId } from '../utils/session-id';
 
 /**
  * Token statistics interface
@@ -182,20 +183,7 @@ export const tokenSpeedPlugin: CCRPlugin = {
       // to the same request id used by usage tracking so TTFT can be joined.
       let sessionId: string | undefined;
       try {
-        const userId = (request.body as any)?.metadata?.user_id;
-        if (userId && typeof userId === 'string') {
-          // Try JSON format first: {"session_id":"xxx"}
-          try {
-            const parsed = JSON.parse(userId);
-            if (parsed.session_id) {
-              sessionId = parsed.session_id;
-            }
-          } catch {
-            // Fallback to legacy format: user_..._session_xxx
-            const match = userId.match(/_session_([a-f0-9-]+)/i);
-            sessionId = match ? match[1] : undefined;
-          }
-        }
+        sessionId = extractSessionIdFromUserId((request.body as any)?.metadata?.user_id);
       } catch (error) {
       }
       if (!sessionId) {
