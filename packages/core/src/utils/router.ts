@@ -459,7 +459,7 @@ function resolveFamilyModel(
     req.log.warn(`Family: webSearch model unavailable (fail pool), skipping`);
   }
 
-  if (req.body.thinking && familyConfig.think) {
+  if (req.body.thinking?.type === "enabled" && familyConfig.think) {
     const model = resolveConfiguredModel(familyConfig.think, providers, false, 'think', enableFallback);
     if (model) {
       return { model, scenarioType: 'think', isFallback: false };
@@ -658,8 +658,8 @@ const getUseModel = async (
     }
     // Fall through to other scenarios
   }
-  // if exits thinking, use the think model
-  if (req.body.thinking && Router?.think) {
+  // if extended thinking is enabled, use the think model
+  if (req.body.thinking?.type === "enabled" && Router?.think) {
     req.log.info(`Using think model for ${req.body.thinking}`);
     const model = resolveConfiguredModel(Router.think, providers, false, 'think', enableFallback);
     if (model) {
@@ -686,6 +686,17 @@ const getUseModel = async (
       : null;
     if (fallbackResult) {
       return { model: fallbackResult, scenarioType: 'default' };
+    }
+    // Last resort: no fallback (or none available) and the default model is
+    // only unavailable due to the fail-pool circuit breaker. Returning
+    // `undefined` here would surface a synthetic "provider not found" error
+    // instead of a real upstream response. Send the request to the default
+    // model anyway (skipping the health check) so Claude Code gets a genuine
+    // upstream error/response and can retry on its own.
+    const unhealthyDefault = resolveConfiguredModel(Router.default, providers, true, 'default', enableFallback);
+    if (unhealthyDefault) {
+      req.log.warn(`No fallback available; retrying default model ${Router.default} despite fail-pool state`);
+      return { model: unhealthyDefault, scenarioType: 'default' };
     }
   }
   return { model: undefined, scenarioType: 'default' };
