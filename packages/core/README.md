@@ -93,6 +93,7 @@ npm install -g @wengine-ai/claude-code-router-next@latest && ccr restart
 
 | 版本 | 发布内容 |
 | --- | --- |
+| **v2.3.8** | <ul><li>**可配置上下文窗口**：设置页新增 `ContextWindow`，接管 Claude Code / Codex 时用于设置 auto-compact 窗口，默认 200000 tokens。</li><li>**Codex 自动压缩窗口同步**：CCR 接管 Codex 时写入 `model_context_window` 与 `model_auto_compact_token_limit`（约 90%），确保模型别名也能按真实上下文窗口触发自动压缩。</li><li>**项目路由会话识别修复**：兼容 Claude Code `metadata.user_id` 的 JSON/object/legacy session 格式，并只缓存成功匹配，避免首个请求 session 文件尚未生成时项目级路由被长期判定为未命中。</li><li>**关闭模型族路由后别名映射旁路修复**：`enableFamilyRouting` 关闭时，`ccr-opus`/`ccr-sonnet`/`ccr-haiku` 不再被 `Router.models` 中遗留的别名映射拦截，正确回退到项目自定义的 scenario 路由。</li></ul> |
 | **v2.3.7** | <ul><li>**新增项目默认接管并跟随全局**：在「项目配置」页添加项目时，默认开启「CCR 接管」与「使用全局配置」，自动写入 ccr 代理配置并保持项目路由实时跟随全局，新项目开箱即用。</li><li>**项目级 fallback 复制修复**：自定义项目路由时正确复制全局顶层 `fallback`，避免备用模型链丢失。</li><li>**接管模型配置同步修复**：切换接管开关时按当前全局配置重新生成托管字段，确保全局变更后重新接管能同步最新模型路由，同时保留 `permissions`/`hooks` 等非托管配置。</li></ul> |
 | **v2.3.6** | <ul><li>**项目级 CCR 接管**：Web UI 项目配置页新增「CCR 接管」开关，开启后会将 `ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN`、模型族路由环境变量、auto-compact 设置及状态栏命令同步写入该项目的 `.claude/settings.local.json`，使该项目的 Claude Code CLI 无需 `ccr code` 即可直接通过 CCR 路由；关闭接管时会备份当前配置，下次重新接管自动还原，避免个性化配置丢失。</li><li>**项目配置页折叠与同步修复**：项目卡片支持折叠/展开；关闭「使用全局配置」后正确同步全局路由的 fallback 与模型族配置。</li></ul> |
 | **v2.1.36** | <ul><li>**Codex 最新 RT 导出**：Codex 账号管理支持导出当前或指定托管账号的最新 refresh token，CLI 新增 `ccr clients codex export-rt [account-id]`，Web UI 新增复制最新 RT 按钮，并会在当前 auth 文件更新时同步托管快照。</li></ul> |
@@ -102,7 +103,6 @@ npm install -g @wengine-ai/claude-code-router-next@latest && ccr restart
 | **v2.1.31** | <ul><li>**供应商操作区优化**：供应商卡片右侧刷新、编辑、删除按钮改为紧凑横向排列，避免纵向拉伸导致卡片视觉松散。</li></ul> |
 | **v2.1.30** | <ul><li>**Codex 多账号限额展示**：Codex 账号管理页新增官方限额信息展示，通过 `chatgpt.com/backend-api/wham/usage` 获取 5 小时速率限制与 7 天周限制的使用百分比和重置时间。</li><li>**Codex 账号自动切换**：Codex 请求前会检查当前账号官方限额，默认任一窗口达到 95% 自动切换到下一个可用账号；仍保留 429/限流错误后的自动切换兜底。</li></ul> |
 | **v2.1.27** | <ul><li>**DeepSeek / GLM 工具调用兼容修复**：修复部分 DeepSeek 与 GLM 兼容接口因 `tool_choice` 参数格式不一致导致的请求失败问题。</li></ul> |
-| **v2.1.26** | <ul><li>**修复 Anthropic Transformer URI 覆盖问题**：当 `Anthropic` 与 DeepSeek/OpenAI 兼容提供商组合使用时，不再把 `chat/completions` 端点错误改写为 `/v1/messages`，避免 DeepSeek 返回 404。</li><li>**协议转换边界收紧**：仅当 provider 的 `api_base_url` 明确指向 `/messages` 端点时，才将请求体转换为 Anthropic messages 结构。</li></ul> |
 
 > 仅保留最近 10 个版本，更早版本的发布摘要见 [CHANGELOG-archive.md](./CHANGELOG-archive.md)，完整详细变更记录见 [CHANGELOG.md](./CHANGELOG.md)。
 

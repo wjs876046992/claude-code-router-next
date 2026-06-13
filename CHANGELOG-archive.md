@@ -8,6 +8,7 @@ This document archives the older release summaries that fall outside the "latest
 
 | 版本 | 发布内容 |
 | --- | --- |
+| **v2.1.27** | <ul><li>**DeepSeek / GLM 工具调用兼容修复**：修复部分 DeepSeek 与 GLM 兼容接口因 `tool_choice` 参数格式不一致导致的请求失败问题。</li></ul> |
 | **v2.1.26** | <ul><li>**修复 Anthropic Transformer URI 覆盖问题**：当 `Anthropic` 与 DeepSeek/OpenAI 兼容提供商组合使用时，不再把 `chat/completions` 端点错误改写为 `/v1/messages`，避免 DeepSeek 返回 404。</li><li>**协议转换边界收紧**：仅当 provider 的 `api_base_url` 明确指向 `/messages` 端点时，才将请求体转换为 Anthropic messages 结构。</li></ul> |
 | **v2.1.25** | <ul><li>**修复新版 Claude Code (v2.1.154+) 422 报错**：完美解决请求 `/v1/messages` 兼容提供商时因 messages 数组中包含 `role: "system"` 造成的 400/422 报错。</li><li>**动态 Passthrough 绕过自愈**：强制拦截带有 system 消息的 Anthropic 兼容提供商透传，自动进行双向协议规范化与 system 字段合并。</li><li>**响应无损透传修复**：支持目标为 Anthropic 协议响应的原样直出，解决了第三方接口转发时“请求成功但无数据返回”的重大漏洞。</li></ul> |
 | **v2.1.22** | <ul><li>**提供商定时唤醒功能 (定时唤醒)**：新增通用及提供商级别的清晨定时自动重置/唤醒机制，通过发送 dummy 消息提前激活额度。</li><li>**对称用量展示面板**：将 Web 控制台的用量统计网格从 8 张卡片升级为更美观对称的 10 卡片布局。</li><li>**高级用量指标统计**：新增对缓存命中率 (Cache Hit Rate) 及生成速度 (Average Speed) 的多维度计算与动态展示。</li></ul> |
@@ -19,6 +20,7 @@ This document archives the older release summaries that fall outside the "latest
 
 | Version | Release Details |
 | --- | --- |
+| **v2.1.27** | <ul><li>**DeepSeek / GLM Tool Calling Compatibility Fix**: Fixes request failures against some DeepSeek and GLM compatible APIs caused by incompatible `tool_choice` parameter formats.</li></ul> |
 | **v2.1.26** | <ul><li>**Fix Anthropic Transformer URI Override**: When `Anthropic` is combined with DeepSeek/OpenAI-compatible providers, it no longer rewrites `chat/completions` endpoints to `/v1/messages`, preventing DeepSeek 404 responses.</li><li>**Tighter Protocol Conversion Boundary**: Request bodies are converted to Anthropic messages format only when the provider `api_base_url` explicitly points to a `/messages` endpoint.</li></ul> |
 | **v2.1.25** | <ul><li>**Fix Claude Code (v2.1.154+) 422 Error**: Solves the 400/422 validation errors when calling Anthropic-compatible `/v1/messages` target providers due to `role: "system"` appearing in the messages array.</li><li>**Self-Healing Passthrough Protection**: Blocks passthrough bypass for requests containing system messages, enforcing symmetric protocol normalization and system parameter extraction.</li><li>**Response Passthrough Fix**: Passes original Anthropic-compatible responses through unchanged, resolving the issue where requests succeeded but returned empty/no content.</li></ul> |
 | **v2.1.22** | <ul><li>**Provider Scheduled Wake-up**: Introduces a global and provider-level scheduled reset/wake-up mechanism to activate provider quotas early in the morning by sending dummy requests.</li><li>**Symmetric Web UI Grid**: Upgraded the usage statistics grid on the dashboard from 8 cards to a symmetric 10-card layout.</li><li>**Advanced Usage Metrics**: Added real-time displays and calculations for Cache Hit Rate and Average Speed (tok/s).</li></ul> |

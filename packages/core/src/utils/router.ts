@@ -724,6 +724,13 @@ export const router = async (req: any, _res: any, context: RouterContext) => {
   const routerConfig = projectSpecificRouter || configService.get("Router");
   const enableFallback = routerConfig?.enableFallback === true;
   const providers = configService.get<any[]>("providers") || [];
+
+  // Expose the resolved (project-aware) fallback settings on req so that
+  // handleFallback() in routes.ts honors the same enableFallback flag and
+  // fallback chain that the routing decision above used, instead of
+  // re-reading the global config and ignoring project-level overrides.
+  req.enableFallback = enableFallback;
+  req.fallbackConfig = (routerConfig?.fallback as RouterFallbackConfig | undefined) || configService.get<RouterFallbackConfig>('fallback');
   const lastMessageUsage = sessionUsageCache.get(req.sessionId);
   const { messages, system = [], tools }: MessageCreateParamsBase = req.body;
   const rewritePrompt = configService.get("REWRITE_SYSTEM_PROMPT");

@@ -462,7 +462,10 @@ async function handleFallback(
   const scenarioType = (req as any).scenarioType || 'default';
   const familyFallback = (req as any).familyFallback;
   const modelFamily = (req as any).modelFamily;
-  const globalFallback = fastify.configService.get<any>('fallback');
+  // Prefer the project-aware fallback config resolved by router() so that
+  // per-project Router.fallback overrides (and the enableFallback gate below)
+  // are honored instead of always falling back to the global config.
+  const globalFallback = (req as any).fallbackConfig ?? fastify.configService.get<any>('fallback');
   const healthStore = getHealthStore();
 
   const originalProvider = req.provider || "";
@@ -504,9 +507,11 @@ async function handleFallback(
     });
   }
 
-  // Check if fallback is enabled (default: false - disabled when not set)
-  const Router = fastify.configService.get<any>('Router');
-  if (!Router?.enableFallback) {
+  // Check if fallback is enabled (default: false - disabled when not set).
+  // Use the project-aware flag set by router(); fall back to the global
+  // config for requests that didn't go through router().
+  const enableFallback = (req as any).enableFallback ?? (fastify.configService.get<any>('Router')?.enableFallback === true);
+  if (!enableFallback) {
     req.log.info(`Fallback disabled by configuration, skipping fallback attempts`);
     return null;
   }
