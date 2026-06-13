@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.3.10] - 2026-06-13
+
+### Fixed
+
+- **`thinking: {type: "disabled"}` 误触发 `think` 场景路由**: `resolveFamilyModel()` 与 `getUseModel()` 判断是否进入 `think` 场景时，此前仅检查 `req.body.thinking` 是否存在；但 Claude Code 标题生成等元请求会固定携带 `thinking: {type: "disabled"}`，作为真值对象会被误判为"已开启思考"，导致即使项目关闭了模型族路由（`enableFamilyRouting: false`）也会被路由到全局 `think` 模型。现在仅当 `req.body.thinking?.type === "enabled"` 时才进入 `think` 场景路由。
+- **主模型熔断且无可用 fallback 时返回空模型**: `getUseModel()` 此前在 `Router.default` 因健康检查（fail-pool 熔断）不可用、且未启用 fallback 或所有 fallback 均不可用时，直接返回空模型，导致下游抛出合成的 "provider not found" 错误而非真实上游响应。现在会作为最后兜底，跳过健康检查重新尝试 `Router.default`（仍遵循 `enabled: false` 与配额耗尽限制），让请求送达上游获得真实响应，便于 Claude Code 自行重试。
+
 ## [2.3.9] - 2026-06-13
 
 ### Added
@@ -11,8 +18,6 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 
 - **运行时 fallback 重试未遵循项目级 `enableFallback`**: 请求实际发出后失败（如限流）触发的重试 fallback（`handleFallback`）此前直接读取全局 `Router.enableFallback` 与全局顶层 `fallback` 配置，忽略项目级路由的 `enableFallback: false` 与项目自定义的 `Router.fallback`；现在 `router()` 会将解析出的项目级 `enableFallback`/`fallback` 通过请求上下文传递给运行时重试逻辑，确保两处 fallback 判定使用同一份配置。
-- **`thinking: {type: "disabled"}` 误触发 `think` 场景路由**: `resolveFamilyModel()` 与 `getUseModel()` 判断是否进入 `think` 场景时，此前仅检查 `req.body.thinking` 是否存在；但 Claude Code 标题生成等元请求会固定携带 `thinking: {type: "disabled"}`，作为真值对象会被误判为"已开启思考"，导致即使项目关闭了模型族路由（`enableFamilyRouting: false`）也会被路由到全局 `think` 模型。现在仅当 `req.body.thinking?.type === "enabled"` 时才进入 `think` 场景路由。
-- **主模型熔断且无可用 fallback 时返回空模型**: `getUseModel()` 此前在 `Router.default` 因健康检查（fail-pool 熔断）不可用、且未启用 fallback 或所有 fallback 均不可用时，直接返回空模型，导致下游抛出合成的 "provider not found" 错误而非真实上游响应。现在会作为最后兜底，跳过健康检查重新尝试 `Router.default`（仍遵循 `enabled: false` 与配额耗尽限制），让请求送达上游获得真实响应，便于 Claude Code 自行重试。
 
 ## [2.3.8] - 2026-06-13
 
