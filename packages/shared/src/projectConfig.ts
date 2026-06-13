@@ -153,10 +153,12 @@ function getCcrTakeoverBackupPath(projectPath: string): string {
  * Enable or disable "ccr takeover" for a project's `.claude/settings.local.json`.
  *
  * When enabling, this restores a previous takeover backup if one exists
- * (preserving any customizations made while ccr was managing the project);
- * otherwise it mirrors the global ccr-managed Claude Code settings:
- * `ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN`, model family routing env vars,
- * auto-compact settings, and the status line command.
+ * (preserving any customizations made while ccr was managing the project,
+ * such as `permissions`/`hooks`), then re-applies the ccr-managed fields
+ * (`ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN`, model family routing env vars,
+ * auto-compact settings, and the status line command) from the *current*
+ * global config, so model routing stays in sync even if the global config
+ * changed since the backup was taken.
  *
  * When disabling, the current (ccr-managed) settings are backed up before the
  * ccr-managed fields are removed, so re-enabling takeover later restores them
@@ -165,19 +167,17 @@ function getCcrTakeoverBackupPath(projectPath: string): string {
 export async function setCcrTakeover(projectPath: string, enabled: boolean, config: Record<string, any>): Promise<void> {
   const settingsPath = getClaudeSettingsLocalPath(projectPath);
   const backupPath = getCcrTakeoverBackupPath(projectPath);
-  const settings = await readClaudeSettingsLocal(projectPath);
+  let settings = await readClaudeSettingsLocal(projectPath);
 
   if (enabled) {
     try {
       const backupRaw = await fs.readFile(backupPath, "utf-8");
       const backupSettings = JSON.parse(backupRaw);
       if (backupSettings && typeof backupSettings === "object") {
-        await fs.mkdir(path.dirname(settingsPath), { recursive: true });
-        await fs.writeFile(settingsPath, JSON.stringify(backupSettings, null, 2), "utf-8");
-        return;
+        settings = backupSettings;
       }
     } catch {
-      // No usable backup, fall through to generating fresh takeover settings.
+      // No usable backup, start from the current settings.
     }
     applyCcrProjectTakeover(settings, config);
   } else {

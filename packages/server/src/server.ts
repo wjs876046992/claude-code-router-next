@@ -783,6 +783,20 @@ export const createServer = async (config: any): Promise<any> => {
       }
 
       await writeProjectConfig(projectPath, { Router: {} });
+
+      // New projects default to "ccr takeover + follow global router": leave the
+      // project Router empty (so routing falls back to the global config) and
+      // immediately take over the project's `.claude/settings.local.json`, so its
+      // Claude Code CLI works through ccr without `ccr code`. Takeover failures
+      // (e.g. an unwritable project path) must not fail the add itself, so the
+      // returned `ccrTakeover` reflects the actual resulting state.
+      try {
+        const config = await readConfigFile();
+        await setCcrTakeover(projectPath, true, config);
+      } catch (takeoverError) {
+        console.error("Failed to auto-enable ccr takeover for new project:", takeoverError);
+      }
+
       return {
         id: getClaudeProjectId(projectPath),
         path: projectPath,

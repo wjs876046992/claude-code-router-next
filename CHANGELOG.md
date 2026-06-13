@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.3.7] - 2026-06-13
+
+### Fixed
+
+- **项目级 fallback 复制丢失**: 关闭「使用全局配置」自定义项目路由时，正确将全局顶层 `fallback`（全局配置中 `fallback` 是 `Router` 的同级字段）合并进项目 `Router` 的嵌套 `fallback`，避免复制全局配置时丢失备用模型链；同时回填已受影响的存量项目配置。
+- **CCR 接管后模型配置不同步**: 切换 CCR 接管开关时，无论是否存在历史备份，都会基于*当前*全局配置重新生成 ccr 托管字段（`ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN`、模型族路由环境变量、auto-compact、状态栏命令），确保全局配置变更后重新接管能同步最新模型路由，同时保留备份中的 `permissions`/`hooks` 等非托管字段。
+
+### Changed
+
+- **新增项目默认接管并跟随全局**: 在「项目配置」页添加项目时，默认开启「CCR 接管」与「使用全局配置」——自动将 ccr 代理配置写入该项目的 `.claude/settings.local.json`，并保持项目 `Router` 为空以实时跟随全局路由，新项目无需手动操作即可开箱即用（接管写入失败不影响项目添加，返回的 `ccrTakeover` 如实反映结果）。
+
 ## [2.3.6] - 2026-06-12
 
 ### Added

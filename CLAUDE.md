@@ -243,6 +243,16 @@ ui (standalone frontend application)
 6. **Code comments**: All comments in code MUST be written in English
 7. **Documentation**: When implementing new features, add documentation to the docs project instead of creating standalone md files
 
+## Changelog & Release Notes Convention
+
+When releasing a new version, keep changelog records in three places consistent:
+
+1. **`CHANGELOG.md`**: The complete, detailed changelog (Keep a Changelog style, `Added`/`Changed`/`Fixed`). Every released version is recorded here permanently — never trim it.
+2. **`README.md` / `README_en.md` changelog tables**: A bilingual, concise release-summary table that keeps **only the latest 10 versions**. Add the new version as the top row when releasing.
+3. **`CHANGELOG-archive.md`**: When a README table would exceed 10 versions, move the oldest summary rows out of the README and into this archive (it has a `中文` section and an `English` section mirroring the two READMEs). This file holds the overflow summaries only; the full history still lives in `CHANGELOG.md`.
+
+Release checklist: bump the `version` in all 6 `package.json` files (root + 5 packages) to the same value, prepend a new section to `CHANGELOG.md`, add the new top row to both README tables, and if either table now exceeds 10 rows move the oldest rows into `CHANGELOG-archive.md`.
+
 ## Configuration Example Locations
 
 - Main configuration example: Complete example in README.md

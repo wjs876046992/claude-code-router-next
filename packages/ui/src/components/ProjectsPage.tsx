@@ -46,6 +46,15 @@ export function ProjectsPage() {
     [providers]
   );
 
+  // The global `fallback` list lives at the config top level (a sibling of
+  // `Router`), but a project's `Router` override must carry its own nested
+  // `fallback`. Merge them so copying the global config into a project
+  // override preserves the fallback chains.
+  const globalRouterWithFallback = useMemo(() => {
+    if (!config?.Router) return {};
+    return { ...config.Router, fallback: config.fallback || {} };
+  }, [config?.Router, config?.fallback]);
+
   // For projects without overrides, leave the draft undefined so the editor
   // always falls back to the *current* global Router (incl. fallback/families)
   // instead of a stale snapshot taken before the global config finished loading.
@@ -146,7 +155,7 @@ export function ProjectsPage() {
     try {
       // When using custom config without any local edits yet, fall back to the
       // current global Router so its fallback/families settings are preserved.
-      const router = useGlobal[id] ? {} : drafts[id] ?? config?.Router ?? {};
+      const router = useGlobal[id] ? {} : drafts[id] ?? globalRouterWithFallback;
       const updated = await api.updateProject(id, router);
       setProjects((current) => current.map((project) => (project.id === id ? updated : project)));
       setToast({ message: t("projects.update_success"), type: "success" });
@@ -218,7 +227,7 @@ export function ProjectsPage() {
 
         {projects.map((project) => {
           const isUsingGlobal = useGlobal[project.id] ?? true;
-          const draft = drafts[project.id] ?? config?.Router ?? {};
+          const draft = drafts[project.id] ?? globalRouterWithFallback;
           const isCollapsed = collapsed[project.id] ?? true;
           return (
             <Card key={project.id}>
