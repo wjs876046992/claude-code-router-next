@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.3.11] - 2026-06-14
+
+### Fixed
+
+- **新会话首个请求绕过项目级路由（会话/项目检测竞态）**: 新会话的第一个请求（如 Claude Code 的标题生成元请求，通常比主请求早到约十几毫秒）到达时，对应的 session 转写文件 `~/.claude/projects/<project>/<sessionId>.jsonl` 可能尚未落盘，导致 `searchProjectBySession()` 通过 `stat` 找不到文件、回退到全局 `Router`，使这一个请求绕过项目级路由（例如项目已关闭 `enableFamilyRouting`，却仍走了全局模型族路由）。现在缓存未命中时会进行有限次短延迟重试（最多 3 次、每次 50ms），给文件落盘留出时间；并用 `sessionRetryAttempted` 标记保证每个 session 仅重试一次，避免真正非托管会话的每个请求都被附加延迟。命中后仍只缓存成功结果（保持 v2.3.8 的“不缓存未命中”语义）。
+
 ## [2.3.10] - 2026-06-13
 
 ### Fixed

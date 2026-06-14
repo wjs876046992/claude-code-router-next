@@ -93,6 +93,7 @@ npm install -g @wengine-ai/claude-code-router-next@latest && ccr restart
 
 | 版本 | 发布内容 |
 | --- | --- |
+| **v2.3.11** | <ul><li>**修复新会话首个请求绕过项目级路由（会话检测竞态）**：新会话的第一个请求（如标题生成元请求，比主请求早到约十几毫秒）到达时 session 转写文件可能尚未落盘，导致项目匹配失败、回退全局 `Router`，使该请求绕过项目级路由（如项目已关 `enableFamilyRouting` 仍走全局模型族路由）。现在缓存未命中时短延迟重试（最多 3×50ms）给文件落盘留时间，并保证每个 session 仅重试一次，避免非托管会话每请求都被加延迟。</li></ul> |
 | **v2.3.10** | <ul><li>**修复标题生成等元请求误触发 `think` 场景路由**：`thinking: {type: "disabled"}` 是真值对象，此前会被误判为"已开启思考"并路由到 `think` 模型；现在仅当 `thinking.type === "enabled"` 时才进入 `think` 场景，避免关闭模型族路由的项目仍被路由到全局 think 模型。</li><li>**修复主模型熔断且无 fallback 时返回空模型**：`Router.default` 因健康检查熔断且无可用 fallback 时，此前直接返回空模型导致合成 "provider not found" 错误；现在会跳过健康检查兜底重试主模型，让 Claude Code 收到真实上游响应并自行重试。</li></ul> |
 | **v2.3.9** | <ul><li>**Codex 代管理账号令牌自动刷新**：新增后台调度器（启动 60 秒后首次执行，之后每 30 分钟一次），自动检查所有 Codex 代管理账号——无论是否为当前激活账号——当 `access_token` 距过期不足 24 小时，或自上次刷新已超过 7 天时，自动用 `refresh_token` 换取新 token 并写回账号存储；若为当前激活账号，同时同步覆盖 `~/.codex/auth.json`。可通过 `Clients.codex.autoRefreshTokens` 关闭（默认开启）。</li><li>**运行时 fallback 重试未遵循项目级 `enableFallback` 修复**：请求实际发出后失败（如限流）触发的重试 fallback 此前直接读取全局 `Router.enableFallback` 与全局顶层 `fallback` 配置，忽略项目级 `enableFallback: false` 与项目自定义 `Router.fallback`；现在运行时重试与路由阶段使用同一份项目级 fallback 配置。</li></ul> |
 | **v2.3.8** | <ul><li>**可配置上下文窗口**：设置页新增 `ContextWindow`，接管 Claude Code / Codex 时用于设置 auto-compact 窗口，默认 200000 tokens。</li><li>**Codex 自动压缩窗口同步**：CCR 接管 Codex 时写入 `model_context_window` 与 `model_auto_compact_token_limit`（约 90%），确保模型别名也能按真实上下文窗口触发自动压缩。</li><li>**项目路由会话识别修复**：兼容 Claude Code `metadata.user_id` 的 JSON/object/legacy session 格式，并只缓存成功匹配，避免首个请求 session 文件尚未生成时项目级路由被长期判定为未命中。</li><li>**关闭模型族路由后别名映射旁路修复**：`enableFamilyRouting` 关闭时，`ccr-opus`/`ccr-sonnet`/`ccr-haiku` 不再被 `Router.models` 中遗留的别名映射拦截，正确回退到项目自定义的 scenario 路由。</li></ul> |
@@ -102,7 +103,6 @@ npm install -g @wengine-ai/claude-code-router-next@latest && ccr restart
 | **v2.1.35** | <ul><li>**定时唤醒稳定性修复**：提供商定时唤醒在 macOS 睡眠/唤醒或系统时间跳变后会重新计算下一次触发时间，避免错过或重复执行唤醒任务。</li></ul> |
 | **v2.1.34** | <ul><li>**本地客户端配置接管**：新增 Client Configuration 管理能力，可通过 UI/API/CLI 启用、禁用或恢复本地 Claude Code、Codex 等客户端配置，并自动写入 CCR 代理地址与模型别名。</li><li>**Codex 本地账号代管理**：新增 Codex 账号管理页与 `ccr clients codex` 命令，支持导入当前登录账号、通过 refresh token 导入、切换激活账号、删除托管账号，并对官方 auth 文件做备份与替换。</li><li>**Codex 账号列表缓存优化**：Codex 账号页优先读取本地固化账号与限额缓存，页面刷新无需等待官方 usage 接口；当前账号后台 1 分钟刷新一次，非当前账号 30 分钟刷新一次。</li><li>**Codex / OpenAI Responses API 兼容**：新增 `openai-responses` Transformer，支持 Codex 使用 Responses API wire format 接入 CCR，并完成 Chat/Anthropic 与 Responses 的流式、非流式转换。</li><li>**状态栏视觉升级**：状态栏新增彩色渐变 Context 上下文占用进度条，提升长上下文使用情况的可读性。</li></ul> |
 | **v2.1.32** | <ul><li>**供应商刷新按钮位置优化**：单个供应商刷新按钮移动到卡片顶部状态行，位于启用开关左侧；hover 操作区仅保留编辑和删除。</li></ul> |
-| **v2.1.31** | <ul><li>**供应商操作区优化**：供应商卡片右侧刷新、编辑、删除按钮改为紧凑横向排列，避免纵向拉伸导致卡片视觉松散。</li></ul> |
 
 > 仅保留最近 10 个版本，更早版本的发布摘要见 [CHANGELOG-archive.md](./CHANGELOG-archive.md)，完整详细变更记录见 [CHANGELOG.md](./CHANGELOG.md)。
 

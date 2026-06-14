@@ -841,6 +841,22 @@ export const router = async (req: any, _res: any, context: RouterContext) => {
 const sessionProjectCache = new Map<string, string>();
 const SESSION_CACHE_MAX = 1000;
 
+// Sessions for which the one-shot retry window has already been spent on a
+// cache miss. This prevents re-paying the retry delay on every request of a
+// genuinely un-managed session, while still giving a brand-new session's very
+// first request enough time for Claude Code to flush its transcript to disk.
+const sessionRetryAttempted = new Set<string>();
+const SESSION_RETRY_ATTEMPTED_MAX = 1000;
+
+// On a cache miss, retry the project lookup a few times with a short delay so
+// the first request of a new session can still resolve its project once Claude
+// Code creates the session transcript (.jsonl) file (~tens of ms later).
+const SESSION_LOOKUP_RETRY_COUNT = 3;
+const SESSION_LOOKUP_RETRY_DELAY_MS = 50;
+
+const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
+
 function trimCache(): void {
   if (sessionProjectCache.size <= SESSION_CACHE_MAX) return;
   const keysToDelete = [...sessionProjectCache.keys()].slice(0, sessionProjectCache.size - SESSION_CACHE_MAX);
@@ -848,6 +864,57 @@ function trimCache(): void {
     sessionProjectCache.delete(key);
   }
 }
+
+function trimRetryAttempted(): void {
+  if (sessionRetryAttempted.size <= SESSION_RETRY_ATTEMPTED_MAX) return;
+  const keysToDelete = [...sessionRetryAttempted].slice(0, sessionRetryAttempted.size - SESSION_RETRY_ATTEMPTED_MAX);
+  for (const key of keysToDelete) {
+    sessionRetryAttempted.delete(key);
+  }
+}
+
+// Scan all Claude project folders for a `${sessionId}.jsonl` transcript and
+// return the owning folder name, or null if none exists yet.
+const scanProjectFoldersForSession = async (
+  safeSessionId: string
+): Promise<string | null> => {
+  const dir = await opendir(CLAUDE_PROJECTS_DIR);
+  const folderNames: string[] = [];
+
+  // Collect all folder names
+  for await (const dirent of dir) {
+    if (dirent.isDirectory()) {
+      folderNames.push(dirent.name);
+    }
+  }
+
+  // Concurrently check each project folder for sessionId.jsonl file
+  const checkPromises = folderNames.map(async (folderName) => {
+    const sessionFilePath = join(
+      CLAUDE_PROJECTS_DIR,
+      folderName,
+      `${safeSessionId}.jsonl`
+    );
+    try {
+      const fileStat = await stat(sessionFilePath);
+      return fileStat.isFile() ? folderName : null;
+    } catch {
+      // File does not exist, continue checking next
+      return null;
+    }
+  });
+
+  const results = await Promise.all(checkPromises);
+
+  // Return the first existing project directory name
+  for (const result of results) {
+    if (result) {
+      return result;
+    }
+  }
+
+  return null;
+};
 
 export const searchProjectBySession = async (
   sessionId: string
@@ -863,42 +930,29 @@ export const searchProjectBySession = async (
   }
 
   try {
-    const dir = await opendir(CLAUDE_PROJECTS_DIR);
-    const folderNames: string[] = [];
+    let result = await scanProjectFoldersForSession(safeSessionId);
 
-    // Collect all folder names
-    for await (const dirent of dir) {
-      if (dirent.isDirectory()) {
-        folderNames.push(dirent.name);
+    // Cache miss: the very first request of a brand-new session (e.g. Claude
+    // Code's title-generation meta request) can arrive before the session
+    // transcript has been flushed to disk, which would otherwise make this one
+    // request fall back to the global Router and bypass project-level routing.
+    // Retry the lookup briefly so the file has a chance to appear. Only do this
+    // once per session so un-managed sessions don't pay the delay repeatedly.
+    if (!result && !sessionRetryAttempted.has(safeSessionId)) {
+      sessionRetryAttempted.add(safeSessionId);
+      trimRetryAttempted();
+      for (let i = 0; i < SESSION_LOOKUP_RETRY_COUNT && !result; i++) {
+        await sleep(SESSION_LOOKUP_RETRY_DELAY_MS);
+        result = await scanProjectFoldersForSession(safeSessionId);
       }
     }
 
-    // Concurrently check each project folder for sessionId.jsonl file
-    const checkPromises = folderNames.map(async (folderName) => {
-      const sessionFilePath = join(
-        CLAUDE_PROJECTS_DIR,
-        folderName,
-        `${safeSessionId}.jsonl`
-      );
-      try {
-        const fileStat = await stat(sessionFilePath);
-        return fileStat.isFile() ? folderName : null;
-      } catch {
-        // File does not exist, continue checking next
-        return null;
-      }
-    });
-
-    const results = await Promise.all(checkPromises);
-
-    // Return the first existing project directory name
-    for (const result of results) {
-      if (result) {
-        // Cache the found result
-        sessionProjectCache.set(safeSessionId, result);
-        trimCache();
-        return result;
-      }
+    if (result) {
+      // Cache only successful matches; never cache a miss so a later request
+      // can still resolve the project once the transcript exists.
+      sessionProjectCache.set(safeSessionId, result);
+      trimCache();
+      return result;
     }
 
     return null; // No matching project found
