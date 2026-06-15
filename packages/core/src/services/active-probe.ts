@@ -8,6 +8,18 @@ import { captureRateLimitHeaders } from './rate-limit';
 import { getQuotaAdapter } from './quota-adapters';
 import { storeQuotaResult } from './quota-store';
 import type { LLMProvider } from '../types/llm';
+import { version as CCR_VERSION } from '../../package.json';
+
+/** Custom request headers used to identify CCR-generated traffic. */
+const CCR_SOURCE_HEADER = 'x-claude-code-router-source';
+const CCR_VERSION_HEADER = 'x-claude-code-router-version';
+
+function ccrHeaders(source: string): Record<string, string> {
+  return {
+    [CCR_SOURCE_HEADER]: source,
+    [CCR_VERSION_HEADER]: CCR_VERSION,
+  };
+}
 
 /**
  * Configuration for active probing behavior
@@ -179,14 +191,15 @@ async function wakeupProvider(
     return { success: false, error: 'No models configured for provider' };
   }
 
-  const isAnthropic = provider.baseUrl.includes('anthropic') || modelToWakeup.includes('claude');
-  const chatUrl = isAnthropic
-    ? (provider.baseUrl.includes('/messages') ? provider.baseUrl : `${provider.baseUrl.replace(/\/$/, '')}/v1/messages`)
-    : (provider.baseUrl.includes('/chat/completions') ? provider.baseUrl : `${provider.baseUrl.replace(/\/$/, '')}/chat/completions`);
+  // The configured baseUrl is the full chat endpoint (e.g. .../v1/messages or .../chat/completions).
+  // Use it directly without appending any suffix paths.
+  const chatUrl = provider.baseUrl;
+  const isAnthropic = provider.baseUrl.includes('/messages') || modelToWakeup.includes('claude');
 
   try {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
+      ...ccrHeaders('scheduled-wakeup'),
     };
 
     if (isAnthropic) {
@@ -201,8 +214,8 @@ async function wakeupProvider(
       headers,
       body: JSON.stringify({
         model: modelToWakeup,
-        messages: [{ role: 'user', content: 'ping' }],
-        max_tokens: 1,
+        messages: [{ role: 'user', content: 'Wake up and acknowledge with a short greeting.' }],
+        max_tokens: 10,
       }),
       signal: AbortSignal.timeout(timeoutMs),
     };
@@ -246,14 +259,15 @@ async function pingProviderModel(
   proxyUrl?: string,
   logger?: any
 ): Promise<{ success: boolean; error?: string }> {
-  const isAnthropic = provider.baseUrl.includes('anthropic') || modelName.includes('claude');
-  const chatUrl = isAnthropic
-    ? (provider.baseUrl.includes('/messages') ? provider.baseUrl : `${provider.baseUrl.replace(/\/$/, '')}/v1/messages`)
-    : (provider.baseUrl.includes('/chat/completions') ? provider.baseUrl : `${provider.baseUrl.replace(/\/$/, '')}/chat/completions`);
+  // The configured baseUrl is the full chat endpoint (e.g. .../v1/messages or .../chat/completions).
+  // Use it directly without appending any suffix paths.
+  const chatUrl = provider.baseUrl;
+  const isAnthropic = provider.baseUrl.includes('/messages') || modelName.includes('claude');
 
   try {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
+      ...ccrHeaders('rate-limit-probe'),
     };
 
     if (isAnthropic) {
@@ -268,8 +282,8 @@ async function pingProviderModel(
       headers,
       body: JSON.stringify({
         model: modelName,
-        messages: [{ role: 'user', content: 'ping' }],
-        max_tokens: 1,
+        messages: [{ role: 'user', content: 'Hello, please reply briefly.' }],
+        max_tokens: 10,
       }),
       signal: AbortSignal.timeout(timeoutMs),
     };

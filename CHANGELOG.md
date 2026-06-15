@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.3.12] - 2026-06-15
+
+### Fixed
+
+- **删除项目配置未清理项目 `settings.local.json`**: 添加项目时会自动启用 ccr takeover，把代理地址、模型族路由环境变量、auto-compact、statusline 等 ccr 托管字段写入项目的 `.claude/settings.local.json`；但删除项目时此前只删除了 `~/.claude-code-router/<project-id>/` 配置目录，未反向清理 `settings.local.json`，导致 ccr 相关配置残留。现在删除项目前会先关闭 takeover，移除这些托管字段。
+- **定时唤醒未真正触发计费周期**: `wakeupProvider()` 此前使用 `max_tokens: 1` 和 `content: "ping"` 发送极简 dummy 请求，部分 Coding Plan 类提供商（如智谱）会接受请求但不产生实际 token 消耗，导致日额度周期未被激活。现在改用真实推理 prompt 并将 `max_tokens` 提高到 `10`，确保唤醒请求被计入实际使用。
+- **Codex 等 `/messages` 端点提供商唤醒 404**: `wakeupProvider()` 此前仅通过 URL 是否包含 `anthropic` 或模型名是否包含 `claude` 判断 Anthropic 协议，Codex 等使用 `gpt-*` 模型但 baseUrl 以 `/messages` 结尾的提供商被误判为 OpenAI 协议，URL 被错误拼接为 `/v1/messages/chat/completions`。现在以 `baseUrl` 是否包含 `/messages` 作为 Anthropic 协议判定依据，且 `baseUrl` 作为完整路径直接使用，不再拼接任何后缀。
+- **唤醒/探测请求缺少来源标识**: 为唤醒和独立探测请求增加 `x-claude-code-router-source` 与 `x-claude-code-router-version` 请求头，方便上游服务识别这是 CCR 内部发起的探测/唤醒流量。
+
 ## [2.3.11] - 2026-06-14
 
 ### Fixed

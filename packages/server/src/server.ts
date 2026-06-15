@@ -873,6 +873,18 @@ export const createServer = async (config: any): Promise<any> => {
         return;
       }
 
+      // Adding a project auto-enables ccr takeover, which writes ccr-managed
+      // fields into the project's `.claude/settings.local.json`. Removing the
+      // project config dir alone would leave those fields behind, so disable
+      // takeover first to clean up `settings.local.json`. Takeover removal
+      // failures must not block the delete itself.
+      try {
+        const config = await readConfigFile();
+        await setCcrTakeover(existing.path, false, config);
+      } catch (takeoverError) {
+        console.error("Failed to remove ccr takeover while deleting project:", takeoverError);
+      }
+
       await deleteProjectConfig(existing.path);
       return { success: true };
     } catch (error: any) {

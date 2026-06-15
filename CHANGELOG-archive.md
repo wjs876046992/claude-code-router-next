@@ -8,6 +8,7 @@ This document archives the older release summaries that fall outside the "latest
 
 | 版本 | 发布内容 |
 | --- | --- |
+| **v2.1.32** | <ul><li>**供应商刷新按钮位置优化**：单个供应商刷新按钮移动到卡片顶部状态行，位于启用开关左侧；hover 操作区仅保留编辑和删除。</li></ul> |
 | **v2.1.31** | <ul><li>**供应商操作区优化**：供应商卡片右侧刷新、编辑、删除按钮改为紧凑横向排列，避免纵向拉伸导致卡片视觉松散。</li></ul> |
 | **v2.1.30** | <ul><li>**Codex 多账号限额展示**：Codex 账号管理页新增官方限额信息展示，通过 `chatgpt.com/backend-api/wham/usage` 获取 5 小时速率限制与 7 天周限制的使用百分比和重置时间。</li><li>**Codex 账号自动切换**：Codex 请求前会检查当前账号官方限额，默认任一窗口达到 95% 自动切换到下一个可用账号；仍保留 429/限流错误后的自动切换兜底。</li></ul> |
 | **v2.1.27** | <ul><li>**DeepSeek / GLM 工具调用兼容修复**：修复部分 DeepSeek 与 GLM 兼容接口因 `tool_choice` 参数格式不一致导致的请求失败问题。</li></ul> |
@@ -22,6 +23,7 @@ This document archives the older release summaries that fall outside the "latest
 
 | Version | Release Details |
 | --- | --- |
+| **v2.1.32** | <ul><li>**Provider Refresh Button Placement**: Moves the single-provider refresh button into the top status row beside the enable switch, leaving edit and delete in the hover action area.</li></ul> |
 | **v2.1.31** | <ul><li>**Provider Actions Layout**: Makes the provider card refresh, edit, and delete actions compact and horizontal, avoiding the stretched vertical action column.</li></ul> |
 | **v2.1.30** | <ul><li>**Codex Multi-Account Quota Display**: Adds official quota information to Codex account management, using `chatgpt.com/backend-api/wham/usage` to display 5-hour rate-limit and 7-day weekly-limit usage percentages and reset times.</li><li>**Codex Account Auto-Switching**: Checks official quota before each Codex request and switches to the next available account when any window reaches the default 95% threshold, while keeping the existing 429/rate-limit fallback switch.</li></ul> |
 | **v2.1.27** | <ul><li>**DeepSeek / GLM Tool Calling Compatibility Fix**: Fixes request failures against some DeepSeek and GLM compatible APIs caused by incompatible `tool_choice` parameter formats.</li></ul> |
