@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.3.14] - 2026-06-16
+
+### Fixed
+
+- **状态栏显示 `<synthetic>` 而非真实模型名**: Claude Code 在 auto-compact 自动压缩、中断恢复等场景会向 transcript 写入 `model: "<synthetic>"` 的合成 assistant 消息（并非真实 LLM 响应）。ccr 状态栏从后往前取「最后一条 assistant 消息的 model」时未排除这类合成消息，导致状态栏模型段直接显示 `<synthetic>`（从 Claude 账号会话切换到 ccr 接管、或发生自动压缩后尤其常见）。现在过滤掉 `<...>` 形式的合成标识，正确显示实际调用的模型名，同时不再把合成消息的 usage 计入 token 统计。
+
 ## [2.3.13] - 2026-06-15
 
 ### Fixed

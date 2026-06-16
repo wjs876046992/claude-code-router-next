@@ -8,6 +8,7 @@ This document archives the older release summaries that fall outside the "latest
 
 | 版本 | 发布内容 |
 | --- | --- |
+| **v2.1.35** | <ul><li>**定时唤醒稳定性修复**：提供商定时唤醒在 macOS 睡眠/唤醒或系统时间跳变后会重新计算下一次触发时间，避免错过或重复执行唤醒任务。</li></ul> |
 | **v2.1.34** | <ul><li>**本地客户端配置接管**：新增 Client Configuration 管理能力，可通过 UI/API/CLI 启用、禁用或恢复本地 Claude Code、Codex 等客户端配置，并自动写入 CCR 代理地址与模型别名。</li><li>**Codex 本地账号代管理**：新增 Codex 账号管理页与 `ccr clients codex` 命令，支持导入当前登录账号、通过 refresh token 导入、切换激活账号、删除托管账号，并对官方 auth 文件做备份与替换。</li><li>**Codex 账号列表缓存优化**：Codex 账号页优先读取本地固化账号与限额缓存，页面刷新无需等待官方 usage 接口；当前账号后台 1 分钟刷新一次，非当前账号 30 分钟刷新一次。</li><li>**Codex / OpenAI Responses API 兼容**：新增 `openai-responses` Transformer，支持 Codex 使用 Responses API wire format 接入 CCR，并完成 Chat/Anthropic 与 Responses 的流式、非流式转换。</li><li>**状态栏视觉升级**：状态栏新增彩色渐变 Context 上下文占用进度条，提升长上下文使用情况的可读性。</li></ul> |
 | **v2.1.32** | <ul><li>**供应商刷新按钮位置优化**：单个供应商刷新按钮移动到卡片顶部状态行，位于启用开关左侧；hover 操作区仅保留编辑和删除。</li></ul> |
 | **v2.1.31** | <ul><li>**供应商操作区优化**：供应商卡片右侧刷新、编辑、删除按钮改为紧凑横向排列，避免纵向拉伸导致卡片视觉松散。</li></ul> |
@@ -24,6 +25,7 @@ This document archives the older release summaries that fall outside the "latest
 
 | Version | Release Details |
 | --- | --- |
+| **v2.1.35** | <ul><li>**Scheduled Wake-up Stability Fix**: Provider scheduled wake-up now recalculates the next trigger after macOS sleep/wake or system clock jumps, avoiding missed or duplicate wake-up runs.</li></ul> |
 | **v2.1.34** | <ul><li>**Local Client Configuration Management**: Adds Client Configuration management for enabling, disabling, or restoring local Claude Code, Codex, and other client configs through the UI/API/CLI, automatically writing CCR proxy URLs and model aliases.</li><li>**Codex Local Account Management**: Adds a Codex account management page and `ccr clients codex` commands for importing the current signed-in account, importing by refresh token, switching the active account, deleting managed accounts, and backing up/replacing the official auth file.</li><li>**Codex Account List Cache**: Codex accounts now load from persisted local account and quota cache first, so page refreshes no longer wait for the official usage API; the active account refreshes in the background every 1 minute and inactive accounts every 30 minutes.</li><li>**Codex / OpenAI Responses API Compatibility**: Adds the `openai-responses` Transformer so Codex can use the Responses API wire format through CCR, including streaming and non-streaming conversion between Chat/Anthropic and Responses formats.</li><li>**Status Line Visual Upgrade**: Adds a gradient-colored Context usage progress bar to make long-context usage easier to read.</li></ul> |
 | **v2.1.32** | <ul><li>**Provider Refresh Button Placement**: Moves the single-provider refresh button into the top status row beside the enable switch, leaving edit and delete in the hover action area.</li></ul> |
 | **v2.1.31** | <ul><li>**Provider Actions Layout**: Makes the provider card refresh, edit, and delete actions compact and horizontal, avoiding the stretched vertical action column.</li></ul> |

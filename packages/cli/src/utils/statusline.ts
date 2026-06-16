@@ -912,7 +912,14 @@ export async function parseStatusLineData(input: StatusLineInput, presetName?: s
         for (let i = lines.length - 1; i >= 0; i--) {
             try {
                 const message: AssistantMessage = JSON.parse(lines[i]);
-                if (message.type === "assistant" && message.message.model) {
+                // Skip synthetic messages (e.g. "<synthetic>" written by Claude Code
+                // during auto-compact / interruption recovery). They are not real LLM
+                // responses, so their model name and usage must not be used.
+                if (
+                    message.type === "assistant" &&
+                    message.message.model &&
+                    !/^<.+>$/.test(message.message.model)
+                ) {
                     // Accumulate tokens for session total
                     if (message.message.usage) {
                         const usage = message.message.usage;
