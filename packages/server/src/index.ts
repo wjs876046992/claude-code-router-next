@@ -784,6 +784,16 @@ async function getServer(options: RunOptions = {}) {
               const event = (value as any).event;
               const data = (value as any).data;
 
+              // Capture the model the upstream provider actually returned. Gateways may
+              // silently swap the requested model (e.g. route glm-5 to a MiniMax backend),
+              // so we surface the real upstream model in usage stats.
+              if (event === 'message_start' && data?.message?.model) {
+                req.upstreamModel = data.message.model;
+              }
+              if (event === 'response.completed' && data?.response?.model) {
+                req.upstreamModel = data.response.model;
+              }
+
               // Capture usage from Anthropic SSE (message_delta, message_start)
               if (data?.usage) {
                 const existingUsage = sessionUsageCache.get(usageSessionId) || {};
@@ -860,6 +870,12 @@ async function getServer(options: RunOptions = {}) {
       const nonStreamUsage = extractUsageFromPayload(payload);
       if (nonStreamUsage) {
         sessionUsageCache.put(usageSessionId, nonStreamUsage);
+      }
+      // Capture upstream model for non-stream responses (Anthropic payload.model,
+      // Responses API payload.response.model).
+      const upstreamModel = payload?.model || payload?.response?.model;
+      if (upstreamModel) {
+        req.upstreamModel = upstreamModel;
       }
       if (typeof payload ==='object') {
         if (payload.error) {
@@ -975,6 +991,7 @@ async function getServer(options: RunOptions = {}) {
         provider: req.provider || "",
         originalModel: req.originalModel || req.body?.model || "",
         model: getRequestModel(req),
+        upstreamModel: req.upstreamModel,
         modelFamily: req.modelFamily || "",
         scenarioType: req.scenarioType || "default",
         clientType: detectClientType(req),

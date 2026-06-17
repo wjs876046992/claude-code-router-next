@@ -20,6 +20,7 @@ type UsageRecordRow = {
   provider: string;
   original_model: string;
   model: string;
+  upstream_model: string | null;
   model_family: string;
   scenario_type: string;
   client_type: string | null;
@@ -50,6 +51,7 @@ export interface UsageRecord {
   provider: string;
   originalModel: string; // Original request model before routing
   model: string; // Actual routed model
+  upstreamModel?: string; // Model returned by the upstream provider (may differ from routed model)
   modelFamily: string;
   scenarioType: string;
   clientType?: string; // "claude-code" | "codex" | "api" | "unknown"
@@ -132,18 +134,27 @@ function getDb(): Database.Database {
     initializeSchema(db);
     db.pragma("user_version = 1");
   }
+  if (currentVersion < 2) {
+    // v2: track the model the upstream provider actually returned, so gateway
+    // model swaps (e.g. silently routing glm-5 to a MiniMax backend) are visible.
+    const columns = db.prepare("PRAGMA table_info(usage_records)").all() as { name: string }[];
+    if (!columns.some((c) => c.name === "upstream_model")) {
+      db.exec("ALTER TABLE usage_records ADD COLUMN upstream_model TEXT");
+    }
+    db.pragma("user_version = 2");
+  }
   migrateLegacyUsageJsonl(db);
   pruneExpiredRecords(db, true);
 
   insertStatement = db.prepare(`
     INSERT INTO usage_records (
-      id, timestamp, session_id, provider, original_model, model, model_family,
+      id, timestamp, session_id, provider, original_model, model, upstream_model, model_family,
       scenario_type, client_type, codex_account_id, codex_account_email,
       stream, input_tokens, output_tokens, cache_read_input_tokens,
       cache_creation_input_tokens, ttft, tokens_per_second, duration_ms,
       status, error_message, response_body
     ) VALUES (
-      @id, @timestamp, @session_id, @provider, @original_model, @model,
+      @id, @timestamp, @session_id, @provider, @original_model, @model, @upstream_model,
       @model_family, @scenario_type, @client_type, @codex_account_id,
       @codex_account_email, @stream, @input_tokens, @output_tokens,
       @cache_read_input_tokens, @cache_creation_input_tokens, @ttft,
@@ -164,6 +175,7 @@ function initializeSchema(db: Database.Database): void {
       provider TEXT NOT NULL,
       original_model TEXT NOT NULL,
       model TEXT NOT NULL,
+      upstream_model TEXT,
       model_family TEXT NOT NULL,
       scenario_type TEXT NOT NULL,
       client_type TEXT,
@@ -266,13 +278,13 @@ function isMigrationCandidate(value: unknown): value is UsageRecord {
 function getInsertStatement(db: Database.Database, insertMode = "INSERT"): Database.Statement {
   return db.prepare(`
     ${insertMode} INTO usage_records (
-      id, timestamp, session_id, provider, original_model, model, model_family,
+      id, timestamp, session_id, provider, original_model, model, upstream_model, model_family,
       scenario_type, client_type, codex_account_id, codex_account_email,
       stream, input_tokens, output_tokens, cache_read_input_tokens,
       cache_creation_input_tokens, ttft, tokens_per_second, duration_ms,
       status, error_message, response_body
     ) VALUES (
-      @id, @timestamp, @session_id, @provider, @original_model, @model,
+      @id, @timestamp, @session_id, @provider, @original_model, @model, @upstream_model,
       @model_family, @scenario_type, @client_type, @codex_account_id,
       @codex_account_email, @stream, @input_tokens, @output_tokens,
       @cache_read_input_tokens, @cache_creation_input_tokens, @ttft,
@@ -333,6 +345,7 @@ function toDbRow(record: UsageRecord): UsageRecordRow {
     provider: normalizeString(normalized.provider),
     original_model: normalizeString(normalized.originalModel),
     model: normalizeString(normalized.model),
+    upstream_model: normalizeOptionalString(normalized.upstreamModel) ?? null,
     model_family: normalizeString(normalized.modelFamily),
     scenario_type: normalizeString(normalized.scenarioType),
     client_type: normalizeOptionalString(normalized.clientType) ?? null,
@@ -360,6 +373,7 @@ function toUsageRecord(row: UsageRecordRow): UsageRecord {
     provider: row.provider,
     originalModel: row.original_model,
     model: row.model,
+    upstreamModel: row.upstream_model ?? undefined,
     modelFamily: row.model_family,
     scenarioType: row.scenario_type,
     clientType: row.client_type ?? undefined,

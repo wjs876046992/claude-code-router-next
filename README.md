@@ -93,6 +93,7 @@ npm install -g @wengine-ai/claude-code-router-next@latest && ccr restart
 
 | 版本 | 发布内容 |
 | --- | --- |
+| **v2.3.15** | <ul><li>**Fallback 前同模型重试一次**: 模型调用出现一次异常不再立即切换到备用模型，而是先对同一模型自动重试一次（Double-Check），避免因瞬时错误（网络抖动、偶发限流、空 SSE 响应等）导致不必要的模型切换；重试仍失败才走原有 fallback 流程。</li><li>**用量统计显示上游真实模型**: 部分上游网关（如恒生数安）会偷偷将请求路由/降级到另一个后端模型（如请求 glm-5 实际返回 MiniMax-M2.5）。用量统计的模型映射现在追加上游返回的真实模型，格式为 `originalModel → routedModel → upstreamModel`（如 `ccr-opus → glm-5 → minimax-m2.5`），上游未偷换时自动省略。</li></ul> |
 | **v2.3.14** | <ul><li>**修复状态栏显示 `<synthetic>` 模型名**：Claude Code 在 auto-compact 自动压缩、中断恢复时写入的 `<synthetic>` 合成消息（非真实 LLM 响应）此前被状态栏当作模型名显示（从 Claude 账号会话切换到 ccr 接管、或发生自动压缩后尤其常见）；现在过滤该合成标识，正确显示实际路由模型，同时不再把合成消息的 usage 计入 token 统计。</li></ul> |
 | **v2.3.13** | <ul><li>**修复删除项目配置未清理项目 `settings.local.json`**：添加项目时自动写入的 ccr 托管字段（代理地址、模型族路由环境变量、auto-compact、statusline 等）此前在删除项目时未被清理；现在删除前会先关闭 takeover，移除这些字段。</li></ul> |
 | **v2.3.12** | <ul><li>**修复定时唤醒未真正触发计费周期**：唤醒请求由 `max_tokens: 1` 的 dummy ping 改为真实推理 prompt 与 `max_tokens: 10`，确保 Coding Plan 类提供商产生实际 token 消耗并激活日额度周期。</li><li>**修复 Codex 等 `/messages` 端点唤醒 404**：以 `baseUrl` 是否包含 `/messages` 判断 Anthropic 协议，且 `baseUrl` 作为完整路径直接使用，不再拼接后缀。</li><li>**唤醒/探测请求增加来源头**：新增 `x-claude-code-router-source` 与 `x-claude-code-router-version` 请求头，便于上游识别 CCR 内部探测/唤醒流量。</li></ul> |
@@ -102,7 +103,6 @@ npm install -g @wengine-ai/claude-code-router-next@latest && ccr restart
 | **v2.3.8** | <ul><li>**可配置上下文窗口**：设置页新增 `ContextWindow`，接管 Claude Code / Codex 时用于设置 auto-compact 窗口，默认 200000 tokens。</li><li>**Codex 自动压缩窗口同步**：CCR 接管 Codex 时写入 `model_context_window` 与 `model_auto_compact_token_limit`（约 90%），确保模型别名也能按真实上下文窗口触发自动压缩。</li><li>**项目路由会话识别修复**：兼容 Claude Code `metadata.user_id` 的 JSON/object/legacy session 格式，并只缓存成功匹配，避免首个请求 session 文件尚未生成时项目级路由被长期判定为未命中。</li><li>**关闭模型族路由后别名映射旁路修复**：`enableFamilyRouting` 关闭时，`ccr-opus`/`ccr-sonnet`/`ccr-haiku` 不再被 `Router.models` 中遗留的别名映射拦截，正确回退到项目自定义的 scenario 路由。</li></ul> |
 | **v2.3.7** | <ul><li>**新增项目默认接管并跟随全局**：在「项目配置」页添加项目时，默认开启「CCR 接管」与「使用全局配置」，自动写入 ccr 代理配置并保持项目路由实时跟随全局，新项目开箱即用。</li><li>**项目级 fallback 复制修复**：自定义项目路由时正确复制全局顶层 `fallback`，避免备用模型链丢失。</li><li>**接管模型配置同步修复**：切换接管开关时按当前全局配置重新生成托管字段，确保全局变更后重新接管能同步最新模型路由，同时保留 `permissions`/`hooks` 等非托管配置。</li></ul> |
 | **v2.3.6** | <ul><li>**项目级 CCR 接管**：Web UI 项目配置页新增「CCR 接管」开关，开启后会将 `ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN`、模型族路由环境变量、auto-compact 设置及状态栏命令同步写入该项目的 `.claude/settings.local.json`，使该项目的 Claude Code CLI 无需 `ccr code` 即可直接通过 CCR 路由；关闭接管时会备份当前配置，下次重新接管自动还原，避免个性化配置丢失。</li><li>**项目配置页折叠与同步修复**：项目卡片支持折叠/展开；关闭「使用全局配置」后正确同步全局路由的 fallback 与模型族配置。</li></ul> |
-| **v2.1.36** | <ul><li>**Codex 最新 RT 导出**：Codex 账号管理支持导出当前或指定托管账号的最新 refresh token，CLI 新增 `ccr clients codex export-rt [account-id]`，Web UI 新增复制最新 RT 按钮，并会在当前 auth 文件更新时同步托管快照。</li></ul> |
 
 > 仅保留最近 10 个版本，更早版本的发布摘要见 [CHANGELOG-archive.md](./CHANGELOG-archive.md)，完整详细变更记录见 [CHANGELOG.md](./CHANGELOG.md)。
 

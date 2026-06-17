@@ -438,11 +438,28 @@ async function handleTransformerEndpoint(
 
     return result;
   } catch (error: any) {
+    // Double-check: retry the same model once before falling back.
+    // Transient provider errors (network jitter, momentary overload, empty SSE)
+    // often resolve on a second attempt, avoiding unnecessary model switches.
+    if (!(req as any).__retryAttempted) {
+      (req as any).__retryAttempted = true;
+      try {
+        return await handleTransformerEndpoint(req, reply, fastify, transformer);
+      } catch (retryError: any) {
+        // If the recursive call already tried fallback and it failed,
+        // re-throw immediately — don't try fallback a second time.
+        if ((req as any).__fallbackExhausted) {
+          throw retryError;
+        }
+        error = retryError;
+      }
+    }
     // Handle fallback for any request error (timeout, network, API errors)
     const fallbackResult = await handleFallback(req, reply, fastify, transformer, error);
     if (fallbackResult) {
       return fallbackResult;
     }
+    (req as any).__fallbackExhausted = true;
     throw error;
   }
 }

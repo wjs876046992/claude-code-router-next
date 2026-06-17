@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.3.15] - 2026-06-17
+
+### Added
+
+- **Fallback 前同模型重试一次（Double-Check）**: 此前模型调用出现一次异常（网络抖动、偶发限流、空 SSE 响应等）就立即切换到备用模型。现在先对同一模型自动重试一次请求，重试成功则正常返回，避免不必要的模型切换；重试仍失败才走原有的 fallback 流程。
+- **用量统计显示上游真实模型**: 部分上游网关（如恒生数安）会在 ccr 不知情的情况下将请求偷偷路由/降级到另一个后端模型（如请求 glm-5 实际返回 MiniMax-M2.5）。用量统计的模型映射显示现在追加上游返回的真实模型，格式为 `originalModel → routedModel → upstreamModel`（如 `ccr-opus → glm-5 → minimax-m2.5`），上游未偷换时与路由模型相同则自动省略。后端在三种响应形态（Anthropic SSE `message_start`、Responses API `response.completed`、非流式 JSON）下捕获上游返回的 model 字段，存入 `usage_records.upstream_model` 列（走 `user_version` v2 迁移，旧库自动 ALTER TABLE 加列）。
+
 ## [2.3.14] - 2026-06-16
 
 ### Fixed

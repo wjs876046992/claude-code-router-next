@@ -26,6 +26,7 @@ interface UsageRecord {
   provider: string;
   originalModel: string; // Original request model before routing
   model: string; // Actual routed model
+  upstreamModel?: string; // Model returned by the upstream provider (may differ from routed model)
   modelFamily: string;
   scenarioType: string;
   clientType?: string; // "claude-code" | "codex" | "api" | "unknown"
@@ -511,10 +512,13 @@ export function UsageStats() {
                 {records.length === 0 ? (
                   <tr><td colSpan={13} className="text-center p-4 text-gray-400">{t("usage.no_data")}</td></tr>
                 ) : records.map((r) => {
-                  // Show model mapping: original → routed
-                  const modelDisplay = r.originalModel && r.originalModel !== r.model
-                    ? `${r.originalModel} → ${r.model}`
-                    : r.model;
+                  // Show model mapping: original → routed → upstream.
+                  // The upstream model is what the provider actually returned and may
+                  // differ when a gateway silently swaps the requested model. Adjacent
+                  // duplicates are collapsed (e.g. upstream == routed omits the last leg).
+                  const modelDisplay = [r.originalModel, r.model, r.upstreamModel]
+                    .filter((v, i, arr) => v && v !== arr[i - 1])
+                    .join(" → ");
                   return (
                   <tr key={r.id} className="border-b hover:bg-gray-50">
                     <td className="p-1.5 whitespace-nowrap">{formatTime(r.timestamp)}</td>
