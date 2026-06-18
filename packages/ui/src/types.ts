@@ -206,6 +206,9 @@ export interface Config {
   StatusLine?: StatusLineConfig;
   Clients?: Partial<Record<ClientId, ClientConfig>>;
   forceUseImageAgent?: boolean;
+  // Strip Claude Code's dynamic attribution header on takeover to keep the
+  // upstream prompt-cache prefix stable. Defaults to true (enabled).
+  disableAttributionHeader?: boolean;
   fallback?: FallbackConfig;
   // Top-level settings
   LOG: boolean;

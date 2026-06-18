@@ -82,6 +82,12 @@ export const createEnvVariables = async (): Promise<Record<string, string | unde
     DISABLE_TELEMETRY: "true",
     DISABLE_COST_WARNINGS: "true",
     API_TIMEOUT_MS: String(config.API_TIMEOUT_MS ?? 600000),
+    // Strip the dynamic attribution header (client version + prompt fingerprint)
+    // from the start of the system prompt. It changes between requests and breaks
+    // the upstream prompt-cache prefix when routing through CCR (an LLM gateway).
+    // Enabled by default; users can opt out via `disableAttributionHeader: false`.
+    CLAUDE_CODE_ATTRIBUTION_HEADER:
+      config.disableAttributionHeader === false ? undefined : "0",
     ...CLAUDE_AUTO_COMPACT_ENV,
     // Reset CLAUDE_CODE_USE_BEDROCK when running with ccr
     CLAUDE_CODE_USE_BEDROCK: undefined,

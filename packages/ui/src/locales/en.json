@@ -188,6 +188,7 @@
     },
     "language": "Language",
     "token_speed": "Token Speed & TTFT Tracking",
+    "disable_attribution_header": "Strip Claude Code Attribution Header (improves prompt-cache hit rate)",
     "wakeup_enabled_global": "Enable Scheduled Wake-up (Global Switch)",
     "wakeup_time_global": "Global Default Wake-up Time",
     "fallback_title": "Fallback Configuration",

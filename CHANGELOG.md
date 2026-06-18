@@ -2,12 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.3.16] - 2026-06-18
+
+### Fixed
+
+- **修复 system 消息顺序兼容 DeepSeek/vLLM**: OpenAI 兼容提供商（DeepSeek V4、GLM、vLLM）要求消息按 `[system, user, assistant]` 顺序排列。此前 CCR 在 `routes.ts` 与 `anthropic.transformer.ts` 两处会把 system 消息排在 user/assistant 之后，导致这些上游返回乱码输出。现在统一将 system 消息前置到数组开头并对完全重复的 system 内容去重。
+
+### Added
+
+- **接管时去除 Claude Code Attribution 动态头以提升缓存命中**: CCR 接管 Claude Code 时（`ccr code` 运行时环境、写入全局 `~/.claude/settings.json`、以及项目级 `.claude/settings.local.json` 接管）默认注入 `CLAUDE_CODE_ATTRIBUTION_HEADER=0`，去掉系统提示词开头随每次请求变化的 attribution 头（客户端版本 + prompt fingerprint）。该动态头每条请求都不一样，会破坏上游 prompt-cache 的稳定前缀，导致通过 CCR 网关路由的请求几乎无法命中缓存、每次都重新计费整段上下文。去掉它与本版本的「system 消息前置 + 去重」配合，可在保证 vLLM/DeepSeek/GLM 兼容的同时稳定命中上游 prompt 缓存，显著降低重复请求的 token 用量与延迟。新增顶层配置项 `disableAttributionHeader`（默认开启），可在 Web UI 设置页或配置文件中设为 `false` 关闭；项目级接管会与最大上下文（`CLAUDE_CODE_AUTO_COMPACT_WINDOW`）、自动压缩（`CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`）一并从全局配置继承该设置；关闭接管（全局 `removeClaudeManagedFields` 与项目级 `removeCcrProjectTakeover`）时会自动清理该环境变量。
+
+### Changed
+
+- **设置页布局紧凑化**: Web UI 设置页将「日志级别」下拉从独占整行移入两列网格，与「API 密钥」并排显示，减少页面纵向高度，避免单独半行留白。
+
 ## [2.3.15] - 2026-06-17
 
 ### Added
 
 - **Fallback 前同模型重试一次（Double-Check）**: 此前模型调用出现一次异常（网络抖动、偶发限流、空 SSE 响应等）就立即切换到备用模型。现在先对同一模型自动重试一次请求，重试成功则正常返回，避免不必要的模型切换；重试仍失败才走原有的 fallback 流程。
-- **用量统计显示上游真实模型**: 部分上游网关（如恒生数安）会在 ccr 不知情的情况下将请求偷偷路由/降级到另一个后端模型（如请求 glm-5 实际返回 MiniMax-M2.5）。用量统计的模型映射显示现在追加上游返回的真实模型，格式为 `originalModel → routedModel → upstreamModel`（如 `ccr-opus → glm-5 → minimax-m2.5`），上游未偷换时与路由模型相同则自动省略。后端在三种响应形态（Anthropic SSE `message_start`、Responses API `response.completed`、非流式 JSON）下捕获上游返回的 model 字段，存入 `usage_records.upstream_model` 列（走 `user_version` v2 迁移，旧库自动 ALTER TABLE 加列）。
+- **用量统计显示上游真实模型**: 部分上游网关会在 ccr 不知情的情况下将请求偷偷路由/降级到另一个后端模型（如请求 glm-5 实际返回 MiniMax-M2.5）。用量统计的模型映射显示现在追加上游返回的真实模型，格式为 `originalModel → routedModel → upstreamModel`（如 `ccr-opus → glm-5 → minimax-m2.5`），上游未偷换时与路由模型相同则自动省略。后端在三种响应形态（Anthropic SSE `message_start`、Responses API `response.completed`、非流式 JSON）下捕获上游返回的 model 字段，存入 `usage_records.upstream_model` 列（走 `user_version` v2 迁移，旧库自动 ALTER TABLE 加列）。
 
 ## [2.3.14] - 2026-06-16
 

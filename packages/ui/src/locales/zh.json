@@ -188,6 +188,7 @@
     },
     "language": "语言",
     "token_speed": "Token 速度与 TTFT 追踪",
+    "disable_attribution_header": "去除 Claude Code Attribution 动态头 (提升 prompt 缓存命中率)",
     "wakeup_enabled_global": "启用定时唤醒 (全局开关)",
     "wakeup_time_global": "全局默认唤醒时间",
     "fallback_title": "备用配置",

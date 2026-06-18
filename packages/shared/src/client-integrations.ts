@@ -429,6 +429,18 @@ function applyClaudeAutoCompactSettings(settings: Record<string, any>, config: R
   settings.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE = CLAUDE_AUTO_COMPACT_ENV.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE;
 }
 
+function applyClaudeAttributionHeader(settings: Record<string, any>, config: Record<string, any>): void {
+  if (!isObject(settings.env)) settings.env = {};
+  // Strip Claude Code's dynamic attribution header (client version + prompt
+  // fingerprint) while CCR is taking over, so the upstream prompt-cache prefix
+  // stays stable. Enabled by default; opt out with `disableAttributionHeader: false`.
+  if (config.disableAttributionHeader === false) {
+    delete settings.env.CLAUDE_CODE_ATTRIBUTION_HEADER;
+  } else {
+    settings.env.CLAUDE_CODE_ATTRIBUTION_HEADER = "0";
+  }
+}
+
 function restoreLegacyClaudeBackups(settings: Record<string, any>): void {
   if (settings.statusLine?.command === "ccr statusline" && fs.existsSync(LEGACY_STATUSLINE_BACKUP_PATH)) {
     try {
@@ -480,6 +492,9 @@ function removeClaudeManagedFields(settings: Record<string, any>): void {
         delete settings.env[key];
       }
     }
+
+    // Remove the attribution header override injected by CCR.
+    delete settings.env.CLAUDE_CODE_ATTRIBUTION_HEADER;
 
     if (Object.keys(settings.env).length === 0) {
       delete settings.env;
@@ -555,6 +570,7 @@ const claudeCodeAdapter: ClientAdapter = {
     settings.env.ANTHROPIC_AUTH_TOKEN = config.APIKEY || "test";
     applyClaudeModelFamilies(settings, config);
     applyClaudeAutoCompactSettings(settings, config);
+    applyClaudeAttributionHeader(settings, config);
 
     if (config?.StatusLine?.enabled) {
       settings.statusLine = {
@@ -602,6 +618,7 @@ export function applyCcrProjectTakeover(settings: Record<string, any>, config: R
   settings.env.ANTHROPIC_AUTH_TOKEN = config.APIKEY || "test";
   applyClaudeModelFamilies(settings, config);
   applyClaudeAutoCompactSettings(settings, config);
+  applyClaudeAttributionHeader(settings, config);
 
   if (config?.StatusLine?.enabled) {
     settings.statusLine = {
@@ -641,6 +658,9 @@ export function removeCcrProjectTakeover(settings: Record<string, any>): void {
         delete settings.env[key];
       }
     }
+
+    // Remove the attribution header override injected by CCR.
+    delete settings.env.CLAUDE_CODE_ATTRIBUTION_HEADER;
 
     if (Object.keys(settings.env).length === 0) {
       delete settings.env;

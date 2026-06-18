@@ -741,6 +741,19 @@ export function SettingsPage() {
                 <Label htmlFor="token-speed">{t("settings.token_speed")}</Label>
               </div>
 
+              <div className="flex items-center space-x-2 border-t pt-4">
+                <Switch
+                  id="disable-attribution-header"
+                  checked={config.disableAttributionHeader !== false}
+                  onCheckedChange={(checked) =>
+                    setConfig({ ...config, disableAttributionHeader: checked })
+                  }
+                />
+                <Label htmlFor="disable-attribution-header">
+                  {t("settings.disable_attribution_header")}
+                </Label>
+              </div>
+
               <div className="space-y-4 border-t pt-4">
                 <div className="flex items-center space-x-2">
                   <Switch
@@ -763,22 +776,6 @@ export function SettingsPage() {
                     </div>
                   </div>
                 )}
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="log-level">{t("toplevel.log_level")}</Label>
-                <Combobox
-                  options={[
-                    { label: "fatal", value: "fatal" },
-                    { label: "error", value: "error" },
-                    { label: "warn", value: "warn" },
-                    { label: "info", value: "info" },
-                    { label: "debug", value: "debug" },
-                    { label: "trace", value: "trace" },
-                  ]}
-                  value={config.LOG_LEVEL || "debug"}
-                  onChange={(value) => setConfig({ ...config, LOG_LEVEL: value })}
-                />
               </div>
 
               <div className="grid grid-cols-2 gap-4">
@@ -835,6 +832,21 @@ export function SettingsPage() {
                     value={config.PROXY_URL || ""}
                     onChange={(e) => setConfig({ ...config, PROXY_URL: e.target.value })}
                     placeholder="http://127.0.0.1:7890"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="log-level">{t("toplevel.log_level")}</Label>
+                  <Combobox
+                    options={[
+                      { label: "fatal", value: "fatal" },
+                      { label: "error", value: "error" },
+                      { label: "warn", value: "warn" },
+                      { label: "info", value: "info" },
+                      { label: "debug", value: "debug" },
+                      { label: "trace", value: "trace" },
+                    ]}
+                    value={config.LOG_LEVEL || "debug"}
+                    onChange={(value) => setConfig({ ...config, LOG_LEVEL: value })}
                   />
                 </div>
                 <div className="space-y-2">

@@ -297,11 +297,14 @@ async function handleTransformerEndpoint(
       }
     );
 
-    // Move system messages to the end of the messages array and dedupe exact
-    // repeats so the conversation prefix stays stable for upstream prompt caching.
-    // Claude Code may append identical reminder system messages every few turns;
-    // if those are sent as a growing list, OpenAI-compatible providers can miss
-    // prompt cache even though the user/assistant prefix did not change.
+    // Hoist system messages to the front of the messages array and dedupe exact
+    // repeats. OpenAI-compatible providers (DeepSeek V4, GLM, vLLM) require the
+    // [system, user, assistant] order; placing system after user/assistant can
+    // produce garbled output. Deduping also keeps the leading prefix stable for
+    // upstream prompt caching when Claude Code appends identical reminder system
+    // messages every few turns. Note: a genuinely new (non-duplicate) system
+    // reminder still shifts the front block and busts the cache — we mitigate that
+    // separately by stripping Claude Code's dynamic attribution header on takeover.
     if (requestBody?.messages && !bypass && !(req as any).isTargetAnthropic) {
       const msgs = requestBody.messages;
       const seenSystem = new Set<string>();

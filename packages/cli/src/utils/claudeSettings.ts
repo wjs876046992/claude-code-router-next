@@ -103,6 +103,15 @@ export function injectModelFamilies(config: any): void {
   settings.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE = CLAUDE_AUTO_COMPACT_ENV.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE;
   settings.autoCompactEnabled = true;
 
+  // Strip the dynamic attribution header (client version + prompt fingerprint) from
+  // the system prompt so the upstream prompt-cache prefix stays stable when routing
+  // through CCR. Enabled by default; opt out with `disableAttributionHeader: false`.
+  if (config.disableAttributionHeader === false) {
+    delete settings.env.CLAUDE_CODE_ATTRIBUTION_HEADER;
+  } else {
+    settings.env.CLAUDE_CODE_ATTRIBUTION_HEADER = "0";
+  }
+
   // Backup original model env vars
   const backup: Record<string, string> = {};
   const envKeys = [
@@ -178,6 +187,11 @@ export function injectModelFamilies(config: any): void {
  */
 export function removeModelFamilies(): void {
   const settings = readClaudeSettings();
+
+  // Drop the attribution-header override we injected on takeover
+  if (settings.env) {
+    delete settings.env.CLAUDE_CODE_ATTRIBUTION_HEADER;
+  }
 
   // Restore backup if exists
   try {
