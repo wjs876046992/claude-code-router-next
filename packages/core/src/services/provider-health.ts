@@ -59,7 +59,14 @@ export class ProviderHealthStore {
     this.config = { ...DEFAULT_CONFIG, ...config };
   }
 
-  private getKey(provider: string, model: string): string {
+  /**
+   * Build the composite key used to index provider/model state.
+   * Returns null when either part is empty, which signals the caller to
+   * short-circuit (skip the operation) instead of creating a bogus entry like
+   * ",model" or "provider," that would pollute the health pool.
+   */
+  private getKey(provider: string, model: string): string | null {
+    if (!provider || !model) return null;
     return `${provider},${model}`;
   }
 
@@ -69,9 +76,9 @@ export class ProviderHealthStore {
    */
   recordSuccess(provider: string, model: string): void {
     if (!this.config.enabled) return;
-    if (!provider || !model) return;
 
     const key = this.getKey(provider, model);
+    if (!key) return;
     let state = this.states.get(key);
 
     if (!state) {
@@ -123,9 +130,9 @@ export class ProviderHealthStore {
    */
   recordFailure(provider: string, model: string, error?: string): void {
     if (!this.config.enabled) return;
-    if (!provider || !model) return;
 
     const key = this.getKey(provider, model);
+    if (!key) return;
     let state = this.states.get(key);
 
     if (!state) {
@@ -162,8 +169,9 @@ export class ProviderHealthStore {
    * Get current health state for a provider/model
    */
   getState(provider: string, model: string): ProviderHealthState | undefined {
-    if (!provider || !model) return undefined;
-    return this.states.get(this.getKey(provider, model));
+    const key = this.getKey(provider, model);
+    if (!key) return undefined;
+    return this.states.get(key);
   }
 
   /**
@@ -172,7 +180,9 @@ export class ProviderHealthStore {
    */
   isAvailable(provider: string, model: string): boolean {
     if (!this.config.enabled) return true;
-    if (!provider || !model) return false;
+
+    const key = this.getKey(provider, model);
+    if (!key) return false;
 
     const state = this.getState(provider, model);
     if (!state) return true; // No state = closed (healthy)
@@ -200,7 +210,9 @@ export class ProviderHealthStore {
    */
   getPriority(provider: string, model: string): number {
     if (!this.config.enabled) return 0;
-    if (!provider || !model) return 2;
+
+    const key = this.getKey(provider, model);
+    if (!key) return 2;
 
     const state = this.getState(provider, model);
     if (!state) return 0;
@@ -254,9 +266,9 @@ export class ProviderHealthStore {
    */
   forceOpen(provider: string, model: string, error?: string): void {
     if (!this.config.enabled) return;
-    if (!provider || !model) return;
 
     const key = this.getKey(provider, model);
+    if (!key) return;
     let state = this.states.get(key);
 
     if (!state) {
@@ -291,9 +303,9 @@ export class ProviderHealthStore {
    */
   markRateLimited(provider: string, model: string, retryAfterSeconds?: number, error?: string): void {
     if (!this.config.enabled) return;
-    if (!provider || !model) return;
 
     const key = this.getKey(provider, model);
+    if (!key) return;
     let state = this.states.get(key);
 
     if (!state) {
@@ -348,6 +360,7 @@ export class ProviderHealthStore {
    */
   markProbeAttempt(provider: string, model: string): void {
     const key = this.getKey(provider, model);
+    if (!key) return;
     const state = this.states.get(key);
     if (state && state.status === 'open') {
       state.lastProbeTime = Date.now();
@@ -365,8 +378,8 @@ export class ProviderHealthStore {
    * Recover a provider/model from health fail pool
    */
   recover(provider: string, model: string): void {
-    if (!provider || !model) return;
     const key = this.getKey(provider, model);
+    if (!key) return;
     this.states.delete(key);
   }
 
@@ -381,7 +394,9 @@ export class ProviderHealthStore {
    * Restore a previously persisted health state.
    */
   restore(state: ProviderHealthState): void {
-    this.states.set(this.getKey(state.provider, state.model), { ...state });
+    const key = this.getKey(state.provider, state.model);
+    if (!key) return;
+    this.states.set(key, { ...state });
   }
 
   /**

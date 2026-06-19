@@ -20,7 +20,9 @@
     "dev": "nodemon",
     "start": "node dist/cjs/server.cjs",
     "start:esm": "node dist/esm/server.mjs",
-    "lint": "eslint src --ext .ts,.tsx"
+    "lint": "eslint src --ext .ts,.tsx",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "keywords": [
     "llm",
@@ -50,10 +52,11 @@
     "uuid": "^11.1.0"
   },
   "devDependencies": {
-    "@wengine-ai/claude-code-router-shared": "workspace:*",
     "@types/node": "^24.0.15",
+    "@wengine-ai/claude-code-router-shared": "workspace:*",
     "esbuild": "^0.25.1",
     "tsx": "^4.20.3",
-    "typescript": "^5.8.2"
+    "typescript": "^5.8.2",
+    "vitest": "^4.1.9"
   }
 }

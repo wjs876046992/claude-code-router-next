@@ -23,32 +23,12 @@ import { getHealthStore } from "@/services/provider-health";
 import { captureRateLimitHeaders } from "@/services/rate-limit";
 import { getFallbackPromotionStore } from "@/utils/fallback-promotion";
 import { OpenAIResponsesTransformer } from "../transformer/openai.responses.transformer";
-import { router } from "@/utils/router";
+import { router, findProviderModel } from "@/utils/router";
 
 // Matches the CCR model-family aliases that CCR injects into managed clients
 // (e.g. "ccr-opus", "ccr-sonnet[1m]"). Codex sends one of these as a bare model
 // name to /v1/responses.
 const CCR_FAMILY_ALIAS = /^ccr-(opus|sonnet|haiku)(\[1m\])?$/i;
-
-function findConfiguredProviderModel(
-  providerService: ProviderService,
-  providerName: string,
-  modelName: string
-): { provider: LLMProvider; model: string } | null {
-  const provider = providerService.getProvider(providerName);
-  if (!provider || provider.enabled === false) {
-    return null;
-  }
-
-  const model = provider.models?.find(
-    (item: any) => String(item).toLowerCase() === modelName.toLowerCase()
-  );
-  if (!model) {
-    return null;
-  }
-
-  return { provider, model };
-}
 
 /**
  * Normalize a Responses API (Codex) request body into a unified chat request so
@@ -643,36 +623,40 @@ async function handleFallback(
       }
       attemptedFallbacks.add(fallbackRoute.key);
 
-      const fallbackProvider = fallbackRoute.provider;
-      const model = fallbackRoute.model;
+      // Resolve the fallback model against the live provider registry early so
+      // both the success and error paths use the same canonical values.
+      const providers = fastify.configService.get<any[]>("providers") || [];
+      const configuredFallback = findProviderModel(
+        providers,
+        fallbackRoute.provider,
+        fallbackRoute.model
+      );
+      if (!configuredFallback) {
+        req.log.warn(`Fallback model ${fallbackModel} is not configured or provider is disabled, skipping`);
+        continue;
+      }
+
+      // Shorthand aliases used throughout the try/catch
+      const fbProviderName = configuredFallback.provider.name;
+      const fbModel = configuredFallback.model;
 
       try {
-        const configuredFallback = findConfiguredProviderModel(
-          fastify.providerService,
-          fallbackProvider,
-          model
-        );
-        if (!configuredFallback) {
-          req.log.warn(`Fallback model ${fallbackModel} is not configured or provider is disabled, skipping`);
-          continue;
-        }
-
         // Skip if model is in fail pool (open state)
-        if (!healthStore.isAvailable(configuredFallback.provider.name, configuredFallback.model)) {
+        if (!healthStore.isAvailable(fbProviderName, fbModel)) {
           req.log.warn(`Fallback model ${fallbackModel} unavailable (fail pool), skipping`);
           continue;
         }
 
-        req.log.info(`Trying fallback model: ${configuredFallback.provider.name},${configuredFallback.model}`);
+        req.log.info(`Trying fallback model: ${fbProviderName},${fbModel}`);
 
         // Update request with fallback model
         const newBody = { ...(req.body as any) };
-        newBody.model = configuredFallback.model;
+        newBody.model = fbModel;
 
         // Create new request object with updated provider and body
         const newReq = {
           ...req,
-          provider: configuredFallback.provider.name,
+          provider: fbProviderName,
           body: newBody,
         };
 
@@ -701,7 +685,7 @@ async function handleFallback(
         // Capture rate limit headers from upstream response
         try {
           if (provider?.baseUrl && response?.headers) {
-            captureRateLimitHeaders(configuredFallback.provider.name, provider.baseUrl, response.headers);
+            captureRateLimitHeaders(fbProviderName, provider.baseUrl, response.headers);
           }
         } catch {}
 
@@ -719,10 +703,10 @@ async function handleFallback(
           }
         );
 
-        req.log.info(`Fallback model ${configuredFallback.provider.name},${configuredFallback.model} succeeded`);
+        req.log.info(`Fallback model ${fbProviderName},${fbModel} succeeded`);
 
         // Record success for the fallback model
-        healthStore.recordSuccess(configuredFallback.provider.name, configuredFallback.model);
+        healthStore.recordSuccess(fbProviderName, fbModel);
 
         // Promote the fallback model globally for this primary + scenario
         // This ensures all clients skip the failing primary until TTL expires
@@ -732,10 +716,10 @@ async function handleFallback(
             originalProvider,
             originalModel,
             scenarioType,
-            configuredFallback.provider.name,
-            configuredFallback.model
+            fbProviderName,
+            fbModel
           );
-          req.log.info(`Promoted fallback model ${configuredFallback.provider.name},${configuredFallback.model} for ${originalProvider},${originalModel}:${scenarioType}`);
+          req.log.info(`Promoted fallback model ${fbProviderName},${fbModel} for ${originalProvider},${originalModel}:${scenarioType}`);
 
           // Immediately mark the original model as unavailable so routing skips it
           // even when promotion TTL expires or is cleared.
@@ -750,19 +734,19 @@ async function handleFallback(
         }
 
         // Write back to original req so onResponse hook records correct provider/model
-        req.provider = configuredFallback.provider.name;
+        req.provider = fbProviderName;
         req.body = newBody;
 
         // Format and return response
         return formatResponse(finalResponse, reply, newBody, fastify);
       } catch (fallbackError: any) {
-        healthStore.recordFailure(fallbackProvider, model, fallbackError.message);
-        req.log.warn(`Fallback model ${fallbackRoute.key} failed: ${fallbackError.message}`);
+        healthStore.recordFailure(fbProviderName, fbModel, fallbackError.message);
+        req.log.warn(`Fallback model ${fbProviderName},${fbModel} failed: ${fallbackError.message}`);
 
         // Record failed fallback attempt in usage stats
         fastify.recordUsage?.({
-          provider: fallbackProvider,
-          model,
+          provider: fbProviderName,
+          model: fbModel,
           originalModel: (req.body as any).model,
           scenarioType,
           modelFamily: (req as any).modelFamily,

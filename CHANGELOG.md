@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Fixed
+
+- **忽略已删除模型的残留路由，防止健康池污染**: 运行中从 provider 配置删除某个模型后，路由和 fallback 路径中残留的 `provider,model` 字符串仍会被当作有效候选，反复请求失败后进入健康池（fail pool），导致无关的 fallback 模型也被跳过。现在 `resolveConfiguredModel` 对无法在当前 provider 注册表中匹配到的 `provider,model` 直接返回 `null`，主路由保留客户端原始 model 而非传递失效字符串；fallback 循环在尝试请求前即校验模型是否存在于 provider 配置，跳过不存在的候选；`ProviderHealthStore` 所有公开方法统一在 `getKey` 层拦截空 provider/model，防止 `",model"` 等畸形 key 污染池数据。同时修复 fallback catch 块与成功路径使用不同变量（raw vs canonical）导致 `recordSuccess`/`recordFailure` 可能记录不同 key 的问题；抽取 `findProviderModel` 共用函数消除 `routes.ts` 与 `router.ts` 之间的重复 provider/model 查找逻辑。
+
 ## [2.3.16] - 2026-06-18
 
 ### Fixed
