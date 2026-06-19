@@ -30,6 +30,26 @@ import { router } from "@/utils/router";
 // name to /v1/responses.
 const CCR_FAMILY_ALIAS = /^ccr-(opus|sonnet|haiku)(\[1m\])?$/i;
 
+function findConfiguredProviderModel(
+  providerService: ProviderService,
+  providerName: string,
+  modelName: string
+): { provider: LLMProvider; model: string } | null {
+  const provider = providerService.getProvider(providerName);
+  if (!provider || provider.enabled === false) {
+    return null;
+  }
+
+  const model = provider.models?.find(
+    (item: any) => String(item).toLowerCase() === modelName.toLowerCase()
+  );
+  if (!model) {
+    return null;
+  }
+
+  return { provider, model };
+}
+
 /**
  * Normalize a Responses API (Codex) request body into a unified chat request so
  * downstream transformers (and the family router) can process it.
@@ -627,35 +647,36 @@ async function handleFallback(
       const model = fallbackRoute.model;
 
       try {
+        const configuredFallback = findConfiguredProviderModel(
+          fastify.providerService,
+          fallbackProvider,
+          model
+        );
+        if (!configuredFallback) {
+          req.log.warn(`Fallback model ${fallbackModel} is not configured or provider is disabled, skipping`);
+          continue;
+        }
+
         // Skip if model is in fail pool (open state)
-        if (!healthStore.isAvailable(fallbackProvider, model)) {
+        if (!healthStore.isAvailable(configuredFallback.provider.name, configuredFallback.model)) {
           req.log.warn(`Fallback model ${fallbackModel} unavailable (fail pool), skipping`);
           continue;
         }
 
-        req.log.info(`Trying fallback model: ${fallbackModel}`);
+        req.log.info(`Trying fallback model: ${configuredFallback.provider.name},${configuredFallback.model}`);
 
         // Update request with fallback model
         const newBody = { ...(req.body as any) };
-        newBody.model = model;
+        newBody.model = configuredFallback.model;
 
         // Create new request object with updated provider and body
         const newReq = {
           ...req,
-          provider: fallbackProvider,
+          provider: configuredFallback.provider.name,
           body: newBody,
         };
 
-        const provider = fastify.providerService.getProvider(fallbackProvider);
-        if (!provider) {
-          req.log.warn(`Fallback provider '${fallbackProvider}' not found, skipping`);
-          continue;
-        }
-
-        if (provider.enabled === false) {
-          req.log.warn(`Fallback provider '${fallbackProvider}' is disabled, skipping`);
-          continue;
-        }
+        const provider = configuredFallback.provider;
 
         // Process request transformer chain
         const { requestBody, config, bypass } = await processRequestTransformers(
@@ -680,7 +701,7 @@ async function handleFallback(
         // Capture rate limit headers from upstream response
         try {
           if (provider?.baseUrl && response?.headers) {
-            captureRateLimitHeaders(fallbackProvider, provider.baseUrl, response.headers);
+            captureRateLimitHeaders(configuredFallback.provider.name, provider.baseUrl, response.headers);
           }
         } catch {}
 
@@ -698,10 +719,10 @@ async function handleFallback(
           }
         );
 
-        req.log.info(`Fallback model ${fallbackModel} succeeded`);
+        req.log.info(`Fallback model ${configuredFallback.provider.name},${configuredFallback.model} succeeded`);
 
         // Record success for the fallback model
-        healthStore.recordSuccess(fallbackProvider, model);
+        healthStore.recordSuccess(configuredFallback.provider.name, configuredFallback.model);
 
         // Promote the fallback model globally for this primary + scenario
         // This ensures all clients skip the failing primary until TTL expires
@@ -711,10 +732,10 @@ async function handleFallback(
             originalProvider,
             originalModel,
             scenarioType,
-            fallbackProvider,
-            model
+            configuredFallback.provider.name,
+            configuredFallback.model
           );
-          req.log.info(`Promoted fallback model ${fallbackProvider},${model} for ${originalProvider},${originalModel}:${scenarioType}`);
+          req.log.info(`Promoted fallback model ${configuredFallback.provider.name},${configuredFallback.model} for ${originalProvider},${originalModel}:${scenarioType}`);
 
           // Immediately mark the original model as unavailable so routing skips it
           // even when promotion TTL expires or is cleared.
@@ -729,7 +750,7 @@ async function handleFallback(
         }
 
         // Write back to original req so onResponse hook records correct provider/model
-        req.provider = fallbackProvider;
+        req.provider = configuredFallback.provider.name;
         req.body = newBody;
 
         // Format and return response

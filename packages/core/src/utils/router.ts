@@ -294,7 +294,11 @@ function resolveConfiguredModel(
     return `${finalProvider.name},${finalModel}`;
   }
 
-  return modelName;
+  // A configured provider,model route must resolve against the current provider
+  // registry. During config hot reloads the referenced model may have been
+  // removed; treating that stale string as valid lets deleted models enter the
+  // request/fallback path and poison the health pool.
+  return null;
 }
 
 function resolveScenarioFallbackModel(
@@ -825,7 +829,12 @@ export const router = async (req: any, _res: any, context: RouterContext) => {
       }
     }
 
-    req.body.model = model;
+    if (typeof model === "string" && model.trim()) {
+      req.body.model = model;
+    } else {
+      req.log.warn(`Router could not resolve a valid model for ${req.originalModel || req.body.model}; keeping original request model`);
+      req.scenarioType = req.scenarioType || 'default';
+    }
   } catch (error: any) {
     req.log.error(`Error in router middleware: ${error.message}`);
     req.body.model = routerConfig?.default;

@@ -69,6 +69,7 @@ export class ProviderHealthStore {
    */
   recordSuccess(provider: string, model: string): void {
     if (!this.config.enabled) return;
+    if (!provider || !model) return;
 
     const key = this.getKey(provider, model);
     let state = this.states.get(key);
@@ -122,6 +123,7 @@ export class ProviderHealthStore {
    */
   recordFailure(provider: string, model: string, error?: string): void {
     if (!this.config.enabled) return;
+    if (!provider || !model) return;
 
     const key = this.getKey(provider, model);
     let state = this.states.get(key);
@@ -160,6 +162,7 @@ export class ProviderHealthStore {
    * Get current health state for a provider/model
    */
   getState(provider: string, model: string): ProviderHealthState | undefined {
+    if (!provider || !model) return undefined;
     return this.states.get(this.getKey(provider, model));
   }
 
@@ -169,6 +172,7 @@ export class ProviderHealthStore {
    */
   isAvailable(provider: string, model: string): boolean {
     if (!this.config.enabled) return true;
+    if (!provider || !model) return false;
 
     const state = this.getState(provider, model);
     if (!state) return true; // No state = closed (healthy)
@@ -196,6 +200,7 @@ export class ProviderHealthStore {
    */
   getPriority(provider: string, model: string): number {
     if (!this.config.enabled) return 0;
+    if (!provider || !model) return 2;
 
     const state = this.getState(provider, model);
     if (!state) return 0;
@@ -249,6 +254,7 @@ export class ProviderHealthStore {
    */
   forceOpen(provider: string, model: string, error?: string): void {
     if (!this.config.enabled) return;
+    if (!provider || !model) return;
 
     const key = this.getKey(provider, model);
     let state = this.states.get(key);
@@ -285,6 +291,7 @@ export class ProviderHealthStore {
    */
   markRateLimited(provider: string, model: string, retryAfterSeconds?: number, error?: string): void {
     if (!this.config.enabled) return;
+    if (!provider || !model) return;
 
     const key = this.getKey(provider, model);
     let state = this.states.get(key);
@@ -358,6 +365,7 @@ export class ProviderHealthStore {
    * Recover a provider/model from health fail pool
    */
   recover(provider: string, model: string): void {
+    if (!provider || !model) return;
     const key = this.getKey(provider, model);
     this.states.delete(key);
   }
