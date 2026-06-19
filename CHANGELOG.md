@@ -4,9 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [2.3.17] - 2026-06-19
+
 ### Fixed
 
 - **忽略已删除模型的残留路由，防止健康池污染**: 运行中从 provider 配置删除某个模型后，路由和 fallback 路径中残留的 `provider,model` 字符串仍会被当作有效候选，反复请求失败后进入健康池（fail pool），导致无关的 fallback 模型也被跳过。现在 `resolveConfiguredModel` 对无法在当前 provider 注册表中匹配到的 `provider,model` 直接返回 `null`，主路由保留客户端原始 model 而非传递失效字符串；fallback 循环在尝试请求前即校验模型是否存在于 provider 配置，跳过不存在的候选；`ProviderHealthStore` 所有公开方法统一在 `getKey` 层拦截空 provider/model，防止 `",model"` 等畸形 key 污染池数据。同时修复 fallback catch 块与成功路径使用不同变量（raw vs canonical）导致 `recordSuccess`/`recordFailure` 可能记录不同 key 的问题；抽取 `findProviderModel` 共用函数消除 `routes.ts` 与 `router.ts` 之间的重复 provider/model 查找逻辑。
+- **修复 fallback 触发时所有备用模型报 Invalid URL**: 主模型限流（如智谱套餐）触发 fallback 后，此前所有备用模型都报 `Invalid URL`。根因是 fallback 路径用 `configService.get("providers")` 取到的是原始 `ConfigProvider[]`（字段 `api_base_url`，无 `baseUrl`），而 `sendRequestToProvider` 用 `provider.baseUrl` 构造上游 URL，`new URL(undefined)` 对每个备用模型都抛 `Invalid URL`。改为用 `providerService.getProviders()`（已注册的 `LLMProvider[]`，带 `baseUrl`）。新增回归测试断言匹配到的 provider 保留 `baseUrl`（LLMProvider 契约），且原始 `ConfigProvider` 数组不会被凭空赋予 `baseUrl`。
+- **修复 fireworks 托管上游的用量统计全 0（input 有值、output 与缓存命中为 0）**: fireworks 流式把真实 usage 放在 `finish_reason` 之后的一个 `choices: []` 空 chunk 里，且 `finish_reason` chunk 自身 `usage=null`。流式 transformer 两处缺陷导致丢失：① `finish_reason` 块用 finish chunk 自己的（null）usage 整体覆盖了已按字段 merge 的真实 usage，把 `output_tokens`/`cache_read_input_tokens` 清成 0；② `finish_reason` 后 `break` 跳出读取循环，之后的 `choices:[]` 真实 usage chunk 永远读不到。修复：循环守卫去掉 `hasFinished` 以便 finish 后继续读取后续 chunk（content 生成路径已有 `!hasFinished` 守卫，不会重复输出内容）；`finish_reason` 块只设 `stop_reason` 不碰 usage，usage 统一交给 `if (chunk.usage)` 的按字段 merge；`break` 改为 `hasFinished = true`。同时修复下游 `index.ts` 三层用量捕获（transformer 覆盖、SSE 帧逐帧 spread merge、`??` 对 0 不 fallback）——抽出 `normalizeUsagePayload`/`mergeUsageCapture` 到 `utils/usage-merge.ts` 并改为 `||` fallback，零值 usage 帧不再清空 input。新增 server vitest 配置 + 10 个用量 merge 测试 + 流式 transformer harness 测试（覆盖 fireworks chunk 顺序、标准 provider 对照、finish 后迟到内容不重复）。
 
 ## [2.3.16] - 2026-06-18
 
