@@ -28,6 +28,10 @@ import { EventEmitter } from "node:events";
 import { performance } from "node:perf_hooks";
 import { pluginManager, tokenSpeedPlugin } from "@wengine-ai/llms";
 import { append as appendUsage, readTokenSpeedStats } from "./services/usage-store";
+import {
+  normalizeUsagePayload,
+  mergeUsageCapture,
+} from "./utils/usage-merge";
 
 const event = new EventEmitter()
 
@@ -86,38 +90,6 @@ function detectClientType(req: any): string {
   // Direct /v1/messages call without ccr- prefix → generic API
   if (pathname.endsWith("/v1/messages")) return "api";
   return "unknown";
-}
-
-function getUsageCacheReadInputTokens(usage: any): number {
-  return (
-    usage?.cache_read_input_tokens ??
-    usage?.input_tokens_details?.cached_tokens ??
-    usage?.prompt_tokens_details?.cached_tokens ??
-    0
-  );
-}
-
-function getUsageCacheCreationInputTokens(usage: any): number {
-  return (
-    usage?.cache_creation_input_tokens ??
-    usage?.input_tokens_details?.cache_creation_tokens ??
-    usage?.input_tokens_details?.cache_write_tokens ??
-    usage?.prompt_tokens_details?.cache_creation_tokens ??
-    usage?.prompt_tokens_details?.cache_write_tokens ??
-    0
-  );
-}
-
-function normalizeUsagePayload(usage: any): any {
-  if (!usage || typeof usage !== "object") return undefined;
-
-  return {
-    ...usage,
-    input_tokens: usage.input_tokens ?? usage.prompt_tokens ?? 0,
-    output_tokens: usage.output_tokens ?? usage.completion_tokens ?? 0,
-    cache_read_input_tokens: getUsageCacheReadInputTokens(usage),
-    cache_creation_input_tokens: getUsageCacheCreationInputTokens(usage),
-  };
 }
 
 function isRateLimitMessage(statusCode: number, message?: string): boolean {
@@ -799,9 +771,10 @@ async function getServer(options: RunOptions = {}) {
                 const existingUsage = sessionUsageCache.get(usageSessionId) || {};
                 const normalizedUsage = normalizeUsagePayload(data.usage);
                 // Reset cache on message_start to avoid stale fields from previous requests
-                // (e.g. cache_creation_input_tokens carried over from a different model)
-                const base = event === 'message_start' ? {} : existingUsage;
-                const mergedUsage = { ...base, ...normalizedUsage };
+                // (e.g. cache_creation_input_tokens carried over from a different model).
+                // mergeUsageCapture refuses to let an all-zero frame overwrite a
+                // real value captured earlier (see its doc comment).
+                const mergedUsage = mergeUsageCapture(existingUsage, normalizedUsage, event === 'message_start');
                 req.log?.info?.({
                   debug_log: true,
                   reqId: req.id,
@@ -831,15 +804,8 @@ async function getServer(options: RunOptions = {}) {
                 // Reset base on a fresh response.completed to prevent stale fields
                 // from a previous request leaking into the new one (same as the
                 // message_start sentinel used in the Anthropic path above).
-                const existingUsage = event === 'response.completed'
-                  ? {} : (sessionUsageCache.get(usageSessionId) || {});
-                const mergedUsage = {
-                  ...existingUsage,
-                  input_tokens: respUsage?.input_tokens || 0,
-                  output_tokens: respUsage?.output_tokens || 0,
-                  cache_read_input_tokens: respUsage?.cache_read_input_tokens ?? existingUsage.cache_read_input_tokens ?? 0,
-                  cache_creation_input_tokens: respUsage?.cache_creation_input_tokens ?? existingUsage.cache_creation_input_tokens ?? 0,
-                };
+                const existingUsage = sessionUsageCache.get(usageSessionId) || {};
+                const mergedUsage = mergeUsageCapture(existingUsage, respUsage, event === 'response.completed');
                 req.log?.info?.({
                   debug_log: true,
                   reqId: req.id,
@@ -957,7 +923,12 @@ async function getServer(options: RunOptions = {}) {
       // deduction, so we infer the cache hit from the difference between the
       // pre-cache tokenCount (computed by the router) and the reported input_tokens.
       let cacheReadInputTokens = usage?.cache_read_input_tokens ?? 0;
-      const rawInputTokens = usage?.input_tokens ?? req.tokenCount ?? 0;
+      // input_tokens of 0 is not a valid "no data" sentinel (providers report real
+      // zero only in degenerate cases). Use the router's tokenCount estimate when
+      // usage.input_tokens is missing OR zero, so a zeroed usage frame can't wipe
+      // out the input token count for the whole request.
+      const reportedInputTokens = usage?.input_tokens || 0;
+      const rawInputTokens = reportedInputTokens || req.tokenCount || 0;
       if (!cacheReadInputTokens && req.tokenCount && usage?.input_tokens && usage.input_tokens < req.tokenCount) {
         cacheReadInputTokens = req.tokenCount - usage.input_tokens;
         if (cacheReadInputTokens) {

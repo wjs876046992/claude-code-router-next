@@ -216,6 +216,33 @@ function parseConfiguredRoute(modelName: string): { providerName: string; routeM
   return { providerName, routeModel };
 }
 
+/**
+ * Look up a provider and model by name in the current provider list.
+ * Returns canonical (case-matched) values or null when the provider is
+ * missing, disabled, or the model is not listed under it.
+ */
+export function findProviderModel(
+  providers: any[],
+  providerName: string,
+  modelName: string
+): { provider: any; model: string } | null {
+  const provider = providers.find(
+    (p: any) => p.name.toLowerCase() === providerName.toLowerCase()
+  );
+  if (!provider || provider.enabled === false) {
+    return null;
+  }
+
+  const model = provider.models?.find(
+    (m: any) => String(m).toLowerCase() === modelName.toLowerCase()
+  );
+  if (!model) {
+    return null;
+  }
+
+  return { provider, model: String(model) };
+}
+
 function resolveConfiguredModel(
   modelName: string,
   providers: any[],
@@ -230,12 +257,27 @@ function resolveConfiguredModel(
 
   const { providerName, routeModel } = route;
 
-  const finalProvider = providers.find(
-    (p: any) => p.name.toLowerCase() === providerName.toLowerCase()
-  );
+  const found = findProviderModel(providers, providerName, routeModel);
 
-  // Switch has the highest priority. If disabled, return null immediately.
-  if (finalProvider && finalProvider.enabled === false) {
+  // Provider disabled or missing — skip immediately
+  if (!found) {
+    // Still need to check fallback promotion even when the primary is stale,
+    // because a previously promoted fallback may still be valid.
+    if (enableFallback === true && scenarioType && !skipHealthCheck) {
+      const fallbackPromotion = getFallbackPromotionStore();
+      const promoted = fallbackPromotion.getPromotion(providerName, routeModel, scenarioType, providers);
+      if (promoted) {
+        const promotedRoute = parseConfiguredRoute(promoted);
+        if (promotedRoute) {
+          const promotedFound = findProviderModel(providers, promotedRoute.providerName, promotedRoute.routeModel);
+          if (promotedFound) {
+            return `${promotedFound.provider.name},${promotedFound.model}`;
+          }
+        }
+        // Promoted model no longer valid, clear it and proceed normally
+        fallbackPromotion.clear(providerName, routeModel, scenarioType);
+      }
+    }
     return null;
   }
 
@@ -245,17 +287,11 @@ function resolveConfiguredModel(
     const fallbackPromotion = getFallbackPromotionStore();
     const promoted = fallbackPromotion.getPromotion(providerName, routeModel, scenarioType, providers);
     if (promoted) {
-      // Parse the promoted model to verify it exists in providers
       const promotedRoute = parseConfiguredRoute(promoted);
       if (promotedRoute) {
-        const promotedProvider = providers.find(
-          (p: any) => p.name.toLowerCase() === promotedRoute.providerName.toLowerCase()
-        );
-        const promotedModel = promotedProvider?.models?.find(
-          (m: any) => String(m).toLowerCase() === promotedRoute.routeModel.toLowerCase()
-        );
-        if (promotedProvider && promotedModel) {
-          return `${promotedProvider.name},${promotedModel}`;
+        const promotedFound = findProviderModel(providers, promotedRoute.providerName, promotedRoute.routeModel);
+        if (promotedFound) {
+          return `${promotedFound.provider.name},${promotedFound.model}`;
         }
       }
       // Promoted model no longer valid, clear it and proceed normally
@@ -266,13 +302,13 @@ function resolveConfiguredModel(
   // Check health status - skip if model is in fail pool
   if (!skipHealthCheck) {
     const healthStore = getHealthStore();
-    if (!healthStore.isAvailable(providerName, routeModel)) {
+    if (!healthStore.isAvailable(found.provider.name, found.model)) {
       return null; // Model is unavailable, return null to signal skip
     }
   }
 
   // Check quota status - skip if provider quota is exhausted
-  const quotaResult = getQuotaResult(providerName);
+  const quotaResult = getQuotaResult(found.provider.name);
   if (quotaResult) {
     const is5hExhausted = quotaResult.limitDaily !== undefined &&
       quotaResult.usedDailyBalance !== undefined &&
@@ -286,15 +322,7 @@ function resolveConfiguredModel(
     }
   }
 
-  const finalModel = finalProvider?.models?.find(
-    (m: any) => String(m).toLowerCase() === routeModel.toLowerCase()
-  );
-
-  if (finalProvider && finalModel) {
-    return `${finalProvider.name},${finalModel}`;
-  }
-
-  return modelName;
+  return `${found.provider.name},${found.model}`;
 }
 
 function resolveScenarioFallbackModel(
@@ -825,7 +853,12 @@ export const router = async (req: any, _res: any, context: RouterContext) => {
       }
     }
 
-    req.body.model = model;
+    if (typeof model === "string" && model.trim()) {
+      req.body.model = model;
+    } else {
+      req.log.warn(`Router could not resolve a valid model for ${req.originalModel || req.body.model}; keeping original request model`);
+      req.scenarioType = req.scenarioType || 'default';
+    }
   } catch (error: any) {
     req.log.error(`Error in router middleware: ${error.message}`);
     req.body.model = routerConfig?.default;
