@@ -564,6 +564,7 @@ export class AnthropicTransformer implements Transformer {
                   const promptTokens = chunk.usage?.prompt_tokens || 0;
                   // Keep Anthropic protocol semantics for Claude Code: input_tokens is net of cache reads.
                   const inputTokens = promptTokens - cachedTokens;
+                  const completionTokens = chunk.usage?.completion_tokens || 0;
                   this.logger?.info({
                     debug_log: true,
                     reqId: context.req.id,
@@ -571,12 +572,25 @@ export class AnthropicTransformer implements Transformer {
                     providerUsage: chunk.usage,
                     mappedUsage: {
                       input_tokens: inputTokens,
-                      output_tokens: chunk.usage?.completion_tokens || 0,
+                      output_tokens: completionTokens,
                       cache_read_input_tokens: cachedTokens,
                     },
                     choicesLength: Array.isArray(chunk.choices) ? chunk.choices.length : undefined,
                     finishReason: choice?.finish_reason,
                   });
+                  // Some OpenAI-compatible upstreams (e.g. fireworks-hosted GLM-5.2)
+                  // report real usage on the first chunk but emit an all-zero usage
+                  // object on the final/stop chunk. Overwriting the already-captured
+                  // real usage with those zeros produced message_delta.usage of all
+                  // zeros, which zeroed out the usage stats for the whole request.
+                  // Merge field-by-field, only replacing a field when the incoming
+                  // value is non-zero, so the real first-chunk usage survives a
+                  // trailing all-zero usage frame.
+                  const incomingUsage = {
+                    input_tokens: inputTokens,
+                    output_tokens: completionTokens,
+                    cache_read_input_tokens: cachedTokens,
+                  };
                   if (!stopReasonMessageDelta) {
                     stopReasonMessageDelta = {
                       type: "message_delta",
@@ -584,17 +598,15 @@ export class AnthropicTransformer implements Transformer {
                         stop_reason: "end_turn",
                         stop_sequence: null,
                       },
-                      usage: {
-                        input_tokens: inputTokens,
-                        output_tokens: chunk.usage?.completion_tokens || 0,
-                        cache_read_input_tokens: cachedTokens,
-                      },
+                      usage: { ...incomingUsage },
                     };
                   } else {
+                    const prev = stopReasonMessageDelta.usage || {};
                     stopReasonMessageDelta.usage = {
-                      input_tokens: inputTokens,
-                      output_tokens: chunk.usage?.completion_tokens || 0,
-                      cache_read_input_tokens: cachedTokens,
+                      input_tokens: incomingUsage.input_tokens || prev.input_tokens || 0,
+                      output_tokens: incomingUsage.output_tokens || prev.output_tokens || 0,
+                      cache_read_input_tokens:
+                        incomingUsage.cache_read_input_tokens || prev.cache_read_input_tokens || 0,
                     };
                   }
                 }

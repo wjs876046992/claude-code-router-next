@@ -625,7 +625,14 @@ async function handleFallback(
 
       // Resolve the fallback model against the live provider registry early so
       // both the success and error paths use the same canonical values.
-      const providers = fastify.configService.get<any[]>("providers") || [];
+      // IMPORTANT: use providerService.getProviders() (registered LLMProvider[]
+      // with the `baseUrl` field) rather than configService.get("providers")
+      // (raw ConfigProvider[] with `api_base_url`). sendRequestToProvider below
+      // reads provider.baseUrl to build the upstream URL — a ConfigProvider has
+      // no baseUrl, so new URL(undefined) throws "Invalid URL" for every
+      // fallback model. router.ts can use the raw array because it only reads
+      // name/models/enabled, never baseUrl.
+      const providers = fastify.providerService.getProviders();
       const configuredFallback = findProviderModel(
         providers,
         fallbackRoute.provider,

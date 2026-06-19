@@ -107,4 +107,33 @@ describe("findProviderModel", () => {
     expect(result!.model).toBe("claude-sonnet-4-20250514");
     expect(result!.provider.name).toBe("Anthropic");
   });
+
+  // Regression guard for the fallback "Invalid URL" bug. handleFallback() in
+  // routes.ts feeds the matched provider straight into sendRequestToProvider,
+  // which calls `new URL(provider.baseUrl)`. The input array MUST therefore be
+  // registered LLMProvider objects (with `baseUrl`), NOT raw ConfigProvider
+  // objects from configService.get("providers") (which carry `api_base_url`
+  // instead and have no baseUrl, making new URL(undefined) throw "Invalid URL"
+  // for every fallback model). These two tests pin that contract so a future
+  // change of the data source is caught here rather than in production.
+  it("preserves baseUrl on the matched provider (LLMProvider contract for fallback URL construction)", () => {
+    const llmProviders = [
+      { name: "Zhipu", enabled: true, models: ["glm-5.2"], baseUrl: "https://open.bigmodel.cn/api/anthropic/v1/messages" },
+    ];
+    const result = findProviderModel(llmProviders, "zhipu", "GLM-5.2");
+    expect(result).not.toBeNull();
+    expect(result!.provider.baseUrl).toBe("https://open.bigmodel.cn/api/anthropic/v1/messages");
+  });
+
+  it("does not synthesize a baseUrl when the input array lacks it (raw ConfigProvider shape)", () => {
+    // ConfigProvider uses `api_base_url`, not `baseUrl` — this is exactly the
+    // shape configService.get("providers") returns. If fallback ever feeds
+    // this shape to sendRequestToProvider, provider.baseUrl is undefined.
+    const configProviders = [
+      { name: "Zhipu", enabled: true, models: ["glm-5.2"], api_base_url: "https://open.bigmodel.cn/api/anthropic/v1/messages" },
+    ];
+    const result = findProviderModel(configProviders, "zhipu", "glm-5.2");
+    expect(result).not.toBeNull();
+    expect((result!.provider as any).baseUrl).toBeUndefined();
+  });
 });
