@@ -480,7 +480,14 @@ export class AnthropicTransformer implements Transformer {
             buffer = lines.pop() || "";
 
             for (const line of lines) {
-              if (isClosed || hasFinished) break;
+              // NOTE: do NOT break on hasFinished here. Some OpenAI-compatible
+              // upstreams (e.g. fireworks-hosted GLM-5.2) emit the real usage in
+              // a `choices: []` chunk AFTER the finish_reason chunk. Breaking on
+              // hasFinished would discard that trailing usage chunk. Content
+              // generation paths below are individually guarded by `!hasFinished`,
+              // so letting the loop continue only allows the `if (chunk.usage)`
+              // merge to pick up the trailing usage — it cannot re-emit content.
+              if (isClosed) break;
 
               if (!line.startsWith("data:")) continue;
               const data = line.slice(5).trim();
@@ -984,25 +991,42 @@ export class AnthropicTransformer implements Transformer {
                     const anthropicStopReason =
                       stopReasonMapping[choice.finish_reason] || "end_turn";
 
-                    const cachedTokens2 = chunk.usage?.prompt_tokens_details?.cached_tokens || 0;
-                    const promptTokens2 = chunk.usage?.prompt_tokens || 0;
-                    // Keep Anthropic protocol semantics for Claude Code: input_tokens is net of cache reads.
-                    const inputTokens2 = promptTokens2 - cachedTokens2;
-                    stopReasonMessageDelta = {
-                      type: "message_delta",
-                      delta: {
+                    // Only set the stop_reason here; do NOT build/overwrite usage.
+                    // Usage is owned by the `if (chunk.usage)` merge above (which runs
+                    // first for the same chunk). Fireworks emits the real usage in a
+                    // separate `choices: []` chunk AFTER this finish_reason chunk, and
+                    // this finish chunk's own usage is null — overwriting here would
+                    // zero out the already-merged real usage. If no usage has been
+                    // seen yet, seed a zero placeholder that the trailing usage chunk
+                    // (or the onResponse fallback) will fill in.
+                    if (!stopReasonMessageDelta) {
+                      stopReasonMessageDelta = {
+                        type: "message_delta",
+                        delta: {
+                          stop_reason: anthropicStopReason,
+                          stop_sequence: null,
+                        },
+                        usage: {
+                          input_tokens: 0,
+                          output_tokens: 0,
+                          cache_read_input_tokens: 0,
+                        },
+                      };
+                    } else {
+                      stopReasonMessageDelta.delta = {
+                        ...stopReasonMessageDelta.delta,
                         stop_reason: anthropicStopReason,
                         stop_sequence: null,
-                      },
-                      usage: {
-                        input_tokens: inputTokens2,
-                        output_tokens: chunk.usage?.completion_tokens || 0,
-                        cache_read_input_tokens: cachedTokens2,
-                      },
-                    };
+                      };
+                    }
                   }
 
-                  break;
+                  // Do not break: keep reading so the trailing usage chunk
+                  // (choices: [] with real usage, emitted after finish_reason by
+                  // fireworks) can be merged by the `if (chunk.usage)` branch.
+                  // Content paths are guarded by `!hasFinished`, so no duplicate
+                  // content is emitted.
+                  hasFinished = true;
                 }
               } catch (parseError: any) {
                 this.logger?.error(
