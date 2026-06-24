@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **模型族长上下文阈值继承主路由配置**: `ccr-opus`/`ccr-sonnet`/`ccr-haiku` 进入 family routing 后，此前只读取 `Router.families.<family>.longContextThreshold`，未配置时会回退到代码默认 `60000`，导致即使主路由 `Router.longContextThreshold` 配成 `100000`，约 70k token 的请求仍被判为 `<family>/longContext`。现在 family 未单独配置阈值时会继承主路由 `Router.longContextThreshold`，最后才回退到 `60000`。
+- **fallback 候选模型也执行 Double-Check 重试**: v2.3.15 的同模型快速重试只覆盖主模型，fallback 链路中某个候选模型第一次 `fetch failed`/空 SSE/隐藏错误后会直接切到下一个候选。现在每个 fallback 候选也会先重试一次，第二次仍失败才记录失败并继续下一个；同时修正 fallback 失败 usage 记录的 `originalModel`，避免 UI 显示成上一跳模型到 fallback 模型的误导链路。
+
 ## [2.3.17] - 2026-06-19
 
 ### Fixed

@@ -359,76 +359,7 @@ async function handleTransformerEndpoint(
       }
     );
 
-    // Validate streaming responses have data before forwarding.
-    // When GLM/Zhipu returns an empty 200 SSE (e.g. rate-limited or overloaded),
-    // the Anthropic-transformed stream lacks message_start, causing Claude Code's
-    // SDK to report "empty or malformed response". We detect this early and throw
-    // so that the fallback mechanism can try another model instead.
-    if (body.stream && finalResponse?.body) {
-      const reader = finalResponse.body.getReader();
-      const firstResult = await reader.read();
-      if (firstResult.done) {
-        reader.releaseLock();
-        throw createApiError(
-          `Provider returned empty streaming response from ${providerName}`,
-          400,
-          "provider_response_error"
-        );
-      }
-      const firstChunkText = new TextDecoder().decode(firstResult.value);
-      // Check if the first chunk contains an SSE error event (e.g. GLM/Zhipu
-      // returning error JSON inside the SSE stream). Throw to trigger fallback.
-      if (firstChunkText.includes("event: error")) {
-        reader.releaseLock();
-        const errMsg = firstChunkText.length < 500 ? firstChunkText : firstChunkText.slice(0, 500);
-        throw createApiError(
-          `Provider ${providerName} returned error in SSE stream: ${errMsg}`,
-          400,
-          "provider_response_error"
-        );
-      }
-      // Check if the first chunk has no meaningful SSE data lines.
-      // Some providers (e.g. GLM) return HTTP 200 with whitespace-only or
-      // empty SSE that passes the "done" check but contains no actual content.
-      // Detect this and throw to trigger fallback instead of forwarding garbage.
-      const dataLines = firstChunkText.split('\n').filter(
-        (line: string) => line.startsWith('data:') && line.trim().length > 5
-      );
-      if (dataLines.length === 0) {
-        reader.releaseLock();
-        const preview = firstChunkText.length < 500 ? firstChunkText : firstChunkText.slice(0, 500);
-        throw createApiError(
-          `Provider ${providerName} returned streaming response with no SSE data lines: ${preview}`,
-          400,
-          "provider_response_error"
-        );
-      }
-      // Reconstruct the stream from the peeked first chunk + remaining data
-      const remainingStream = new ReadableStream({
-        start: (controller) => {
-          controller.enqueue(firstResult.value!);
-          const pump = () => {
-            reader.read().then(({ done, value }) => {
-              if (done) {
-                controller.close();
-              } else {
-                controller.enqueue(value);
-                pump();
-              }
-            }).catch((err) => controller.error(err));
-          };
-          pump();
-        },
-        cancel: () => {
-          reader.cancel();
-        },
-      });
-      finalResponse = new Response(remainingStream, {
-        headers: finalResponse.headers,
-        status: finalResponse.status,
-        statusText: finalResponse.statusText,
-      });
-    }
+    finalResponse = await validateStreamingResponse(body, finalResponse, provider.name || providerName);
 
     const result = formatResponse(finalResponse, reply, body, fastify);
 
@@ -465,6 +396,84 @@ async function handleTransformerEndpoint(
     (req as any).__fallbackExhausted = true;
     throw error;
   }
+}
+
+/**
+ * Validate streaming responses have data before forwarding.
+ * When GLM/Zhipu returns an empty 200 SSE (e.g. rate-limited or overloaded),
+ * the Anthropic-transformed stream lacks message_start, causing Claude Code's
+ * SDK to report "empty or malformed response". We detect this early and throw
+ * so fallback can try the current model again or move to the next model.
+ */
+async function validateStreamingResponse(
+  body: any,
+  finalResponse: any,
+  providerName?: string
+): Promise<any> {
+  if (!body?.stream || !finalResponse?.body) {
+    return finalResponse;
+  }
+
+  const reader = finalResponse.body.getReader();
+  const firstResult = await reader.read();
+  if (firstResult.done) {
+    reader.releaseLock();
+    throw createApiError(
+      `Provider returned empty streaming response from ${providerName}`,
+      400,
+      "provider_response_error"
+    );
+  }
+
+  const firstChunkText = new TextDecoder().decode(firstResult.value);
+  if (firstChunkText.includes("event: error")) {
+    reader.releaseLock();
+    const errMsg = firstChunkText.length < 500 ? firstChunkText : firstChunkText.slice(0, 500);
+    throw createApiError(
+      `Provider ${providerName} returned error in SSE stream: ${errMsg}`,
+      400,
+      "provider_response_error"
+    );
+  }
+
+  const dataLines = firstChunkText.split('\n').filter(
+    (line: string) => line.startsWith('data:') && line.trim().length > 5
+  );
+  if (dataLines.length === 0) {
+    reader.releaseLock();
+    const preview = firstChunkText.length < 500 ? firstChunkText : firstChunkText.slice(0, 500);
+    throw createApiError(
+      `Provider ${providerName} returned streaming response with no SSE data lines: ${preview}`,
+      400,
+      "provider_response_error"
+    );
+  }
+
+  const remainingStream = new ReadableStream({
+    start: (controller) => {
+      controller.enqueue(firstResult.value!);
+      const pump = () => {
+        reader.read().then(({ done, value }) => {
+          if (done) {
+            controller.close();
+          } else {
+            controller.enqueue(value);
+            pump();
+          }
+        }).catch((err) => controller.error(err));
+      };
+      pump();
+    },
+    cancel: () => {
+      reader.cancel();
+    },
+  });
+
+  return new Response(remainingStream, {
+    headers: finalResponse.headers,
+    status: finalResponse.status,
+    statusText: finalResponse.statusText,
+  });
 }
 
 /**
@@ -647,124 +656,135 @@ async function handleFallback(
       const fbProviderName = configuredFallback.provider.name;
       const fbModel = configuredFallback.model;
 
-      try {
-        // Skip if model is in fail pool (open state)
-        if (!healthStore.isAvailable(fbProviderName, fbModel)) {
-          req.log.warn(`Fallback model ${fallbackModel} unavailable (fail pool), skipping`);
-          continue;
-        }
-
-        req.log.info(`Trying fallback model: ${fbProviderName},${fbModel}`);
-
-        // Update request with fallback model
-        const newBody = { ...(req.body as any) };
-        newBody.model = fbModel;
-
-        // Create new request object with updated provider and body
-        const newReq = {
-          ...req,
-          provider: fbProviderName,
-          body: newBody,
-        };
-
-        const provider = configuredFallback.provider;
-
-        // Process request transformer chain
-        const { requestBody, config, bypass } = await processRequestTransformers(
-          newBody,
-          provider,
-          transformer,
-          req.headers,
-          { req: newReq }
-        );
-
-        // Send request to LLM provider
-        const response = await sendRequestToProvider(
-          requestBody,
-          config,
-          provider,
-          fastify,
-          bypass,
-          transformer,
-          { req: newReq }
-        );
-
-        // Capture rate limit headers from upstream response
-        try {
-          if (provider?.baseUrl && response?.headers) {
-            captureRateLimitHeaders(fbProviderName, provider.baseUrl, response.headers);
-          }
-        } catch {}
-
-        // Process response transformer chain — propagate codex flags so the
-        // fallback response also gets Responses API conversion when needed.
-        const finalResponse = await processResponseTransformers(
-          requestBody,
-          response,
-          provider,
-          transformer,
-          bypass,
-          {
-            req: newReq,
-            isCodexOnMessagesEndpoint: (req as any).isCodexOnMessagesEndpoint || false,
-          }
-        );
-
-        req.log.info(`Fallback model ${fbProviderName},${fbModel} succeeded`);
-
-        // Record success for the fallback model
-        healthStore.recordSuccess(fbProviderName, fbModel);
-
-        // Promote the fallback model globally for this primary + scenario
-        // This ensures all clients skip the failing primary until TTL expires
-        if (originalProvider && originalModel) {
-          const fallbackPromotion = getFallbackPromotionStore();
-          fallbackPromotion.promote(
-            originalProvider,
-            originalModel,
-            scenarioType,
-            fbProviderName,
-            fbModel
-          );
-          req.log.info(`Promoted fallback model ${fbProviderName},${fbModel} for ${originalProvider},${originalModel}:${scenarioType}`);
-
-          // Immediately mark the original model as unavailable so routing skips it
-          // even when promotion TTL expires or is cleared.
-          // SKIP forceOpen for rate-limit errors — markRateLimited was already called
-          // above and set rateLimitUntil; forceOpen would delete that cooldown timestamp.
-          if (!isRateLimit) {
-            healthStore.forceOpen(originalProvider, originalModel, error?.message);
-            req.log.info(`Marked original model ${originalProvider},${originalModel} as unavailable`);
-          } else {
-            req.log.info(`Rate-limited original model ${originalProvider},${originalModel} already marked unavailable with cooldown`);
-          }
-        }
-
-        // Write back to original req so onResponse hook records correct provider/model
-        req.provider = fbProviderName;
-        req.body = newBody;
-
-        // Format and return response
-        return formatResponse(finalResponse, reply, newBody, fastify);
-      } catch (fallbackError: any) {
-        healthStore.recordFailure(fbProviderName, fbModel, fallbackError.message);
-        req.log.warn(`Fallback model ${fbProviderName},${fbModel} failed: ${fallbackError.message}`);
-
-        // Record failed fallback attempt in usage stats
-        fastify.recordUsage?.({
-          provider: fbProviderName,
-          model: fbModel,
-          originalModel: (req.body as any).model,
-          scenarioType,
-          modelFamily: (req as any).modelFamily,
-          errorMessage: fallbackError.message,
-          sessionId: (req as any).usageSessionId || req.id,
-          stream: (req.body as any).stream,
-          req,
-        });
-
+      // Skip if model is in fail pool (open state)
+      if (!healthStore.isAvailable(fbProviderName, fbModel)) {
+        req.log.warn(`Fallback model ${fallbackModel} unavailable (fail pool), skipping`);
         continue;
       }
+
+      let fallbackError: any;
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+          req.log.info(`Trying fallback model: ${fbProviderName},${fbModel}${attempt > 1 ? " (retry)" : ""}`);
+
+          // Update request with fallback model
+          const newBody = { ...(req.body as any) };
+          newBody.model = fbModel;
+
+          // Create new request object with updated provider and body
+          const newReq = {
+            ...req,
+            provider: fbProviderName,
+            body: newBody,
+          };
+
+          const provider = configuredFallback.provider;
+
+          // Process request transformer chain
+          const { requestBody, config, bypass } = await processRequestTransformers(
+            newBody,
+            provider,
+            transformer,
+            req.headers,
+            { req: newReq }
+          );
+
+          // Send request to LLM provider
+          const response = await sendRequestToProvider(
+            requestBody,
+            config,
+            provider,
+            fastify,
+            bypass,
+            transformer,
+            { req: newReq }
+          );
+
+          // Capture rate limit headers from upstream response
+          try {
+            if (provider?.baseUrl && response?.headers) {
+              captureRateLimitHeaders(fbProviderName, provider.baseUrl, response.headers);
+            }
+          } catch {}
+
+          // Process response transformer chain — propagate codex flags so the
+          // fallback response also gets Responses API conversion when needed.
+          let finalResponse = await processResponseTransformers(
+            requestBody,
+            response,
+            provider,
+            transformer,
+            bypass,
+            {
+              req: newReq,
+              isCodexOnMessagesEndpoint: (req as any).isCodexOnMessagesEndpoint || false,
+            }
+          );
+          finalResponse = await validateStreamingResponse(newBody, finalResponse, fbProviderName);
+
+          req.log.info(`Fallback model ${fbProviderName},${fbModel} succeeded`);
+
+          // Record success for the fallback model
+          healthStore.recordSuccess(fbProviderName, fbModel);
+
+          // Promote the fallback model globally for this primary + scenario
+          // This ensures all clients skip the failing primary until TTL expires
+          if (originalProvider && originalModel) {
+            const fallbackPromotion = getFallbackPromotionStore();
+            fallbackPromotion.promote(
+              originalProvider,
+              originalModel,
+              scenarioType,
+              fbProviderName,
+              fbModel
+            );
+            req.log.info(`Promoted fallback model ${fbProviderName},${fbModel} for ${originalProvider},${originalModel}:${scenarioType}`);
+
+            // Immediately mark the original model as unavailable so routing skips it
+            // even when promotion TTL expires or is cleared.
+            // SKIP forceOpen for rate-limit errors — markRateLimited was already called
+            // above and set rateLimitUntil; forceOpen would delete that cooldown timestamp.
+            if (!isRateLimit) {
+              healthStore.forceOpen(originalProvider, originalModel, error?.message);
+              req.log.info(`Marked original model ${originalProvider},${originalModel} as unavailable`);
+            } else {
+              req.log.info(`Rate-limited original model ${originalProvider},${originalModel} already marked unavailable with cooldown`);
+            }
+          }
+
+          // Write back to original req so onResponse hook records correct provider/model
+          req.provider = fbProviderName;
+          req.body = newBody;
+
+          // Format and return response
+          return formatResponse(finalResponse, reply, newBody, fastify);
+        } catch (error: any) {
+          fallbackError = error;
+          if (attempt === 1) {
+            req.log.warn(`Fallback model ${fbProviderName},${fbModel} failed, retrying once: ${error.message}`);
+            continue;
+          }
+        }
+      }
+
+      healthStore.recordFailure(fbProviderName, fbModel, fallbackError?.message);
+      req.log.warn(`Fallback model ${fbProviderName},${fbModel} failed after retry: ${fallbackError?.message}`);
+
+      // Record failed fallback attempt in usage stats
+      fastify.recordUsage?.({
+        provider: fbProviderName,
+        model: fbModel,
+        originalModel: (req as any).originalModel || originalModel || (req.body as any).model,
+        scenarioType,
+        modelFamily: (req as any).modelFamily,
+        errorMessage: fallbackError?.message || String(fallbackError),
+        sessionId: (req as any).usageSessionId || req.id,
+        stream: (req.body as any).stream,
+        inputTokens: (req as any).tokenCount || 0,
+        req,
+      });
+
+      continue;
     }
   }
 

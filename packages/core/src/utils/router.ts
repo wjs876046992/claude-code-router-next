@@ -412,9 +412,10 @@ function resolveFamilyModel(
   lastUsage?: Usage,
   modelExtended?: boolean,
   globalFallback?: RouterFallbackConfig,
-  enableFallback?: boolean
+  enableFallback?: boolean,
+  globalLongContextThreshold?: number
 ): { model: string; scenarioType: RouterScenarioType; isFallback: boolean } | null {
-  const longContextThreshold = familyConfig.longContextThreshold || 60000;
+  const longContextThreshold = familyConfig.longContextThreshold ?? globalLongContextThreshold ?? 60000;
   const effectiveTokenCount = Math.max(tokenCount, getUsageInputTokens(lastUsage));
   const family = req.modelFamily;
 
@@ -572,7 +573,8 @@ const getUseModel = async (
       lastUsage,
       modelExtended,
       globalFallback,
-      enableFallback
+      enableFallback,
+      Router?.longContextThreshold
     );
     if (familyResult) {
       // Return only model and scenarioType (isFallback is internal)
