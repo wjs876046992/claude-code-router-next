@@ -163,7 +163,7 @@ publish_core_npm() {
     echo "✅ Core npm 包 dry-run 校验成功!"
   else
     echo "执行 npm publish..."
-    npm publish --access public
+    npm publish --access public ${NPM_OTP:+--otp="$NPM_OTP"}
     echo "✅ Core npm 包发布成功!"
   fi
 
@@ -233,7 +233,7 @@ EOF
     echo "DRY RUN: 跳过 npm publish。"
   else
     echo "执行 npm publish..."
-    npm publish --access public
+    npm publish --access public ${NPM_OTP:+--otp="$NPM_OTP"}
   fi
 
   restore_cli_package_json

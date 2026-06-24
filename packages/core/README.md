@@ -93,6 +93,7 @@ npm install -g @wengine-ai/claude-code-router-next@latest && ccr restart
 
 | 版本 | 发布内容 |
 | --- | --- |
+| **v2.3.18** | <ul><li>**模型族长上下文阈值继承主路由配置**: `ccr-opus`/`ccr-sonnet`/`ccr-haiku` 的 family routing 未配置族级阈值时会继承 `Router.longContextThreshold`，避免主路由设为 100k 时约 70k token 请求仍误进 `<family>/longContext`。</li><li>**fallback 候选模型也执行 Double-Check 重试**: 每个 fallback 候选第一次 `fetch failed`/空 SSE/隐藏错误后会先对同一候选重试一次，第二次仍失败才切到下一个，降低智谱等接口短暂不稳定导致的过早切换；同时修正失败记录的 `originalModel` 显示。</li><li>**全局配置保存后同步项目级 CCR 接管字段**: 跟随全局 Router 且已开启 CCR Takeover 的项目，在保存全局配置或切回使用全局配置时自动刷新 `.claude/settings.local.json` 中的模型族别名、auto-compact、状态栏与代理字段。</li><li>**默认降低日志量并保留最近 7 天**: 服务器日志默认级别从 `debug` 调整为 `error`，只在显式配置 `LOG_LEVEL=info/debug/trace` 时输出详细日志，并自动清理超过 7 天的 `ccr-*.log`。</li></ul> |
 | **v2.3.17** | <ul><li>**修复 fallback 触发时所有备用模型报 Invalid URL**: 主模型限流（如智谱套餐）触发 fallback 后，此前所有备用模型都报 `Invalid URL`；根因是 fallback 用了原始 `ConfigProvider[]`（无 `baseUrl`）而非已注册的 `LLMProvider[]`，改为 `providerService.getProviders()`。</li><li>**修复 fireworks 托管上游用量统计全 0**: fireworks 流式把真实 usage 放在 `finish_reason` 之后的 `choices:[]` 空 chunk 里，此前 `finish_reason` 块用 null usage 覆盖了已 merge 的真实值、且 `break` 丢弃了后续 usage chunk，导致 `input` 有值但 `output`/缓存命中为 0；现改为 finish 后继续读取、只设 stop_reason 不碰 usage、`break` 改 `hasFinished=true`，并修复下游三层用量捕获与 `??` 对 0 不 fallback 的问题。</li><li>**忽略已删除模型的残留路由，防止健康池污染**: 从 provider 配置删除模型后，路由与 fallback 中残留的 `provider,model` 仍被当作有效候选反复失败污染健康池；现在对无法匹配的候选直接返回 `null` 并在请求前校验，`ProviderHealthStore` 统一拦截空 provider/model 防畸形 key 污染，同时抽取 `findProviderModel` 共用函数。</li></ul> |
 | **v2.3.16** | <ul><li>**修复 system 消息顺序兼容 DeepSeek/vLLM**: OpenAI 兼容提供商（DeepSeek V4、GLM、vLLM）要求 `[system, user, assistant]` 顺序，此前 system 排在 user/assistant 之后会导致输出乱码；现在将 system 消息前置并去重。</li><li>**接管时去除 Attribution 动态头以提升缓存命中**: CCR 接管 Claude Code 时默认写入 `CLAUDE_CODE_ATTRIBUTION_HEADER=0`，去掉系统提示词开头随请求变化的 attribution 头（客户端版本 + prompt fingerprint），稳定上游 prompt 缓存前缀；可在设置页或 `disableAttributionHeader: false` 关闭。</li><li>**设置页布局紧凑化**: 「日志级别」下拉从独占整行移入两列网格，与「API 密钥」并排显示，减少纵向留白。</li></ul> |
 | **v2.3.15** | <ul><li>**Fallback 前同模型重试一次**: 模型调用出现一次异常不再立即切换到备用模型，而是先对同一模型自动重试一次（Double-Check），避免因瞬时错误（网络抖动、偶发限流、空 SSE 响应等）导致不必要的模型切换；重试仍失败才走原有 fallback 流程。</li><li>**用量统计显示上游真实模型**: 部分上游网关会偷偷将请求路由/降级到另一个后端模型（如请求 glm-5 实际返回 MiniMax-M2.5）。用量统计的模型映射现在追加上游返回的真实模型，格式为 `originalModel → routedModel → upstreamModel`（如 `ccr-opus → glm-5 → minimax-m2.5`），上游未偷换时自动省略。</li></ul> |
@@ -102,7 +103,6 @@ npm install -g @wengine-ai/claude-code-router-next@latest && ccr restart
 | **v2.3.11** | <ul><li>**修复新会话首个请求绕过项目级路由（会话检测竞态）**：新会话的第一个请求（如标题生成元请求，比主请求早到约十几毫秒）到达时 session 转写文件可能尚未落盘，导致项目匹配失败、回退全局 `Router`，使该请求绕过项目级路由（如项目已关 `enableFamilyRouting` 仍走全局模型族路由）。现在缓存未命中时短延迟重试（最多 3×50ms）给文件落盘留时间，并保证每个 session 仅重试一次，避免非托管会话每请求都被加延迟。</li></ul> |
 | **v2.3.10** | <ul><li>**修复标题生成等元请求误触发 `think` 场景路由**：`thinking: {type: "disabled"}` 是真值对象，此前会被误判为"已开启思考"并路由到 `think` 模型；现在仅当 `thinking.type === "enabled"` 时才进入 `think` 场景，避免关闭模型族路由的项目仍被路由到全局 think 模型。</li><li>**修复主模型熔断且无 fallback 时返回空模型**：`Router.default` 因健康检查熔断且无可用 fallback 时，此前直接返回空模型导致合成 "provider not found" 错误；现在会跳过健康检查兜底重试主模型，让 Claude Code 收到真实上游响应并自行重试。</li></ul> |
 | **v2.3.9** | <ul><li>**Codex 代管理账号令牌自动刷新**：新增后台调度器（启动 60 秒后首次执行，之后每 30 分钟一次），自动检查所有 Codex 代管理账号——无论是否为当前激活账号——当 `access_token` 距过期不足 24 小时，或自上次刷新已超过 7 天时，自动用 `refresh_token` 换取新 token 并写回账号存储；若为当前激活账号，同时同步覆盖 `~/.codex/auth.json`。可通过 `Clients.codex.autoRefreshTokens` 关闭（默认开启）。</li><li>**运行时 fallback 重试未遵循项目级 `enableFallback` 修复**：请求实际发出后失败（如限流）触发的重试 fallback 此前直接读取全局 `Router.enableFallback` 与全局顶层 `fallback` 配置，忽略项目级 `enableFallback: false` 与项目自定义 `Router.fallback`；现在运行时重试与路由阶段使用同一份项目级 fallback 配置。</li></ul> |
-| **v2.3.8** | <ul><li>**可配置上下文窗口**：设置页新增 `ContextWindow`，接管 Claude Code / Codex 时用于设置 auto-compact 窗口，默认 200000 tokens。</li><li>**Codex 自动压缩窗口同步**：CCR 接管 Codex 时写入 `model_context_window` 与 `model_auto_compact_token_limit`（约 90%），确保模型别名也能按真实上下文窗口触发自动压缩。</li><li>**项目路由会话识别修复**：兼容 Claude Code `metadata.user_id` 的 JSON/object/legacy session 格式，并只缓存成功匹配，避免首个请求 session 文件尚未生成时项目级路由被长期判定为未命中。</li><li>**关闭模型族路由后别名映射旁路修复**：`enableFamilyRouting` 关闭时，`ccr-opus`/`ccr-sonnet`/`ccr-haiku` 不再被 `Router.models` 中遗留的别名映射拦截，正确回退到项目自定义的 scenario 路由。</li></ul> |
 > 仅保留最近 10 个版本，更早版本的发布摘要见 [CHANGELOG-archive.md](./CHANGELOG-archive.md)，完整详细变更记录见 [CHANGELOG.md](./CHANGELOG.md)。
 
 ### 2. 配置
@@ -136,6 +136,7 @@ npm install -g @wengine-ai/claude-code-router-next@latest && ccr restart
   "APIKEY": "your-secret-key",
   "PROXY_URL": "http://127.0.0.1:7890",
   "LOG": true,
+  "LOG_LEVEL": "error",
   "API_TIMEOUT_MS": 600000,
   "NON_INTERACTIVE_MODE": false,
   "Providers": [
