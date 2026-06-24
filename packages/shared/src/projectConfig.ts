@@ -24,6 +24,16 @@ export interface ProjectConfigEntry {
   Router: Record<string, any>;
 }
 
+export interface ProjectTakeoverSyncResult {
+  updated: number;
+  skipped: number;
+  failed: Array<{ id: string; path: string; error: string }>;
+}
+
+function isUsingGlobalRouter(router: Record<string, any> | undefined): boolean {
+  return Object.keys(router || {}).length === 0;
+}
+
 /**
  * Read the project-level config for a given project path.
  * Returns null if no project-level config has been created yet.
@@ -190,4 +200,61 @@ export async function setCcrTakeover(projectPath: string, enabled: boolean, conf
 
   await fs.mkdir(path.dirname(settingsPath), { recursive: true });
   await fs.writeFile(settingsPath, JSON.stringify(settings, null, 2), "utf-8");
+}
+
+/**
+ * Refresh ccr-managed fields in a project's active `.claude/settings.local.json`
+ * from the current global config. Returns false when the project is not
+ * currently under ccr takeover.
+ */
+export async function refreshCcrProjectTakeover(projectPath: string, config: Record<string, any>): Promise<boolean> {
+  const settings = await readClaudeSettingsLocal(projectPath);
+  if (!isCcrProjectTakeoverActive(settings)) {
+    return false;
+  }
+
+  applyCcrProjectTakeover(settings, config);
+  const settingsPath = getClaudeSettingsLocalPath(projectPath);
+  await fs.mkdir(path.dirname(settingsPath), { recursive: true });
+  await fs.writeFile(settingsPath, JSON.stringify(settings, null, 2), "utf-8");
+  return true;
+}
+
+/**
+ * Refresh `.claude/settings.local.json` for projects that are both:
+ * - following the global Router (`Router: {}` in their project config), and
+ * - currently under ccr takeover.
+ *
+ * This keeps client-side managed fields (model aliases, auto-compact window,
+ * statusline, proxy URL/token) aligned after the global config changes without
+ * touching projects that have local Router overrides or disabled takeover.
+ */
+export async function syncGlobalProjectTakeovers(config: Record<string, any>): Promise<ProjectTakeoverSyncResult> {
+  const result: ProjectTakeoverSyncResult = { updated: 0, skipped: 0, failed: [] };
+  const projects = await listProjectConfigs();
+
+  for (const project of projects) {
+    if (!isUsingGlobalRouter(project.Router)) {
+      result.skipped++;
+      continue;
+    }
+
+    try {
+      const updated = await refreshCcrProjectTakeover(project.path, config);
+      if (!updated) {
+        result.skipped++;
+        continue;
+      }
+
+      result.updated++;
+    } catch (error: any) {
+      result.failed.push({
+        id: project.id,
+        path: project.path,
+        error: error?.message || String(error),
+      });
+    }
+  }
+
+  return result;
 }

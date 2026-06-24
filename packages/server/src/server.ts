@@ -50,6 +50,8 @@ import {
   getProjectConfigPath,
   getCcrTakeoverStatus,
   setCcrTakeover,
+  refreshCcrProjectTakeover,
+  syncGlobalProjectTakeovers,
 } from "@wengine-ai/claude-code-router-shared";
 import fastifyMultipart from "@fastify/multipart";
 import AdmZip from "adm-zip";
@@ -549,6 +551,18 @@ export const createServer = async (config: any): Promise<any> => {
     }
 
     await writeConfigFile(newConfig);
+    let projectTakeoverSync: Awaited<ReturnType<typeof syncGlobalProjectTakeovers>> | undefined;
+    try {
+      projectTakeoverSync = await syncGlobalProjectTakeovers(newConfig);
+      if (projectTakeoverSync.failed.length > 0) {
+        app.log?.warn?.(
+          { projectTakeoverSync },
+          "Config saved but some global project takeovers failed to sync"
+        );
+      }
+    } catch (syncError: any) {
+      app.log?.warn?.(`Config saved but global project takeover sync failed: ${syncError?.message || syncError}`);
+    }
     try {
       const coreServer = (app as any)._server;
       if (coreServer?.configService) {
@@ -590,7 +604,7 @@ export const createServer = async (config: any): Promise<any> => {
     } catch (reloadError: any) {
       app.log?.warn?.(`Config saved but runtime reload failed: ${reloadError?.message || reloadError}`);
     }
-    return { success: true, message: "Config saved successfully" };
+    return { success: true, message: "Config saved successfully", projectTakeoverSync };
   });
 
   // ========== Client Integrations API ==========
@@ -826,6 +840,11 @@ export const createServer = async (config: any): Promise<any> => {
       }
 
       await writeProjectConfig(existing.path, { Router });
+      const usesGlobalRouter = Object.keys(Router).length === 0;
+      if (usesGlobalRouter && await getCcrTakeoverStatus(existing.path)) {
+        const config = await readConfigFile();
+        await refreshCcrProjectTakeover(existing.path, config);
+      }
       return {
         id,
         path: existing.path,
