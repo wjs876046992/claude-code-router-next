@@ -161,6 +161,6 @@ curl -X DELETE "http://localhost:3456/api/logs?file=/home/user/.claude-code-rout
 
 服务器日志使用 rotating-file-stream 自动轮转：
 
-- **maxFiles**: 3 - 保留最近 3 个日志文件
 - **interval**: 1d - 每天轮转
-- **maxSize**: 50M - 单个文件最大 50MB
+- **size**: 50M - 单个文件超过 50MB 时轮转
+- **保留策略**：服务器日志（`ccr-*.log`）超过 7 天会在启动时及每天自动清理一次。

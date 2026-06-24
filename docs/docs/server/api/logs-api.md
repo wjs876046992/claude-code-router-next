@@ -165,6 +165,6 @@ Content: Routing decisions, business logic events
 
 Server logs use rotating-file-stream for automatic rotation:
 
-- **maxFiles**: 3 - Keep last 3 log files
 - **interval**: 1d - Rotate daily
-- **maxSize**: 50M - Maximum 50MB per file
+- **size**: 50M - Rotate when a single file exceeds 50MB
+- **Retention**: Server logs (`ccr-*.log`) older than 7 days are pruned automatically at startup and once per day.

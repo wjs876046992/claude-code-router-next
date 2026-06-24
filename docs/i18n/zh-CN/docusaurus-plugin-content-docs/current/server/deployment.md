@@ -102,7 +102,7 @@ docker run -d \
 | `HOST` | 监听地址 | `127.0.0.1` |
 | `PORT` | 监听端口 | `3456` |
 | `APIKEY` | API 密钥 | - |
-| `LOG_LEVEL` | 日志级别 | `debug` |
+| `LOG_LEVEL` | 日志级别 | `error` |
 | `LOG` | 是否启用日志 | `true` |
 
 ## 生产环境建议
