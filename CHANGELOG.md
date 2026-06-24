@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [2.3.18] - 2026-06-24
+
 ### Fixed
 
 - **模型族长上下文阈值继承主路由配置**: `ccr-opus`/`ccr-sonnet`/`ccr-haiku` 进入 family routing 后，此前只读取 `Router.families.<family>.longContextThreshold`，未配置时会回退到代码默认 `60000`，导致即使主路由 `Router.longContextThreshold` 配成 `100000`，约 70k token 的请求仍被判为 `<family>/longContext`。现在 family 未单独配置阈值时会继承主路由 `Router.longContextThreshold`，最后才回退到 `60000`。
