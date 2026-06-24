@@ -97,7 +97,7 @@ sidebar_position: 1
   "APIKEY": "your-secret-key",
   "PROXY_URL": "http://127.0.0.1:7890",
   "LOG": true,
-  "LOG_LEVEL": "debug",
+  "LOG_LEVEL": "error",
   "API_TIMEOUT_MS": 600000,
   "Providers": [
     {

@@ -11,6 +11,7 @@ All notable changes to this project will be documented in this file.
 - **模型族长上下文阈值继承主路由配置**: `ccr-opus`/`ccr-sonnet`/`ccr-haiku` 进入 family routing 后，此前只读取 `Router.families.<family>.longContextThreshold`，未配置时会回退到代码默认 `60000`，导致即使主路由 `Router.longContextThreshold` 配成 `100000`，约 70k token 的请求仍被判为 `<family>/longContext`。现在 family 未单独配置阈值时会继承主路由 `Router.longContextThreshold`，最后才回退到 `60000`。
 - **fallback 候选模型也执行 Double-Check 重试**: v2.3.15 的同模型快速重试只覆盖主模型，fallback 链路中某个候选模型第一次 `fetch failed`/空 SSE/隐藏错误后会直接切到下一个候选。现在每个 fallback 候选也会先重试一次，第二次仍失败才记录失败并继续下一个；同时修正 fallback 失败 usage 记录的 `originalModel`，避免 UI 显示成上一跳模型到 fallback 模型的误导链路。
 - **全局配置保存后同步项目级 CCR 接管字段**: 项目启用 “CCR Takeover” 且 “使用全局配置” 时，运行时路由会读取最新全局 Router，但项目 `.claude/settings.local.json` 中的 CCR 托管字段（模型族别名、auto-compact 窗口、状态栏、代理地址/token 等）此前只在启用接管时写入一次，后续全局配置修改不会自动刷新。现在保存全局配置后会自动刷新所有仍跟随全局配置且已接管的项目；项目切回使用全局配置并保存时，也会立即刷新该项目的接管字段。
+- **默认降低日志量并保留最近 7 天**: 服务器日志默认级别从 `debug` 调整为 `error`，正常运行只记录错误；需要排查问题时可显式配置 `LOG_LEVEL` 为 `info`/`debug`/`trace` 获取详细日志。同时 `~/.claude-code-router/logs/ccr-*.log` 启动时和运行中每日自动清理一次，默认只保留最近 7 天的服务器日志。
 
 ## [2.3.17] - 2026-06-19
 

@@ -93,7 +93,7 @@ export function ConfigProvider({ children }: ConfigProviderProps) {
           // Set default empty config when fetch fails
           setConfig({
             LOG: false,
-            LOG_LEVEL: 'debug',
+            LOG_LEVEL: 'error',
             CLAUDE_PATH: '',
             HOST: '127.0.0.1',
             PORT: 3456,

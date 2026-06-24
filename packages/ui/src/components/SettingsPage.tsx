@@ -845,7 +845,7 @@ export function SettingsPage() {
                       { label: "debug", value: "debug" },
                       { label: "trace", value: "trace" },
                     ]}
-                    value={config.LOG_LEVEL || "debug"}
+                    value={config.LOG_LEVEL || "error"}
                     onChange={(value) => setConfig({ ...config, LOG_LEVEL: value })}
                   />
                 </div>

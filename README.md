@@ -93,7 +93,7 @@ npm install -g @wengine-ai/claude-code-router-next@latest && ccr restart
 
 | 版本 | 发布内容 |
 | --- | --- |
-| **v2.3.18** | <ul><li>**模型族长上下文阈值继承主路由配置**: `ccr-opus`/`ccr-sonnet`/`ccr-haiku` 的 family routing 未配置族级阈值时会继承 `Router.longContextThreshold`，避免主路由设为 100k 时约 70k token 请求仍误进 `<family>/longContext`。</li><li>**fallback 候选模型也执行 Double-Check 重试**: 每个 fallback 候选第一次 `fetch failed`/空 SSE/隐藏错误后会先对同一候选重试一次，第二次仍失败才切到下一个，降低智谱等接口短暂不稳定导致的过早切换；同时修正失败记录的 `originalModel` 显示。</li><li>**全局配置保存后同步项目级 CCR 接管字段**: 跟随全局 Router 且已开启 CCR Takeover 的项目，在保存全局配置或切回使用全局配置时自动刷新 `.claude/settings.local.json` 中的模型族别名、auto-compact、状态栏与代理字段。</li></ul> |
+| **v2.3.18** | <ul><li>**模型族长上下文阈值继承主路由配置**: `ccr-opus`/`ccr-sonnet`/`ccr-haiku` 的 family routing 未配置族级阈值时会继承 `Router.longContextThreshold`，避免主路由设为 100k 时约 70k token 请求仍误进 `<family>/longContext`。</li><li>**fallback 候选模型也执行 Double-Check 重试**: 每个 fallback 候选第一次 `fetch failed`/空 SSE/隐藏错误后会先对同一候选重试一次，第二次仍失败才切到下一个，降低智谱等接口短暂不稳定导致的过早切换；同时修正失败记录的 `originalModel` 显示。</li><li>**全局配置保存后同步项目级 CCR 接管字段**: 跟随全局 Router 且已开启 CCR Takeover 的项目，在保存全局配置或切回使用全局配置时自动刷新 `.claude/settings.local.json` 中的模型族别名、auto-compact、状态栏与代理字段。</li><li>**默认降低日志量并保留最近 7 天**: 服务器日志默认级别从 `debug` 调整为 `error`，只在显式配置 `LOG_LEVEL=info/debug/trace` 时输出详细日志，并自动清理超过 7 天的 `ccr-*.log`。</li></ul> |
 | **v2.3.17** | <ul><li>**修复 fallback 触发时所有备用模型报 Invalid URL**: 主模型限流（如智谱套餐）触发 fallback 后，此前所有备用模型都报 `Invalid URL`；根因是 fallback 用了原始 `ConfigProvider[]`（无 `baseUrl`）而非已注册的 `LLMProvider[]`，改为 `providerService.getProviders()`。</li><li>**修复 fireworks 托管上游用量统计全 0**: fireworks 流式把真实 usage 放在 `finish_reason` 之后的 `choices:[]` 空 chunk 里，此前 `finish_reason` 块用 null usage 覆盖了已 merge 的真实值、且 `break` 丢弃了后续 usage chunk，导致 `input` 有值但 `output`/缓存命中为 0；现改为 finish 后继续读取、只设 stop_reason 不碰 usage、`break` 改 `hasFinished=true`，并修复下游三层用量捕获与 `??` 对 0 不 fallback 的问题。</li><li>**忽略已删除模型的残留路由，防止健康池污染**: 从 provider 配置删除模型后，路由与 fallback 中残留的 `provider,model` 仍被当作有效候选反复失败污染健康池；现在对无法匹配的候选直接返回 `null` 并在请求前校验，`ProviderHealthStore` 统一拦截空 provider/model 防畸形 key 污染，同时抽取 `findProviderModel` 共用函数。</li></ul> |
 | **v2.3.16** | <ul><li>**修复 system 消息顺序兼容 DeepSeek/vLLM**: OpenAI 兼容提供商（DeepSeek V4、GLM、vLLM）要求 `[system, user, assistant]` 顺序，此前 system 排在 user/assistant 之后会导致输出乱码；现在将 system 消息前置并去重。</li><li>**接管时去除 Attribution 动态头以提升缓存命中**: CCR 接管 Claude Code 时默认写入 `CLAUDE_CODE_ATTRIBUTION_HEADER=0`，去掉系统提示词开头随请求变化的 attribution 头（客户端版本 + prompt fingerprint），稳定上游 prompt 缓存前缀；可在设置页或 `disableAttributionHeader: false` 关闭。</li><li>**设置页布局紧凑化**: 「日志级别」下拉从独占整行移入两列网格，与「API 密钥」并排显示，减少纵向留白。</li></ul> |
 | **v2.3.15** | <ul><li>**Fallback 前同模型重试一次**: 模型调用出现一次异常不再立即切换到备用模型，而是先对同一模型自动重试一次（Double-Check），避免因瞬时错误（网络抖动、偶发限流、空 SSE 响应等）导致不必要的模型切换；重试仍失败才走原有 fallback 流程。</li><li>**用量统计显示上游真实模型**: 部分上游网关会偷偷将请求路由/降级到另一个后端模型（如请求 glm-5 实际返回 MiniMax-M2.5）。用量统计的模型映射现在追加上游返回的真实模型，格式为 `originalModel → routedModel → upstreamModel`（如 `ccr-opus → glm-5 → minimax-m2.5`），上游未偷换时自动省略。</li></ul> |
@@ -118,7 +118,7 @@ npm install -g @wengine-ai/claude-code-router-next@latest && ccr restart
 `config.json` 文件有几个关键部分：
 - **`PROXY_URL`** (可选): 您可以为 API 请求设置代理，例如：`"PROXY_URL": "http://127.0.0.1:7890"`。
 - **`LOG`** (可选): 您可以通过将其设置为 `true` 来启用日志记录。当设置为 `false` 时，将不会创建日志文件。默认值为 `true`。
-- **`LOG_LEVEL`** (可选): 设置日志级别。可用选项包括：`"fatal"`、`"error"`、`"warn"`、`"info"`、`"debug"`、`"trace"`。默认值为 `"debug"`。
+- **`LOG_LEVEL`** (可选): 设置日志级别。可用选项包括：`"fatal"`、`"error"`、`"warn"`、`"info"`、`"debug"`、`"trace"`。默认值为 `"error"`；仅在显式配置为 `"info"`、`"debug"` 或 `"trace"` 时输出详细日志。
 - **日志系统**: Claude Code Router 使用两个独立的日志系统：
   - **服务器级别日志**: HTTP 请求、API 调用和服务器事件使用 pino 记录在 `~/.claude-code-router/logs/` 目录中，文件名类似于 `ccr-*.log`
   - **应用程序级别日志**: 路由决策和业务逻辑事件记录在 `~/.claude-code-router/claude-code-router.log` 文件中
@@ -136,6 +136,7 @@ npm install -g @wengine-ai/claude-code-router-next@latest && ccr restart
   "APIKEY": "your-secret-key",
   "PROXY_URL": "http://127.0.0.1:7890",
   "LOG": true,
+  "LOG_LEVEL": "error",
   "API_TIMEOUT_MS": 600000,
   "NON_INTERACTIVE_MODE": false,
   "Providers": [

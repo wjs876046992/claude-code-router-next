@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "fs";
+import { existsSync, readFileSync, readdirSync, statSync, unlinkSync } from "fs";
 import { writeFile } from "fs/promises";
 import { homedir } from "os";
 import { join } from "path";
@@ -336,6 +336,37 @@ interface RunOptions {
   logger?: any;
 }
 
+const LOG_RETENTION_DAYS = 7;
+const LOG_RETENTION_MS = LOG_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+const LOG_RETENTION_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
+let pinoLogRetentionStarted = false;
+
+function pruneOldPinoLogs(logDir = join(HOME_DIR, "logs")): void {
+  try {
+    if (!existsSync(logDir)) return;
+
+    const cutoff = Date.now() - LOG_RETENTION_MS;
+    for (const file of readdirSync(logDir)) {
+      if (!/^ccr-.*\.log$/.test(file)) continue;
+
+      const filePath = join(logDir, file);
+      const stats = statSync(filePath);
+      if (stats.isFile() && stats.mtime.getTime() < cutoff) {
+        unlinkSync(filePath);
+      }
+    }
+  } catch (error) {
+    console.warn("Failed to prune old server log files:", error);
+  }
+}
+
+function startPinoLogRetention(): void {
+  if (pinoLogRetentionStarted) return;
+  pinoLogRetentionStarted = true;
+  pruneOldPinoLogs();
+  setInterval(pruneOldPinoLogs, LOG_RETENTION_CHECK_INTERVAL_MS).unref();
+}
+
 /**
  * Plugin configuration from config file
  */
@@ -443,20 +474,28 @@ async function getServer(options: RunOptions = {}) {
   if (options.logger !== undefined) {
     loggerConfig = options.logger;
   } else {
+    // Prune stale ccr-*.log regardless of whether new logging is enabled,
+    // so disabling LOG still cleans up previously-written server logs.
+    startPinoLogRetention();
+
     // Enable logger if not provided and config.LOG !== false
     if (config.LOG !== false) {
       // Set config.LOG to true (if not already set)
       if (config.LOG === undefined) {
         config.LOG = true;
       }
+      // Rotation policy: rotate daily and when a single file exceeds 50M.
+      // Retention is enforced solely by startPinoLogRetention() above (7 days
+      // by mtime). We intentionally do NOT set rotating-file-stream's
+      // maxFiles/maxSize, since those count rotated files / total size and
+      // would delete logs that are still within the 7-day window.
       loggerConfig = {
-        level: config.LOG_LEVEL || "debug",
+        level: config.LOG_LEVEL || "error",
         stream: createStream(generator, {
           path: HOME_DIR,
-          maxFiles: 3,
           interval: "1d",
+          size: "50M",
           compress: false,
-          maxSize: "50M"
         }),
       };
     } else {
