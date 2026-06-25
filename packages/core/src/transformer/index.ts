@@ -20,6 +20,7 @@ import { VercelTransformer } from "./vercel.transformer";
 import { OpenAIResponsesTransformer } from "./openai.responses.transformer";
 import { ForceReasoningTransformer } from "./forcereasoning.transformer"
 import { KimiTransformer } from "./kimi.transformer"
+import { OpenCodeTransformer } from "./opencode.transformer"
 
 export default {
   AnthropicTransformer,
@@ -43,5 +44,6 @@ export default {
   VercelTransformer,
   OpenAIResponsesTransformer,
   ForceReasoningTransformer,
-  KimiTransformer
+  KimiTransformer,
+  OpenCodeTransformer
 };

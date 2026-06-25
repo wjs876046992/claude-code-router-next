@@ -164,6 +164,11 @@ export function SettingsDialog({
 
           {/* General Tab */}
           <TabsContent value="general" className="overflow-y-auto flex-1 px-8 py-4 space-y-4">
+            {/* Honeypot inputs: placed first so browser autofill targets these instead of real fields */}
+            <div aria-hidden="true" style={{ position: 'absolute', left: '-9999px', width: 0, height: 0, overflow: 'hidden', opacity: 0 }}>
+              <input type="text" tabIndex={-1} autoComplete="username" />
+              <input type="password" tabIndex={-1} autoComplete="current-password" />
+            </div>
             <div className="flex items-center space-x-2">
               <Switch
                 id="log"
@@ -273,12 +278,13 @@ export function SettingsDialog({
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="proxy-url">{t("toplevel.proxy_url")}</Label>
+              <Label htmlFor="ccr-proxy-config">{t("toplevel.proxy_url")}</Label>
               <Input
-                id="proxy-url"
+                id="ccr-proxy-config"
                 value={config.PROXY_URL || ""}
                 onChange={(e) => setConfig({ ...config, PROXY_URL: e.target.value })}
                 placeholder="http://127.0.0.1:7890"
+                disableAutofill
               />
             </div>
 
@@ -289,6 +295,7 @@ export function SettingsDialog({
                 type="password"
                 value={config.APIKEY || ""}
                 onChange={(e) => setConfig({ ...config, APIKEY: e.target.value })}
+                disableAutofill
               />
             </div>
 
