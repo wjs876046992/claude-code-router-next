@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [2.3.19] - 2026-06-25
+
+### Added
+
+- **新增 OpenCode (opencode.ai) Transformer**: 为 OpenCode 这类暴露 OpenAI 兼容 `/v1/chat/completions`、底层由 GLM/智谱模型驱动的 provider 新增专用 transformer。它显式声明 `endPoint="/v1/chat/completions"`，避免某 provider 唯一解析到的 transformer 是 `AnthropicTransformer` 时触发 bypass 模式，把 Anthropic 格式工具（`{name,description,input_schema}`）直接发给只认 `{type:"function",function:{…}}` 的 OpenAI 兼容接口；同时清理 GLM 不识别的 `cache_control` 与 Anthropic 专有的 `image_url`/`media_type` 字段，将流式与非流式响应中的 `reasoning_content` 转换为 Claude Code 期望的 thinking 格式，并把纯数字的 `tool_call` ID 替换为 UUID 以避免下游解析问题。在 `config.json` 的 provider `transformer` 中配置 `"opencode"` 即可启用。
+
+### Fixed
+
+- **设置页代理地址与 API 密钥输入框禁用浏览器自动填充**: Web UI 设置页（弹窗版 `SettingsDialog` 与整页版 `SettingsPage`）的「代理地址」「API 密钥」输入框此前会被 Chrome 用已保存的表单数据/密码自动填充，覆盖真实配置值。现在通过 `Input` 组件新增的 `disableAutofill` 提供三重防护：每次挂载生成随机 `name` 让浏览器无法匹配已保存数据、初始 `readOnly` 至首次聚焦后再解除以跳过自动填充、设置 `autoComplete="off"` 及 `data-lpignore`/`data-1p-ignore`/`data-form-type` 标记忽略主流密码管理器；并在表单顶部放置隐藏 honeypot 字段吸收凭据填充。
+
 ## [2.3.18] - 2026-06-24
 
 ### Fixed
