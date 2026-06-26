@@ -88,7 +88,7 @@ export interface StatusLineConfig {
   fontFamily?: string;
 }
 
-export type ClientId = 'claudeCode' | 'codex';
+export type ClientId = 'claudeCode' | 'codex' | 'pi';
 
 export interface ClientConfig {
   enabled?: boolean;
