@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [2.3.20] - 2026-06-26
+
+### Fixed
+
+- **清理改名/删除模型后残留的僵尸熔断记录**: 当从某 provider 的 `models` 中重命名或删除模型（如把 `ollama,glm-5.2` 改为 `ollama,glm-5.2:cloud`）后，旧模型名在 `~/.claude-code-router/runtime/provider-health.json` 中的熔断记录会成为僵尸：UI 上该供应商一直显示 `Failed`，且因熔断状态持久化落盘，`ccr restart` 也无法清除；点击 UI 刷新触发的 probe 成功后只会 `recover` 当前配置的模型名，清不掉旧名字那条。现在新增 `utils/health-reconcile.ts` 工具做三层清理：① 服务启动时按当前配置对账，清掉不可路由的残留记录；② 保存配置后（热重载）立即清理被本次改动移除的 provider/model；③ probe 成功时清掉该 provider 名下全部熔断记录（probe 检测的是端点级 `/v1/models` 可达性，成功即代表可达，真正失效的模型会在下次真实请求时重新熔断）。「可路由模型」集合由各 provider 的 `models` 与 Router/fallback 中引用的所有 `provider,model` 共同构成，避免误删 `models` 为空但仅通过 Router 路由的模型（如 `阿里云 Coding Plan,glm-5`）的健康状态。新增 7 个针对可达集合计算的单元测试。
+
 ## [2.3.19] - 2026-06-25
 
 ### Added

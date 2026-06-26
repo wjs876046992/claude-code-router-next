@@ -18,6 +18,7 @@ import { createStream } from 'rotating-file-stream';
 import { sessionUsageCache, extractSessionIdFromUserId } from "@wengine-ai/llms";
 const _healthModule = require("@wengine-ai/llms") as any;
 const getHealthStore: () => any = _healthModule.getHealthStore;
+import { reconcileHealthStore } from "./utils/health-reconcile";
 import { SSEParserTransform } from "./utils/SSEParser.transform";
 import { SSESerializerTransform } from "./utils/SSESerializer.transform";
 import { rewriteStream } from "./utils/rewriteStream";
@@ -564,6 +565,10 @@ async function getServer(options: RunOptions = {}) {
 
   // Register and configure plugins from config
   await registerPluginsFromConfig(serverInstance, config);
+
+  // Prune orphaned circuit-breaker entries (renamed/removed models or deleted
+  // providers) so stale "failed" states don't linger across restarts.
+  reconcileHealthStore(config, serverInstance.app?.log);
 
   serverInstance.addHook("onRequest", async (req: any) => {
     const url = new URL(`http://127.0.0.1${req.url}`);

@@ -6,6 +6,7 @@ const ProviderService = _llmsModule.ProviderService;
 const startActiveProbe = _llmsModule.startActiveProbe;
 const resetActiveProbeService = _llmsModule.resetActiveProbeService;
 import { getHealthStore } from "@wengine-ai/llms";
+import { reconcileHealthStore, clearProviderHealth } from "./utils/health-reconcile";
 import { readConfigFile, readConfigFileRaw, writeConfigFile, backupConfigFile } from "./utils";
 import { join, isAbsolute, normalize } from "path";
 import fastifyStatic from "@fastify/static";
@@ -579,6 +580,10 @@ export const createServer = async (config: any): Promise<any> => {
           );
         }
 
+        // Prune health entries for models/providers removed by this save, so a
+        // renamed model can't leave a stale "failed" state behind in the UI.
+        reconcileHealthStore(newConfig, app.log);
+
         if (startActiveProbe && resetActiveProbeService) {
           try {
             resetActiveProbeService();
@@ -1115,13 +1120,11 @@ export const createServer = async (config: any): Promise<any> => {
       }
 
       const success = await probeService.probeProviderManually(providerName);
-      const provider = coreServer?.providerService?.getProviders?.()
-        ?.find((item: any) => item?.name === providerName);
-      if (success && provider?.models) {
-        const healthStore = getHealthStore();
-        for (const model of provider.models) {
-          healthStore.recover(providerName, model);
-        }
+      if (success) {
+        // Endpoint reachable: clear every breaker for this provider, including
+        // orphaned entries for renamed/removed model names that a per-model
+        // recover would miss (the root cause of stuck "failed" UI states).
+        clearProviderHealth(providerName, (req as any).log);
       }
 
       return {
@@ -1146,13 +1149,12 @@ export const createServer = async (config: any): Promise<any> => {
 
       const providers = (coreServer?.providerService?.getProviders?.() || [])
         .filter((provider: any) => provider?.name && provider.enabled !== false);
-      const healthStore = getHealthStore();
       const results = await Promise.all(providers.map(async (provider: any) => {
         const success = await probeService.probeProviderManually(provider.name);
-        if (success && Array.isArray(provider.models)) {
-          for (const model of provider.models) {
-            healthStore.recover(provider.name, model);
-          }
+        if (success) {
+          // See single-provider probe above: clear all breakers for a reachable
+          // provider, not just its currently-configured models.
+          clearProviderHealth(provider.name, (_req as any)?.log);
         }
         return { provider: provider.name, success };
       }));
