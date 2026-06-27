@@ -266,8 +266,8 @@ class ApiClient {
     return this.delete<{ success: boolean }>(`/projects/${encodeURIComponent(id)}`);
   }
 
-  async setProjectTakeover(id: string, enabled: boolean): Promise<{ id: string; path: string; ccrTakeover: boolean }> {
-    return this.put<{ id: string; path: string; ccrTakeover: boolean }>(`/projects/${encodeURIComponent(id)}/takeover`, { enabled });
+  async setProjectTakeover(id: string, clients: ClientId[]): Promise<{ id: string; path: string; ccrTakeover: boolean; ccrTakeoverClients: ClientId[] }> {
+    return this.put<{ id: string; path: string; ccrTakeover: boolean; ccrTakeoverClients: ClientId[] }>(`/projects/${encodeURIComponent(id)}/takeover`, { clients });
   }
 
   // ========== Usage Statistics API methods ==========

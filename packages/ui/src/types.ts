@@ -135,7 +135,10 @@ export interface ProjectConfigEntry {
   path: string;
   configPath: string;
   Router: Record<string, any>;
+  /** True when at least one client takes this project over through ccr. */
   ccrTakeover?: boolean;
+  /** Which clients (Claude Code, pi) currently route this project through ccr. */
+  ccrTakeoverClients?: ClientId[];
 }
 
 export interface ProjectsResponse {

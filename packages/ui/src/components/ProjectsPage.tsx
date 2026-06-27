@@ -8,9 +8,19 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Toast } from "@/components/ui/toast";
+import { MultiCombobox } from "@/components/ui/multi-combobox";
 import { RouterConfigEditor } from "./RouterConfigEditor";
 import { Plus, RefreshCw, Trash2, Save, ChevronDown, ChevronRight } from "lucide-react";
-import type { ProjectConfigEntry } from "@/types";
+import type { ClientId, ProjectConfigEntry } from "@/types";
+
+// Clients that support project-level ccr takeover (a project-scoped config
+// file). Mirrors PROJECT_TAKEOVER_CLIENT_IDS on the server; Codex is excluded
+// because its config is global-only.
+const TAKEOVER_CLIENTS: { id: ClientId; name: string }[] = [
+  { id: "claudeCode", name: "Claude Code" },
+  { id: "pi", name: "pi" },
+];
+const ALL_TAKEOVER_CLIENT_IDS = TAKEOVER_CLIENTS.map((client) => client.id);
 
 export function ProjectsPage() {
   const { t } = useTranslation();
@@ -135,12 +145,16 @@ export function ProjectsPage() {
     setCollapsed((current) => ({ ...current, [id]: !current[id] }));
   };
 
-  const handleToggleTakeover = async (id: string, checked: boolean) => {
+  const applyTakeover = async (id: string, clients: ClientId[]) => {
     setTakeoverLoadingId(id);
     try {
-      const result = await api.setProjectTakeover(id, checked);
+      const result = await api.setProjectTakeover(id, clients);
       setProjects((current) =>
-        current.map((project) => (project.id === id ? { ...project, ccrTakeover: result.ccrTakeover } : project))
+        current.map((project) =>
+          project.id === id
+            ? { ...project, ccrTakeover: result.ccrTakeover, ccrTakeoverClients: result.ccrTakeoverClients }
+            : project
+        )
       );
       setToast({ message: t("projects.takeover_update_success"), type: "success" });
     } catch (error) {
@@ -148,6 +162,22 @@ export function ProjectsPage() {
     } finally {
       setTakeoverLoadingId(null);
     }
+  };
+
+  // The master switch enables/disables takeover entirely. Enabling without
+  // picking specific clients defaults to all supported ones ("不选 = 全部").
+  const handleToggleTakeover = (id: string, checked: boolean) => {
+    applyTakeover(id, checked ? [...ALL_TAKEOVER_CLIENT_IDS] : []);
+  };
+
+  // The multi-select narrows which clients are taken over. Clearing it falls
+  // back to all supported clients rather than turning takeover off (use the
+  // master switch for that).
+  const handleTakeoverClientsChange = (id: string, clients: string[]) => {
+    const selected = clients.filter((value): value is ClientId =>
+      ALL_TAKEOVER_CLIENT_IDS.includes(value as ClientId)
+    );
+    applyTakeover(id, selected.length > 0 ? selected : [...ALL_TAKEOVER_CLIENT_IDS]);
   };
 
   const handleSave = async (id: string) => {
@@ -229,6 +259,8 @@ export function ProjectsPage() {
           const isUsingGlobal = useGlobal[project.id] ?? true;
           const draft = drafts[project.id] ?? globalRouterWithFallback;
           const isCollapsed = collapsed[project.id] ?? true;
+          const takeoverClients =
+            project.ccrTakeoverClients ?? (project.ccrTakeover ? ["claudeCode" as ClientId] : []);
           return (
             <Card key={project.id}>
               <CardHeader className="pb-2">
@@ -278,17 +310,37 @@ export function ProjectsPage() {
               </CardHeader>
               {!isCollapsed && (
                 <CardContent className="space-y-4">
-                  <div className="flex items-center gap-2 border-b pb-3">
-                    <Switch
-                      id={`ccr-takeover-${project.id}`}
-                      checked={project.ccrTakeover ?? false}
-                      disabled={takeoverLoadingId === project.id}
-                      onCheckedChange={(checked) => handleToggleTakeover(project.id, checked)}
-                    />
-                    <Label htmlFor={`ccr-takeover-${project.id}`} className="cursor-pointer">
-                      {t("projects.ccr_takeover")}
-                    </Label>
-                    <span className="text-xs text-gray-500">{t("projects.ccr_takeover_desc")}</span>
+                  <div className="space-y-3 border-b pb-3">
+                    <div className="flex items-center gap-2">
+                      <Switch
+                        id={`ccr-takeover-${project.id}`}
+                        checked={takeoverClients.length > 0}
+                        disabled={takeoverLoadingId === project.id}
+                        onCheckedChange={(checked) => handleToggleTakeover(project.id, checked)}
+                      />
+                      <Label htmlFor={`ccr-takeover-${project.id}`} className="cursor-pointer">
+                        {t("projects.ccr_takeover")}
+                      </Label>
+                      <span className="text-xs text-gray-500">{t("projects.ccr_takeover_desc")}</span>
+                    </div>
+
+                    {takeoverClients.length > 0 && (
+                      <div className="space-y-1.5 pl-10">
+                        <Label className="text-xs text-gray-600">
+                          {t("projects.takeover_clients")}
+                        </Label>
+                        <MultiCombobox
+                          options={TAKEOVER_CLIENTS.map((client) => ({
+                            label: client.name,
+                            value: client.id,
+                          }))}
+                          value={takeoverClients}
+                          onChange={(clients) => handleTakeoverClientsChange(project.id, clients)}
+                          placeholder={t("projects.takeover_clients_placeholder")}
+                        />
+                        <span className="text-xs text-gray-500">{t("projects.takeover_clients_desc")}</span>
+                      </div>
+                    )}
                   </div>
 
                   <div className="flex items-center gap-2 border-b pb-3">

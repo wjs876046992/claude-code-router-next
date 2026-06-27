@@ -49,10 +49,13 @@ import {
   deleteProjectConfig,
   getClaudeProjectId,
   getProjectConfigPath,
-  getCcrTakeoverStatus,
-  setCcrTakeover,
-  refreshCcrProjectTakeover,
+  refreshProjectTakeovers,
   syncGlobalProjectTakeovers,
+  getProjectTakeoverClients,
+  setProjectTakeover,
+  PROJECT_TAKEOVER_CLIENT_IDS,
+  isProjectTakeoverClient,
+  type ClientId,
 } from "@wengine-ai/claude-code-router-shared";
 import fastifyMultipart from "@fastify/multipart";
 import AdmZip from "adm-zip";
@@ -773,10 +776,14 @@ export const createServer = async (config: any): Promise<any> => {
     try {
       const projects = await listProjectConfigs();
       const projectsWithTakeover = await Promise.all(
-        projects.map(async (project) => ({
-          ...project,
-          ccrTakeover: await getCcrTakeoverStatus(project.path),
-        }))
+        projects.map(async (project) => {
+          const ccrTakeoverClients = await getProjectTakeoverClients(project.path);
+          return {
+            ...project,
+            ccrTakeoverClients,
+            ccrTakeover: ccrTakeoverClients.length > 0,
+          };
+        })
       );
       return { projects: projectsWithTakeover };
     } catch (error: any) {
@@ -803,25 +810,28 @@ export const createServer = async (config: any): Promise<any> => {
 
       await writeProjectConfig(projectPath, { Router: {} });
 
-      // New projects default to "ccr takeover + follow global router": leave the
-      // project Router empty (so routing falls back to the global config) and
-      // immediately take over the project's `.claude/settings.local.json`, so its
-      // Claude Code CLI works through ccr without `ccr code`. Takeover failures
-      // (e.g. an unwritable project path) must not fail the add itself, so the
-      // returned `ccrTakeover` reflects the actual resulting state.
+      // New projects default to "ccr takeover (Claude Code) + follow global
+      // router": leave the project Router empty (so routing falls back to the
+      // global config) and immediately take over the project's
+      // `.claude/settings.local.json`, so its Claude Code CLI works through ccr
+      // without `ccr code`. Other clients (e.g. pi) can be added afterwards from
+      // the UI. Takeover failures (e.g. an unwritable project path) must not
+      // fail the add itself, so the returned set reflects the actual state.
       try {
         const config = await readConfigFile();
-        await setCcrTakeover(projectPath, true, config);
+        await setProjectTakeover(projectPath, ["claudeCode"], config);
       } catch (takeoverError) {
         console.error("Failed to auto-enable ccr takeover for new project:", takeoverError);
       }
 
+      const ccrTakeoverClients = await getProjectTakeoverClients(projectPath);
       return {
         id: getClaudeProjectId(projectPath),
         path: projectPath,
         configPath: getProjectConfigPath(projectPath),
         Router: {},
-        ccrTakeover: await getCcrTakeoverStatus(projectPath),
+        ccrTakeoverClients,
+        ccrTakeover: ccrTakeoverClients.length > 0,
       };
     } catch (error: any) {
       console.error("Failed to add project config:", error);
@@ -846,16 +856,18 @@ export const createServer = async (config: any): Promise<any> => {
 
       await writeProjectConfig(existing.path, { Router });
       const usesGlobalRouter = Object.keys(Router).length === 0;
-      if (usesGlobalRouter && await getCcrTakeoverStatus(existing.path)) {
+      if (usesGlobalRouter) {
         const config = await readConfigFile();
-        await refreshCcrProjectTakeover(existing.path, config);
+        await refreshProjectTakeovers(existing.path, config);
       }
+      const ccrTakeoverClients = await getProjectTakeoverClients(existing.path);
       return {
         id,
         path: existing.path,
         configPath: existing.configPath,
         Router,
-        ccrTakeover: await getCcrTakeoverStatus(existing.path),
+        ccrTakeoverClients,
+        ccrTakeover: ccrTakeoverClients.length > 0,
       };
     } catch (error: any) {
       console.error("Failed to update project config:", error);
@@ -866,9 +878,17 @@ export const createServer = async (config: any): Promise<any> => {
   app.put("/api/projects/:id/takeover", async (req: any, reply: any) => {
     try {
       const { id } = req.params as { id: string };
-      const { enabled } = req.body || {};
-      if (typeof enabled !== "boolean") {
-        reply.status(400).send({ error: "enabled must be a boolean" });
+      const body = req.body || {};
+
+      // Preferred: an explicit list of clients to take over. Legacy callers may
+      // still send `enabled: boolean` (true = all supported clients, false = none).
+      let clients: ClientId[];
+      if (Array.isArray(body.clients)) {
+        clients = body.clients.filter(isProjectTakeoverClient);
+      } else if (typeof body.enabled === "boolean") {
+        clients = body.enabled ? [...PROJECT_TAKEOVER_CLIENT_IDS] : [];
+      } else {
+        reply.status(400).send({ error: "clients (array) or enabled (boolean) is required" });
         return;
       }
 
@@ -879,9 +899,14 @@ export const createServer = async (config: any): Promise<any> => {
       }
 
       const config = await readConfigFile();
-      await setCcrTakeover(existing.path, enabled, config);
+      const ccrTakeoverClients = await setProjectTakeover(existing.path, clients, config);
 
-      return { id, path: existing.path, ccrTakeover: enabled };
+      return {
+        id,
+        path: existing.path,
+        ccrTakeoverClients,
+        ccrTakeover: ccrTakeoverClients.length > 0,
+      };
     } catch (error: any) {
       console.error("Failed to update ccr takeover status:", error);
       reply.status(500).send({ error: error.message || "Failed to update ccr takeover status" });
@@ -898,13 +923,13 @@ export const createServer = async (config: any): Promise<any> => {
       }
 
       // Adding a project auto-enables ccr takeover, which writes ccr-managed
-      // fields into the project's `.claude/settings.local.json`. Removing the
-      // project config dir alone would leave those fields behind, so disable
-      // takeover first to clean up `settings.local.json`. Takeover removal
-      // failures must not block the delete itself.
+      // fields into the project's client config files (e.g.
+      // `.claude/settings.local.json`, `.pi/settings.json`). Removing the
+      // project config dir alone would leave those behind, so disable takeover
+      // for every supported client first. Failures must not block the delete.
       try {
         const config = await readConfigFile();
-        await setCcrTakeover(existing.path, false, config);
+        await setProjectTakeover(existing.path, [], config);
       } catch (takeoverError) {
         console.error("Failed to remove ccr takeover while deleting project:", takeoverError);
       }

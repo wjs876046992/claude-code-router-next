@@ -9,6 +9,11 @@ import {
   applyCcrProjectTakeover,
   removeCcrProjectTakeover,
   isCcrProjectTakeoverActive,
+  applyPiProjectTakeover,
+  removePiProjectTakeover,
+  isPiProjectTakeoverActive,
+  PROJECT_TAKEOVER_CLIENT_IDS,
+  type ClientId,
 } from "./client-integrations";
 
 export interface ProjectConfig {
@@ -221,6 +226,67 @@ export async function refreshCcrProjectTakeover(projectPath: string, config: Rec
 }
 
 /**
+ * List which project-takeover-capable clients (Claude Code, pi) currently route
+ * a given project through ccr. Derived directly from each client's
+ * project-scoped config file, so it needs no separately stored flag and is
+ * always consistent with the real on-disk state.
+ */
+export async function getProjectTakeoverClients(projectPath: string): Promise<ClientId[]> {
+  const active: ClientId[] = [];
+  for (const id of PROJECT_TAKEOVER_CLIENT_IDS) {
+    if (id === "claudeCode") {
+      if (await getCcrTakeoverStatus(projectPath)) active.push(id);
+    } else if (id === "pi") {
+      if (isPiProjectTakeoverActive(projectPath)) active.push(id);
+    }
+  }
+  return active;
+}
+
+/**
+ * Apply ccr takeover for exactly the given set of clients on a project:
+ * enable each listed client and disable every other supported one. An empty
+ * list removes takeover for all of them. Returns the resulting active set.
+ */
+export async function setProjectTakeover(
+  projectPath: string,
+  clients: ClientId[],
+  config: Record<string, any>
+): Promise<ClientId[]> {
+  const want = new Set(clients.filter((id) => PROJECT_TAKEOVER_CLIENT_IDS.includes(id)));
+  for (const id of PROJECT_TAKEOVER_CLIENT_IDS) {
+    if (id === "claudeCode") {
+      await setCcrTakeover(projectPath, want.has(id), config);
+    } else if (id === "pi") {
+      if (want.has(id)) applyPiProjectTakeover(projectPath, config);
+      else removePiProjectTakeover(projectPath);
+    }
+  }
+  return getProjectTakeoverClients(projectPath);
+}
+
+/**
+ * Refresh ccr-managed fields for whichever clients currently take over a
+ * project, pulling fresh values (proxy URL/token, model aliases, context
+ * window) from the current global config. Returns true if any client was
+ * refreshed.
+ */
+export async function refreshProjectTakeovers(
+  projectPath: string,
+  config: Record<string, any>
+): Promise<boolean> {
+  let refreshed = false;
+  if (await refreshCcrProjectTakeover(projectPath, config)) {
+    refreshed = true;
+  }
+  if (isPiProjectTakeoverActive(projectPath)) {
+    applyPiProjectTakeover(projectPath, config);
+    refreshed = true;
+  }
+  return refreshed;
+}
+
+/**
  * Refresh `.claude/settings.local.json` for projects that are both:
  * - following the global Router (`Router: {}` in their project config), and
  * - currently under ccr takeover.
@@ -240,7 +306,7 @@ export async function syncGlobalProjectTakeovers(config: Record<string, any>): P
     }
 
     try {
-      const updated = await refreshCcrProjectTakeover(project.path, config);
+      const updated = await refreshProjectTakeovers(project.path, config);
       if (!updated) {
         result.skipped++;
         continue;
