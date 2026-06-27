@@ -524,6 +524,7 @@
     "client_codex": "Codex",
     "client_pi": "pi",
     "client_qwen_code": "Qwen Code",
+    "client_opencode": "opencode",
     "client_api": "API",
     "client_unknown": "Other"
   }

@@ -20,6 +20,7 @@ const TAKEOVER_CLIENTS: { id: ClientId; name: string }[] = [
   { id: "claudeCode", name: "Claude Code" },
   { id: "pi", name: "pi" },
   { id: "qwenCode", name: "Qwen Code" },
+  { id: "opencode", name: "opencode" },
 ];
 const ALL_TAKEOVER_CLIENT_IDS = TAKEOVER_CLIENTS.map((client) => client.id);
 
