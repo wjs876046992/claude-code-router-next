@@ -4,7 +4,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { HOME_DIR } from "./constants";
 
-export const CLIENT_IDS = ["claudeCode", "codex", "pi"] as const;
+export const CLIENT_IDS = ["claudeCode", "codex", "pi", "qwenCode"] as const;
 export type ClientId = (typeof CLIENT_IDS)[number];
 export type ClientAction = "enable" | "disable" | "restore";
 
@@ -166,6 +166,23 @@ const CLIENT_DEFINITIONS: Record<ClientId, ClientDefinition> = {
       quota: {},
     },
   },
+  qwenCode: {
+    id: "qwenCode",
+    name: "Qwen Code",
+    defaultConfig: {
+      // qwen-code (@qwen-code/qwen-code) keeps user settings in
+      // ~/.qwen/settings.json; the takeover writes a custom Anthropic
+      // modelProvider pointing at the ccr proxy there.
+      enabled: false,
+      managed: false,
+      configPath: "~/.qwen/settings.json",
+      modelAlias: "ccr-opus",
+      activeAccountId: "",
+      autoSwitchAccounts: true,
+      autoRefreshTokens: true,
+      quota: {},
+    },
+  },
 };
 
 const CLIENT_BACKUP_DIR = path.join(HOME_DIR, "backups", "clients");
@@ -257,6 +274,7 @@ export function getDefaultClientsConfig(): ClientsConfig {
     claudeCode: { ...CLIENT_DEFINITIONS.claudeCode.defaultConfig },
     codex: { ...CLIENT_DEFINITIONS.codex.defaultConfig },
     pi: { ...CLIENT_DEFINITIONS.pi.defaultConfig },
+    qwenCode: { ...CLIENT_DEFINITIONS.qwenCode.defaultConfig },
   };
 }
 
@@ -1960,14 +1978,265 @@ export function isPiProjectTakeoverActive(projectPath: string): boolean {
   return settings.defaultProvider === PI_PROVIDER_NAME;
 }
 
+// ========================= qwen-code (Alibaba) =========================
+//
+// qwen-code (@qwen-code/qwen-code) keeps settings in a single JSON file
+// (~/.qwen/settings.json for the user scope, <project>/.qwen/settings.json for
+// the workspace scope). The takeover registers a custom Anthropic
+// `modelProvider` pointed at the ccr proxy and selects it. qwen speaks the
+// Anthropic /v1/messages protocol (like Claude Code / pi), so no transformer is
+// needed on the ccr side. The provider's api key lives in `settings.env` and is
+// referenced by `envKey`.
+
+const QWEN_PROTOCOL = "anthropic";
+const QWEN_ENV_KEY = "QWEN_CCR_API_KEY";
+
+function getQwenSettingsPath(config: Record<string, any>): string {
+  return expandHome(getClientConfig(config, "qwenCode").configPath);
+}
+
+// qwen stores baseUrl with a trailing slash (matching its own UI output).
+function getQwenBaseUrl(config: Record<string, any>): string {
+  return `${getCcrBaseUrl(config)}/`;
+}
+
+/**
+ * Build the ccr family-alias model providers qwen should expose
+ * (ccr-opus/ccr-sonnet/ccr-haiku), mirroring the Claude Code / pi takeover.
+ * Each entry shares the single env-key holding the ccr api key. Returns the
+ * provider entries plus the id qwen should default to.
+ */
+function getQwenModels(config: Record<string, any>): { providers: any[]; defaultModel: string } {
+  const baseUrl = getQwenBaseUrl(config);
+  const make = (id: string) => ({ id, name: id, baseUrl, envKey: QWEN_ENV_KEY });
+
+  if (hasFamiliesConfig(config)) {
+    const families = config.Router.families;
+    const order = ["opus", "sonnet", "haiku"].filter((f) => families[f]);
+    const providers = order.map((family) => {
+      const extendedSuffix = hasExtendedContext(families[family]) ? "[1m]" : "";
+      return make(`ccr-${family}${extendedSuffix}`);
+    });
+    if (providers.length > 0) {
+      return { providers, defaultModel: providers[0].id };
+    }
+  }
+
+  const alias = getClientConfig(config, "qwenCode").modelAlias || "ccr-opus";
+  return { providers: [make(alias)], defaultModel: alias };
+}
+
+function isQwenManaged(settings: Record<string, any>): boolean {
+  const model = isObject(settings.model) ? settings.model : {};
+  if (isCcrBaseUrl(model.baseUrl)) return true;
+  const providers = isObject(settings.modelProviders) ? settings.modelProviders[QWEN_PROTOCOL] : undefined;
+  return Array.isArray(providers) && providers.some((p) => isObject(p) && isCcrBaseUrl(p.baseUrl));
+}
+
+/**
+ * Point a qwen `settings.json` object at ccr: write the api key into `env`,
+ * register the ccr Anthropic providers (replacing any previous ccr entries
+ * while preserving the user's other Anthropic providers), select the Anthropic
+ * auth type, and set the active model. Other settings are preserved.
+ */
+function applyQwenTakeover(settings: Record<string, any>, config: Record<string, any>): void {
+  const { providers, defaultModel } = getQwenModels(config);
+  const baseUrl = getQwenBaseUrl(config);
+
+  if (!isObject(settings.env)) settings.env = {};
+  settings.env[QWEN_ENV_KEY] = config.APIKEY || "test";
+
+  if (!isObject(settings.modelProviders)) settings.modelProviders = {};
+  const existing = Array.isArray(settings.modelProviders[QWEN_PROTOCOL])
+    ? settings.modelProviders[QWEN_PROTOCOL].filter((p: any) => !(isObject(p) && isCcrBaseUrl(p.baseUrl)))
+    : [];
+  settings.modelProviders[QWEN_PROTOCOL] = [...existing, ...providers];
+
+  if (!isObject(settings.security)) settings.security = {};
+  if (!isObject(settings.security.auth)) settings.security.auth = {};
+  settings.security.auth.selectedType = QWEN_PROTOCOL;
+
+  settings.model = { name: defaultModel, baseUrl };
+  if (typeof settings.$version !== "number") settings.$version = 4;
+}
+
+/**
+ * Remove the ccr-managed fields written by {@link applyQwenTakeover}, leaving
+ * the user's unrelated settings (and non-ccr Anthropic providers) intact.
+ */
+function removeQwenManagedFields(settings: Record<string, any>): void {
+  if (isObject(settings.env)) {
+    delete settings.env[QWEN_ENV_KEY];
+    if (Object.keys(settings.env).length === 0) delete settings.env;
+  }
+
+  if (isObject(settings.modelProviders) && Array.isArray(settings.modelProviders[QWEN_PROTOCOL])) {
+    const remaining = settings.modelProviders[QWEN_PROTOCOL].filter(
+      (p: any) => !(isObject(p) && isCcrBaseUrl(p.baseUrl))
+    );
+    if (remaining.length > 0) {
+      settings.modelProviders[QWEN_PROTOCOL] = remaining;
+    } else {
+      delete settings.modelProviders[QWEN_PROTOCOL];
+      if (Object.keys(settings.modelProviders).length === 0) delete settings.modelProviders;
+    }
+  }
+
+  if (isObject(settings.model) && isCcrBaseUrl(settings.model.baseUrl)) {
+    delete settings.model;
+  }
+
+  // Clear the Anthropic auth selection we set, but only once no Anthropic
+  // providers remain (so a user's own Anthropic provider keeps its selection).
+  if (
+    isObject(settings.security) &&
+    isObject(settings.security.auth) &&
+    settings.security.auth.selectedType === QWEN_PROTOCOL
+  ) {
+    const anthropicProviders = isObject(settings.modelProviders)
+      ? settings.modelProviders[QWEN_PROTOCOL]
+      : undefined;
+    if (!Array.isArray(anthropicProviders) || anthropicProviders.length === 0) {
+      delete settings.security.auth.selectedType;
+      if (Object.keys(settings.security.auth).length === 0) delete settings.security.auth;
+      if (Object.keys(settings.security).length === 0) delete settings.security;
+    }
+  }
+}
+
+function createQwenStatus(config: Record<string, any>, settings?: Record<string, any>, details?: string): ClientStatus {
+  const clientConfig = getClientConfig(config, "qwenCode");
+  const filePath = getQwenSettingsPath(config);
+  const safeSettings = settings || {};
+
+  return {
+    id: "qwenCode",
+    name: CLIENT_DEFINITIONS.qwenCode.name,
+    enabled: clientConfig.enabled,
+    managed: isQwenManaged(safeSettings),
+    configPath: clientConfig.configPath,
+    exists: fs.existsSync(filePath),
+    activeModel:
+      isObject(safeSettings.model) && typeof safeSettings.model.name === "string"
+        ? safeSettings.model.name
+        : undefined,
+    details,
+  };
+}
+
+const qwenCodeAdapter: ClientAdapter = {
+  status(config) {
+    const filePath = getQwenSettingsPath(config);
+    try {
+      return createQwenStatus(config, readJsonObject(filePath));
+    } catch (error) {
+      return createQwenStatus(config, {}, errorMessage(error));
+    }
+  },
+
+  enable(config) {
+    const filePath = getQwenSettingsPath(config);
+    if (!this.status(config).managed) {
+      createBackup("qwenCode", filePath);
+    }
+    const settings = readJsonObject(filePath);
+    applyQwenTakeover(settings, config);
+    writeJsonObject(filePath, settings);
+    return createQwenStatus(config, settings);
+  },
+
+  disable(config) {
+    const filePath = getQwenSettingsPath(config);
+    if (restoreLatestBackup("qwenCode", filePath)) {
+      return this.status(config);
+    }
+    if (!fs.existsSync(filePath)) {
+      return this.status(config);
+    }
+    const settings = readJsonObject(filePath);
+    removeQwenManagedFields(settings);
+    writeJsonObject(filePath, settings);
+    return createQwenStatus(config, settings);
+  },
+
+  restore(config) {
+    return this.disable(config);
+  },
+};
+
+/** Path to a project's workspace-scoped `.qwen/settings.json`. */
+function getQwenProjectSettingsPath(projectPath: string): string {
+  return path.join(projectPath, ".qwen", "settings.json");
+}
+
+/** Path to qwen's global trust ledger (`~/.qwen/trustedFolders.json`). */
+function getQwenTrustPath(config: Record<string, any>): string {
+  return path.join(path.dirname(getQwenSettingsPath(config)), "trustedFolders.json");
+}
+
+/**
+ * Trust a project folder in qwen's `trustedFolders.json`. qwen ignores a
+ * workspace's `.qwen/settings.json` unless the folder is trusted, so the
+ * project-level takeover must record the trust decision.
+ */
+function addQwenProjectTrust(projectPath: string, config: Record<string, any>): void {
+  const trustPath = getQwenTrustPath(config);
+  const trust = readJsonObject(trustPath);
+  if (trust[projectPath] !== "TRUST_FOLDER") {
+    trust[projectPath] = "TRUST_FOLDER";
+    writeJsonObject(trustPath, trust);
+  }
+}
+
+/**
+ * Enable ccr takeover for a project's qwen configuration: trust the folder and
+ * write the ccr Anthropic provider/model selection into the project's
+ * workspace-scoped `.qwen/settings.json` (self-contained — unlike pi, qwen's
+ * workspace settings carry the provider definition too).
+ */
+export function applyQwenProjectTakeover(projectPath: string, config: Record<string, any>): void {
+  addQwenProjectTrust(projectPath, config);
+  const settingsPath = getQwenProjectSettingsPath(projectPath);
+  const settings = readJsonObject(settingsPath);
+  applyQwenTakeover(settings, config);
+  writeJsonObject(settingsPath, settings);
+}
+
+/**
+ * Disable ccr takeover for a project's qwen configuration by removing the
+ * ccr-managed fields from its workspace `.qwen/settings.json` (deleting the file
+ * when nothing meaningful remains). The global trust entry is left in place.
+ */
+export function removeQwenProjectTakeover(projectPath: string): void {
+  const settingsPath = getQwenProjectSettingsPath(projectPath);
+  if (!fs.existsSync(settingsPath)) return;
+
+  const settings = readJsonObject(settingsPath);
+  if (!isQwenManaged(settings)) return;
+
+  removeQwenManagedFields(settings);
+  // `$version` alone is not meaningful content, so treat it as empty.
+  const meaningfulKeys = Object.keys(settings).filter((k) => k !== "$version");
+  if (meaningfulKeys.length === 0) {
+    fs.unlinkSync(settingsPath);
+  } else {
+    writeJsonObject(settingsPath, settings);
+  }
+}
+
+/** Whether a project's `.qwen/settings.json` currently routes qwen through ccr. */
+export function isQwenProjectTakeoverActive(projectPath: string): boolean {
+  return isQwenManaged(readJsonObject(getQwenProjectSettingsPath(projectPath)));
+}
+
 /**
  * Clients that support *project-level* ccr takeover (writing a project-scoped
  * config file). Claude Code uses `.claude/settings.local.json`; pi uses
- * `.pi/settings.json`. Codex is intentionally excluded — its config
- * (`~/.codex/config.toml`) is global-only, so it can only be taken over from
- * the Clients page, not per project.
+ * `.pi/settings.json`; qwen-code uses `.qwen/settings.json`. Codex is
+ * intentionally excluded — its config (`~/.codex/config.toml`) is global-only,
+ * so it can only be taken over from the Clients page, not per project.
  */
-export const PROJECT_TAKEOVER_CLIENT_IDS: ClientId[] = ["claudeCode", "pi"];
+export const PROJECT_TAKEOVER_CLIENT_IDS: ClientId[] = ["claudeCode", "pi", "qwenCode"];
 
 /** Type guard for {@link PROJECT_TAKEOVER_CLIENT_IDS}. */
 export function isProjectTakeoverClient(value: string): value is ClientId {
@@ -1978,6 +2247,7 @@ const CLIENT_ADAPTERS: Record<ClientId, ClientAdapter> = {
   claudeCode: claudeCodeAdapter,
   codex: codexAdapter,
   pi: piAdapter,
+  qwenCode: qwenCodeAdapter,
 };
 
 export function listClientStatuses(config: Record<string, any>): ClientStatus[] {
