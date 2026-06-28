@@ -232,8 +232,8 @@ export async function refreshCcrProjectTakeover(projectPath: string, config: Rec
 }
 
 /**
- * List which project-takeover-capable clients (Claude Code, pi, qwen-code)
- * currently route a given project through ccr. Derived directly from each
+ * List which project-takeover-capable clients (Claude Code, pi, qwen-code,
+ * opencode) currently route a given project through ccr. Derived directly from each
  * client's project-scoped config file, so it needs no separately stored flag
  * and is always consistent with the real on-disk state.
  */
