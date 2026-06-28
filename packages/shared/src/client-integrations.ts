@@ -4,7 +4,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { HOME_DIR } from "./constants";
 
-export const CLIENT_IDS = ["claudeCode", "codex", "pi", "qwenCode"] as const;
+export const CLIENT_IDS = ["claudeCode", "codex", "pi", "qwenCode", "opencode"] as const;
 export type ClientId = (typeof CLIENT_IDS)[number];
 export type ClientAction = "enable" | "disable" | "restore";
 
@@ -183,6 +183,23 @@ const CLIENT_DEFINITIONS: Record<ClientId, ClientDefinition> = {
       quota: {},
     },
   },
+  opencode: {
+    id: "opencode",
+    name: "opencode",
+    defaultConfig: {
+      // opencode (opencode.ai) keeps its config in ~/.config/opencode/
+      // opencode.json; the takeover injects a custom Anthropic `provider`
+      // pointing at the ccr proxy there.
+      enabled: false,
+      managed: false,
+      configPath: "~/.config/opencode/opencode.json",
+      modelAlias: "ccr-opus",
+      activeAccountId: "",
+      autoSwitchAccounts: true,
+      autoRefreshTokens: true,
+      quota: {},
+    },
+  },
 };
 
 const CLIENT_BACKUP_DIR = path.join(HOME_DIR, "backups", "clients");
@@ -275,6 +292,7 @@ export function getDefaultClientsConfig(): ClientsConfig {
     codex: { ...CLIENT_DEFINITIONS.codex.defaultConfig },
     pi: { ...CLIENT_DEFINITIONS.pi.defaultConfig },
     qwenCode: { ...CLIENT_DEFINITIONS.qwenCode.defaultConfig },
+    opencode: { ...CLIENT_DEFINITIONS.opencode.defaultConfig },
   };
 }
 
@@ -2229,14 +2247,212 @@ export function isQwenProjectTakeoverActive(projectPath: string): boolean {
   return isQwenManaged(readJsonObject(getQwenProjectSettingsPath(projectPath)));
 }
 
+// ========================= opencode (opencode.ai) =========================
+//
+// opencode keeps its config in a single JSON file (~/.config/opencode/
+// opencode.json for the global scope, <project>/opencode.json — merged up to the
+// git root — for the project scope). The takeover injects a custom `provider`
+// using the Anthropic AI SDK (`@ai-sdk/anthropic`) pointed at the ccr proxy and
+// selects it as the default `model`. opencode speaks the Anthropic /v1/messages
+// protocol, so no transformer is needed on the ccr side; the api key is inlined
+// in the provider's `options`.
+
+const OPENCODE_PROVIDER_ID = "ccr";
+const OPENCODE_NPM = "@ai-sdk/anthropic";
+
+function getOpencodeSettingsPath(config: Record<string, any>): string {
+  return expandHome(getClientConfig(config, "opencode").configPath);
+}
+
+// The @ai-sdk/anthropic SDK appends "/messages" to baseURL, so it must end in
+// the ccr "/v1" path (mirroring opencode's own Anthropic provider entries).
+function getOpencodeBaseUrl(config: Record<string, any>): string {
+  return `${getCcrBaseUrl(config)}/v1`;
+}
+
+/**
+ * Build the ccr family-alias models opencode should expose
+ * (ccr-opus/ccr-sonnet/ccr-haiku). Returns the `models` map plus the
+ * "<provider>/<model>" id opencode should default to.
+ */
+function getOpencodeModels(config: Record<string, any>): { models: Record<string, any>; defaultModel: string } {
+  const models: Record<string, any> = {};
+  let firstId = "";
+
+  const add = (id: string, label: string) => {
+    models[id] = { name: label };
+    if (!firstId) firstId = id;
+  };
+
+  if (hasFamiliesConfig(config)) {
+    const families = config.Router.families;
+    for (const family of ["opus", "sonnet", "haiku"].filter((f) => families[f])) {
+      const extendedSuffix = hasExtendedContext(families[family]) ? "[1m]" : "";
+      add(`ccr-${family}${extendedSuffix}`, `CCR (${family})`);
+    }
+  }
+  if (!firstId) {
+    add(getClientConfig(config, "opencode").modelAlias || "ccr-opus", "CCR");
+  }
+
+  return { models, defaultModel: `${OPENCODE_PROVIDER_ID}/${firstId}` };
+}
+
+function isOpencodeManaged(settings: Record<string, any>): boolean {
+  const provider = isObject(settings.provider) ? settings.provider[OPENCODE_PROVIDER_ID] : undefined;
+  if (isObject(provider) && isObject(provider.options) && isCcrBaseUrl(provider.options.baseURL)) {
+    return true;
+  }
+  return typeof settings.model === "string" && settings.model.startsWith(`${OPENCODE_PROVIDER_ID}/`);
+}
+
+/**
+ * Point an opencode config object at ccr: register the ccr Anthropic provider
+ * (api key inlined) and select it as the default model. Other settings (the
+ * user's own providers, `$schema`, etc.) are preserved.
+ */
+function applyOpencodeTakeover(settings: Record<string, any>, config: Record<string, any>): void {
+  const { models, defaultModel } = getOpencodeModels(config);
+
+  if (!isObject(settings.provider)) settings.provider = {};
+  settings.provider[OPENCODE_PROVIDER_ID] = {
+    npm: OPENCODE_NPM,
+    name: "Claude Code Router",
+    options: {
+      baseURL: getOpencodeBaseUrl(config),
+      apiKey: config.APIKEY || "test",
+    },
+    models,
+  };
+
+  settings.model = defaultModel;
+}
+
+/** Remove the ccr-managed fields written by {@link applyOpencodeTakeover}. */
+function removeOpencodeManagedFields(settings: Record<string, any>): void {
+  if (isObject(settings.provider) && isObject(settings.provider[OPENCODE_PROVIDER_ID])) {
+    const provider = settings.provider[OPENCODE_PROVIDER_ID];
+    if (isObject(provider.options) && isCcrBaseUrl(provider.options.baseURL)) {
+      delete settings.provider[OPENCODE_PROVIDER_ID];
+      if (Object.keys(settings.provider).length === 0) delete settings.provider;
+    }
+  }
+  if (typeof settings.model === "string" && settings.model.startsWith(`${OPENCODE_PROVIDER_ID}/`)) {
+    delete settings.model;
+  }
+}
+
+function createOpencodeStatus(config: Record<string, any>, settings?: Record<string, any>, details?: string): ClientStatus {
+  const clientConfig = getClientConfig(config, "opencode");
+  const filePath = getOpencodeSettingsPath(config);
+  const safeSettings = settings || {};
+
+  return {
+    id: "opencode",
+    name: CLIENT_DEFINITIONS.opencode.name,
+    enabled: clientConfig.enabled,
+    managed: isOpencodeManaged(safeSettings),
+    configPath: clientConfig.configPath,
+    exists: fs.existsSync(filePath),
+    activeModel: typeof safeSettings.model === "string" ? safeSettings.model : undefined,
+    details,
+  };
+}
+
+const opencodeAdapter: ClientAdapter = {
+  status(config) {
+    const filePath = getOpencodeSettingsPath(config);
+    try {
+      return createOpencodeStatus(config, readJsonObject(filePath));
+    } catch (error) {
+      return createOpencodeStatus(config, {}, errorMessage(error));
+    }
+  },
+
+  enable(config) {
+    const filePath = getOpencodeSettingsPath(config);
+    if (!this.status(config).managed) {
+      createBackup("opencode", filePath);
+    }
+    const settings = readJsonObject(filePath);
+    applyOpencodeTakeover(settings, config);
+    writeJsonObject(filePath, settings);
+    return createOpencodeStatus(config, settings);
+  },
+
+  disable(config) {
+    const filePath = getOpencodeSettingsPath(config);
+    if (restoreLatestBackup("opencode", filePath)) {
+      return this.status(config);
+    }
+    if (!fs.existsSync(filePath)) {
+      return this.status(config);
+    }
+    const settings = readJsonObject(filePath);
+    removeOpencodeManagedFields(settings);
+    writeJsonObject(filePath, settings);
+    return createOpencodeStatus(config, settings);
+  },
+
+  restore(config) {
+    return this.disable(config);
+  },
+};
+
+/** Path to a project's project-scoped `opencode.json` (merged up to the git root). */
+function getOpencodeProjectSettingsPath(projectPath: string): string {
+  return path.join(projectPath, "opencode.json");
+}
+
+/**
+ * Enable ccr takeover for a project's opencode configuration by writing the ccr
+ * Anthropic provider/model into the project's `opencode.json`. opencode has no
+ * trust gate, so nothing else is needed.
+ */
+export function applyOpencodeProjectTakeover(projectPath: string, config: Record<string, any>): void {
+  const settingsPath = getOpencodeProjectSettingsPath(projectPath);
+  const settings = readJsonObject(settingsPath);
+  if (typeof settings.$schema !== "string") settings.$schema = "https://opencode.ai/config.json";
+  applyOpencodeTakeover(settings, config);
+  writeJsonObject(settingsPath, settings);
+}
+
+/**
+ * Disable ccr takeover for a project's opencode configuration by removing the
+ * ccr-managed fields from its `opencode.json` (deleting the file when nothing
+ * meaningful remains).
+ */
+export function removeOpencodeProjectTakeover(projectPath: string): void {
+  const settingsPath = getOpencodeProjectSettingsPath(projectPath);
+  if (!fs.existsSync(settingsPath)) return;
+
+  const settings = readJsonObject(settingsPath);
+  if (!isOpencodeManaged(settings)) return;
+
+  removeOpencodeManagedFields(settings);
+  // `$schema` alone is not meaningful content, so treat it as empty.
+  const meaningfulKeys = Object.keys(settings).filter((k) => k !== "$schema");
+  if (meaningfulKeys.length === 0) {
+    fs.unlinkSync(settingsPath);
+  } else {
+    writeJsonObject(settingsPath, settings);
+  }
+}
+
+/** Whether a project's `opencode.json` currently routes opencode through ccr. */
+export function isOpencodeProjectTakeoverActive(projectPath: string): boolean {
+  return isOpencodeManaged(readJsonObject(getOpencodeProjectSettingsPath(projectPath)));
+}
+
 /**
  * Clients that support *project-level* ccr takeover (writing a project-scoped
  * config file). Claude Code uses `.claude/settings.local.json`; pi uses
- * `.pi/settings.json`; qwen-code uses `.qwen/settings.json`. Codex is
- * intentionally excluded — its config (`~/.codex/config.toml`) is global-only,
- * so it can only be taken over from the Clients page, not per project.
+ * `.pi/settings.json`; qwen-code uses `.qwen/settings.json`; opencode uses
+ * `opencode.json`. Codex is intentionally excluded — its config
+ * (`~/.codex/config.toml`) is global-only, so it can only be taken over from the
+ * Clients page, not per project.
  */
-export const PROJECT_TAKEOVER_CLIENT_IDS: ClientId[] = ["claudeCode", "pi", "qwenCode"];
+export const PROJECT_TAKEOVER_CLIENT_IDS: ClientId[] = ["claudeCode", "pi", "qwenCode", "opencode"];
 
 /** Type guard for {@link PROJECT_TAKEOVER_CLIENT_IDS}. */
 export function isProjectTakeoverClient(value: string): value is ClientId {
@@ -2248,6 +2464,7 @@ const CLIENT_ADAPTERS: Record<ClientId, ClientAdapter> = {
   codex: codexAdapter,
   pi: piAdapter,
   qwenCode: qwenCodeAdapter,
+  opencode: opencodeAdapter,
 };
 
 export function listClientStatuses(config: Record<string, any>): ClientStatus[] {

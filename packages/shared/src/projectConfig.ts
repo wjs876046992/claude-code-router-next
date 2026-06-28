@@ -15,6 +15,9 @@ import {
   applyQwenProjectTakeover,
   removeQwenProjectTakeover,
   isQwenProjectTakeoverActive,
+  applyOpencodeProjectTakeover,
+  removeOpencodeProjectTakeover,
+  isOpencodeProjectTakeoverActive,
   PROJECT_TAKEOVER_CLIENT_IDS,
   type ClientId,
 } from "./client-integrations";
@@ -229,8 +232,8 @@ export async function refreshCcrProjectTakeover(projectPath: string, config: Rec
 }
 
 /**
- * List which project-takeover-capable clients (Claude Code, pi, qwen-code)
- * currently route a given project through ccr. Derived directly from each
+ * List which project-takeover-capable clients (Claude Code, pi, qwen-code,
+ * opencode) currently route a given project through ccr. Derived directly from each
  * client's project-scoped config file, so it needs no separately stored flag
  * and is always consistent with the real on-disk state.
  */
@@ -243,6 +246,8 @@ export async function getProjectTakeoverClients(projectPath: string): Promise<Cl
       if (isPiProjectTakeoverActive(projectPath)) active.push(id);
     } else if (id === "qwenCode") {
       if (isQwenProjectTakeoverActive(projectPath)) active.push(id);
+    } else if (id === "opencode") {
+      if (isOpencodeProjectTakeoverActive(projectPath)) active.push(id);
     }
   }
   return active;
@@ -268,6 +273,9 @@ export async function setProjectTakeover(
     } else if (id === "qwenCode") {
       if (want.has(id)) applyQwenProjectTakeover(projectPath, config);
       else removeQwenProjectTakeover(projectPath);
+    } else if (id === "opencode") {
+      if (want.has(id)) applyOpencodeProjectTakeover(projectPath, config);
+      else removeOpencodeProjectTakeover(projectPath);
     }
   }
   return getProjectTakeoverClients(projectPath);
@@ -293,6 +301,10 @@ export async function refreshProjectTakeovers(
   }
   if (isQwenProjectTakeoverActive(projectPath)) {
     applyQwenProjectTakeover(projectPath, config);
+    refreshed = true;
+  }
+  if (isOpencodeProjectTakeoverActive(projectPath)) {
+    applyOpencodeProjectTakeover(projectPath, config);
     refreshed = true;
   }
   return refreshed;

@@ -90,6 +90,9 @@ function detectClientType(req: any): string {
   if (/operating inside pi\b/i.test(sysHead) || /a coding agent harness/i.test(sysHead)) {
     return "pi";
   }
+  if (/\bYou are opencode\b/i.test(sysHead)) {
+    return "opencode";
+  }
 
   // 2. Claude Code: definitive signals impersonators do not send — the
   // "cc_version=" billing header and a top-level metadata.user_id.
@@ -105,7 +108,10 @@ function detectClientType(req: any): string {
   if (userAgent.includes("codex") || userAgent.includes("Codex")) return "codex";
   if (pathname.endsWith("/v1/responses")) return "codex";
 
-  // 4. Explicit non-proxy User-Agents (pi telemetry UA; qwen native UA).
+  // 4. Explicit User-Agents. opencode sends "opencode/<ver> ai-sdk/..." on every
+  // request (including subagents) and does not impersonate, so its UA is a
+  // reliable signal; pi/qwen native UAs are kept as fast paths.
+  if (userAgent.includes("opencode")) return "opencode";
   if (userAgent.includes("pi-coding-agent")) return "pi";
   if (userAgent.includes("QwenCode")) return "qwen-code";
 

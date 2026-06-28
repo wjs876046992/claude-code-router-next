@@ -130,6 +130,7 @@ function clientDisplayName(type: string | undefined, t: (key: string) => string)
     case "codex": return t("usage.client_codex");
     case "pi": return t("usage.client_pi");
     case "qwen-code": return t("usage.client_qwen_code");
+    case "opencode": return t("usage.client_opencode");
     case "api": return t("usage.client_api");
     default: return t("usage.client_unknown");
   }
