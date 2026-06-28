@@ -62,66 +62,69 @@ function getRequestModel(req: any): string {
   return req.model || "";
 }
 
-// pi (earendil-works) embeds its own harness identity at the start of its
-// system prompt, e.g. "You are an expert coding assistant operating inside pi,
-// a coding agent harness." This is a direct, positive pi signal independent of
-// the (shared) ccr-* model alias. Only the head of the first system block is
-// scanned, where the signature lives.
-function hasPiSystemSignature(system: unknown): boolean {
-  let head = "";
-  if (typeof system === "string") {
-    head = system.slice(0, 1000);
-  } else if (Array.isArray(system)) {
+// Head of the first system-prompt text block (where coding agents put their
+// "You are X" identity line), used for positive client identification.
+function firstSystemHead(system: unknown): string {
+  if (typeof system === "string") return system.slice(0, 1000);
+  if (Array.isArray(system)) {
     const first = system.find((block: any) => block && typeof block.text === "string");
-    head = first ? String(first.text).slice(0, 1000) : "";
+    return first ? String(first.text).slice(0, 1000) : "";
   }
-  if (!head) return false;
-  return /operating inside pi\b/i.test(head) || /a coding agent harness/i.test(head);
+  return "";
 }
 
 function detectClientType(req: any): string {
   const pathname: string = req.pathname || "";
   const headers = req.headers || {};
   const userAgent = typeof headers["user-agent"] === "string" ? headers["user-agent"] : "";
+  const body = req.body || {};
 
-  // 1. Explicit pi signal: pi identifies its own harness in the system prompt.
-  // Checked first because pi shares the ccr-opus/sonnet/haiku aliases with
-  // Claude Code, and Claude Code never carries this signature.
-  if (hasPiSystemSignature(req.body?.system)) return "pi";
+  // 1. Explicit harness signatures in the system prompt — the most reliable,
+  // impersonation-proof positive ID. pi and qwen-code both reuse the shared
+  // ccr-opus/sonnet/haiku aliases, and qwen-code even spoofs Claude Code's
+  // "claude-cli" User-Agent when routed through a proxy, so these come first.
+  const sysHead = firstSystemHead(body.system);
+  if (/\bYou are Qwen Code\b/i.test(sysHead) || /Qwen Code, an interactive CLI agent/i.test(sysHead)) {
+    return "qwen-code";
+  }
+  if (/operating inside pi\b/i.test(sysHead) || /a coding agent harness/i.test(sysHead)) {
+    return "pi";
+  }
 
-  // 2. Claude Code: definitive identifying signals.
-  // Sends "x-anthropic-billing-header" containing "cc_version=".
+  // 2. Claude Code: definitive signals impersonators do not send — the
+  // "cc_version=" billing header and a top-level metadata.user_id.
   const billingHeader = headers["x-anthropic-billing-header"];
   if (typeof billingHeader === "string" && billingHeader.includes("cc_version=")) {
     return "claude-code";
   }
-  if (userAgent.includes("claude-cli") || userAgent.includes("Claude-CLI")) return "claude-code";
-
-  // Codex by User-Agent.
-  if (userAgent.includes("codex") || userAgent.includes("Codex")) return "codex";
-
-  // Explicit pi User-Agent (telemetry-style UA), kept as a fast path.
-  if (userAgent.includes("pi-coding-agent")) return "pi";
-
-  // Fallback: infer from endpoint path and model name.
-  // Codex uses the Responses API endpoint.
-  if (pathname.endsWith("/v1/responses")) return "codex";
-  const originalModel = (req.originalModel || req.body?.model || "");
-  // 3. ccr exposes the same ccr-opus/sonnet/haiku aliases to both Claude Code and
-  // pi. Claude Code is already identified above (its system signature doesn't
-  // match pi, and it carries a claude-cli UA / cc_version header), so a remaining
-  // ccr-* request from the official Anthropic TS SDK ("User-Agent: Anthropic/JS",
-  // x-stainless-* headers) is pi. This backs up the system-signature check above
-  // in case pi's prompt wording changes.
-  if (/^ccr-(opus|sonnet|haiku)(\[1m\])?$/i.test(originalModel)) {
-    const isAnthropicSdk =
-      userAgent.includes("Anthropic/") ||
-      typeof headers["x-stainless-package-version"] === "string";
-    return isAnthropicSdk ? "pi" : "claude-code";
+  if (body.metadata && typeof body.metadata === "object" && typeof body.metadata.user_id === "string") {
+    return "claude-code";
   }
-  // Legacy Codex installs may still send ccr-codex as their model alias
+
+  // 3. Codex.
+  if (userAgent.includes("codex") || userAgent.includes("Codex")) return "codex";
+  if (pathname.endsWith("/v1/responses")) return "codex";
+
+  // 4. Explicit non-proxy User-Agents (pi telemetry UA; qwen native UA).
+  if (userAgent.includes("pi-coding-agent")) return "pi";
+  if (userAgent.includes("QwenCode")) return "qwen-code";
+
+  // 5. ccr-* aliases are shared by Claude Code, pi and qwen-code, used by
+  // subagent/meta requests that lack a system signature. Real Claude Code was
+  // already returned above (cc_version / metadata.user_id), so disambiguate the
+  // rest by User-Agent: pi uses the Anthropic JS SDK ("Anthropic/JS",
+  // x-stainless-*); qwen-code spoofs the claude-cli UA.
+  const originalModel = (req.originalModel || body.model || "");
+  if (/^ccr-(opus|sonnet|haiku)(\[1m\])?$/i.test(originalModel)) {
+    if (userAgent.includes("Anthropic/")) return "pi";
+    if (userAgent.includes("claude-cli") || userAgent.includes("Claude-CLI")) return "qwen-code";
+    if (typeof headers["x-stainless-package-version"] === "string") return "pi";
+    return "claude-code";
+  }
+
+  // Non-ccr fallbacks.
+  if (userAgent.includes("claude-cli") || userAgent.includes("Claude-CLI")) return "claude-code";
   if (originalModel.toLowerCase() === "ccr-codex") return "codex";
-  // Direct /v1/messages call without ccr- prefix → generic API
   if (pathname.endsWith("/v1/messages")) return "api";
   return "unknown";
 }

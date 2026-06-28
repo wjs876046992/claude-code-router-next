@@ -12,6 +12,9 @@ import {
   applyPiProjectTakeover,
   removePiProjectTakeover,
   isPiProjectTakeoverActive,
+  applyQwenProjectTakeover,
+  removeQwenProjectTakeover,
+  isQwenProjectTakeoverActive,
   PROJECT_TAKEOVER_CLIENT_IDS,
   type ClientId,
 } from "./client-integrations";
@@ -226,10 +229,10 @@ export async function refreshCcrProjectTakeover(projectPath: string, config: Rec
 }
 
 /**
- * List which project-takeover-capable clients (Claude Code, pi) currently route
- * a given project through ccr. Derived directly from each client's
- * project-scoped config file, so it needs no separately stored flag and is
- * always consistent with the real on-disk state.
+ * List which project-takeover-capable clients (Claude Code, pi, qwen-code)
+ * currently route a given project through ccr. Derived directly from each
+ * client's project-scoped config file, so it needs no separately stored flag
+ * and is always consistent with the real on-disk state.
  */
 export async function getProjectTakeoverClients(projectPath: string): Promise<ClientId[]> {
   const active: ClientId[] = [];
@@ -238,6 +241,8 @@ export async function getProjectTakeoverClients(projectPath: string): Promise<Cl
       if (await getCcrTakeoverStatus(projectPath)) active.push(id);
     } else if (id === "pi") {
       if (isPiProjectTakeoverActive(projectPath)) active.push(id);
+    } else if (id === "qwenCode") {
+      if (isQwenProjectTakeoverActive(projectPath)) active.push(id);
     }
   }
   return active;
@@ -260,6 +265,9 @@ export async function setProjectTakeover(
     } else if (id === "pi") {
       if (want.has(id)) applyPiProjectTakeover(projectPath, config);
       else removePiProjectTakeover(projectPath);
+    } else if (id === "qwenCode") {
+      if (want.has(id)) applyQwenProjectTakeover(projectPath, config);
+      else removeQwenProjectTakeover(projectPath);
     }
   }
   return getProjectTakeoverClients(projectPath);
@@ -281,6 +289,10 @@ export async function refreshProjectTakeovers(
   }
   if (isPiProjectTakeoverActive(projectPath)) {
     applyPiProjectTakeover(projectPath, config);
+    refreshed = true;
+  }
+  if (isQwenProjectTakeoverActive(projectPath)) {
+    applyQwenProjectTakeover(projectPath, config);
     refreshed = true;
   }
   return refreshed;
