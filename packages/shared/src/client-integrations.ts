@@ -4,7 +4,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { HOME_DIR } from "./constants";
 
-export const CLIENT_IDS = ["claudeCode", "codex"] as const;
+export const CLIENT_IDS = ["claudeCode", "codex", "pi"] as const;
 export type ClientId = (typeof CLIENT_IDS)[number];
 export type ClientAction = "enable" | "disable" | "restore";
 
@@ -150,6 +150,22 @@ const CLIENT_DEFINITIONS: Record<ClientId, ClientDefinition> = {
       quota: {},
     },
   },
+  pi: {
+    id: "pi",
+    name: "pi",
+    defaultConfig: {
+      // pi (earendil-works) stores config under a directory, not a single
+      // file; the takeover writes models.json + settings.json inside it.
+      enabled: false,
+      managed: false,
+      configPath: "~/.pi/agent",
+      modelAlias: "ccr-opus",
+      activeAccountId: "",
+      autoSwitchAccounts: true,
+      autoRefreshTokens: true,
+      quota: {},
+    },
+  },
 };
 
 const CLIENT_BACKUP_DIR = path.join(HOME_DIR, "backups", "clients");
@@ -240,6 +256,7 @@ export function getDefaultClientsConfig(): ClientsConfig {
   return {
     claudeCode: { ...CLIENT_DEFINITIONS.claudeCode.defaultConfig },
     codex: { ...CLIENT_DEFINITIONS.codex.defaultConfig },
+    pi: { ...CLIENT_DEFINITIONS.pi.defaultConfig },
   };
 }
 
@@ -1679,9 +1696,288 @@ const codexAdapter: ClientAdapter = {
   },
 };
 
+// ========================= pi (earendil-works) =========================
+//
+// pi keeps its config in a directory (~/.pi/agent by default) across three
+// JSON files. To route pi through ccr we only touch two of them:
+//   - models.json:   register a custom "ccr" provider (Anthropic-compatible,
+//                     baseUrl = ccr proxy) with the ccr family-alias models;
+//                     the api key lives on the provider entry, so we never
+//                     touch auth.json.
+//   - settings.json: point defaultProvider/defaultModel at the ccr provider.
+// pi speaks the Anthropic /v1/messages protocol (like Claude Code), so no
+// transformer is needed on the ccr side.
+
+const PI_PROVIDER_NAME = "ccr";
+// pi's Anthropic-messages API id; baseUrl is the root (the SDK appends
+// /v1/messages), matching how Claude Code uses ANTHROPIC_BASE_URL.
+const PI_ANTHROPIC_API = "anthropic-messages";
+
+interface PiPaths {
+  dir: string;
+  settings: string;
+  models: string;
+}
+
+function getPiPaths(config: Record<string, any>): PiPaths {
+  const dir = expandHome(getClientConfig(config, "pi").configPath);
+  return {
+    dir,
+    settings: path.join(dir, "settings.json"),
+    models: path.join(dir, "models.json"),
+  };
+}
+
+/**
+ * Build the ccr family-alias models pi should expose, mirroring the model
+ * family aliases Claude Code takeover uses (ccr-opus/ccr-sonnet/ccr-haiku).
+ * Falls back to the configured modelAlias when no families are configured.
+ * Returns the model definitions plus the id pi should default to.
+ */
+function getPiModels(config: Record<string, any>): { models: any[]; defaultModel: string } {
+  const contextWindow = getContextWindow(config);
+  const makeModel = (id: string, label: string) => ({
+    id,
+    name: label,
+    api: PI_ANTHROPIC_API,
+    reasoning: true,
+    input: ["text", "image"],
+    contextWindow,
+    maxTokens: 64000,
+  });
+
+  if (hasFamiliesConfig(config)) {
+    const families = config.Router.families;
+    const order = ["opus", "sonnet", "haiku"].filter((f) => families[f]);
+    const models = order.map((family) => {
+      const extendedSuffix = hasExtendedContext(families[family]) ? "[1m]" : "";
+      return makeModel(`ccr-${family}${extendedSuffix}`, `CCR (${family})`);
+    });
+    if (models.length > 0) {
+      return { models, defaultModel: models[0].id };
+    }
+  }
+
+  const alias = getClientConfig(config, "pi").modelAlias || "ccr-opus";
+  return { models: [makeModel(alias, "CCR")], defaultModel: alias };
+}
+
+function isPiProviderManaged(models: Record<string, any>): boolean {
+  const provider = isObject(models.providers) ? models.providers[PI_PROVIDER_NAME] : undefined;
+  return isObject(provider) && isCcrBaseUrl(provider.baseUrl);
+}
+
+function isPiManaged(models: Record<string, any>, settings: Record<string, any>): boolean {
+  return isPiProviderManaged(models) || settings.defaultProvider === PI_PROVIDER_NAME;
+}
+
+function createPiStatus(
+  config: Record<string, any>,
+  models?: Record<string, any>,
+  settings?: Record<string, any>,
+  details?: string
+): ClientStatus {
+  const clientConfig = getClientConfig(config, "pi");
+  const paths = getPiPaths(config);
+  const safeModels = models || {};
+  const safeSettings = settings || {};
+
+  return {
+    id: "pi",
+    name: CLIENT_DEFINITIONS.pi.name,
+    enabled: clientConfig.enabled,
+    managed: isPiManaged(safeModels, safeSettings),
+    configPath: clientConfig.configPath,
+    exists: fs.existsSync(paths.dir),
+    activeModel:
+      typeof safeSettings.defaultModel === "string" ? safeSettings.defaultModel : undefined,
+    details,
+  };
+}
+
+const piAdapter: ClientAdapter = {
+  status(config) {
+    const paths = getPiPaths(config);
+    try {
+      return createPiStatus(config, readJsonObject(paths.models), readJsonObject(paths.settings));
+    } catch (error) {
+      return createPiStatus(config, {}, {}, errorMessage(error));
+    }
+  },
+
+  enable(config) {
+    const paths = getPiPaths(config);
+    const currentStatus = this.status(config);
+    if (!currentStatus.managed) {
+      createBackup("pi/models", paths.models);
+      createBackup("pi/settings", paths.settings);
+    }
+
+    const { defaultModel } = ensurePiCcrProvider(config);
+    const models = readJsonObject(paths.models);
+
+    const settings = readJsonObject(paths.settings);
+    settings.defaultProvider = PI_PROVIDER_NAME;
+    settings.defaultModel = defaultModel;
+    writeJsonObject(paths.settings, settings);
+
+    return createPiStatus(config, models, settings);
+  },
+
+  disable(config) {
+    const paths = getPiPaths(config);
+
+    // models.json: restore the pre-takeover file, or just drop the ccr provider.
+    let models: Record<string, any>;
+    if (restoreLatestBackup("pi/models", paths.models)) {
+      models = readJsonObject(paths.models);
+    } else {
+      models = readJsonObject(paths.models);
+      if (isObject(models.providers) && models.providers[PI_PROVIDER_NAME]) {
+        delete models.providers[PI_PROVIDER_NAME];
+        writeJsonObject(paths.models, models);
+      }
+    }
+
+    // settings.json: restore backup, or clear the ccr default selection.
+    let settings: Record<string, any>;
+    if (restoreLatestBackup("pi/settings", paths.settings)) {
+      settings = readJsonObject(paths.settings);
+    } else {
+      settings = readJsonObject(paths.settings);
+      if (settings.defaultProvider === PI_PROVIDER_NAME) {
+        delete settings.defaultProvider;
+        delete settings.defaultModel;
+        writeJsonObject(paths.settings, settings);
+      }
+    }
+
+    return createPiStatus(config, models, settings);
+  },
+
+  restore(config) {
+    return this.disable(config);
+  },
+};
+
+/**
+ * Register (or refresh) the global "ccr" provider in pi's `models.json`.
+ *
+ * pi has no project-level `models.json` — only `.pi/settings.json` overrides
+ * are project-scoped — so the provider definition always lives globally. It is
+ * just an *available* provider (baseUrl = ccr proxy); it does not route
+ * anything by itself until a settings file points `defaultProvider` at it.
+ * Writing it is idempotent, so both the global and project-level pi takeovers
+ * call this. Returns the model id callers should set as `defaultModel`.
+ */
+function ensurePiCcrProvider(config: Record<string, any>): { defaultModel: string } {
+  const paths = getPiPaths(config);
+  const { models: ccrModels, defaultModel } = getPiModels(config);
+
+  const models = readJsonObject(paths.models);
+  if (!isObject(models.providers)) models.providers = {};
+  models.providers[PI_PROVIDER_NAME] = {
+    name: "Claude Code Router",
+    baseUrl: getCcrBaseUrl(config),
+    api: PI_ANTHROPIC_API,
+    apiKey: config.APIKEY || "test",
+    models: ccrModels,
+  };
+  writeJsonObject(paths.models, models);
+  return { defaultModel };
+}
+
+/**
+ * Path to a project's `.pi/settings.json` (pi's project-scoped settings, which
+ * override the global `~/.pi/agent/settings.json`).
+ */
+function getPiProjectSettingsPath(projectPath: string): string {
+  return path.join(projectPath, ".pi", "settings.json");
+}
+
+/** Path to pi's global trust ledger (`~/.pi/agent/trust.json`). */
+function getPiTrustPath(config: Record<string, any>): string {
+  return path.join(getPiPaths(config).dir, "trust.json");
+}
+
+/**
+ * Mark a project folder as trusted in pi's `trust.json`. pi only loads a
+ * project's `.pi/settings.json` (and other project resources) for trusted
+ * folders; non-interactive modes (`-p`/json/rpc) never prompt, so without this
+ * the takeover's override would be silently ignored there.
+ */
+function addPiProjectTrust(projectPath: string, config: Record<string, any>): void {
+  const trustPath = getPiTrustPath(config);
+  const trust = readJsonObject(trustPath);
+  if (trust[projectPath] !== true) {
+    trust[projectPath] = true;
+    writeJsonObject(trustPath, trust);
+  }
+}
+
+/**
+ * Enable ccr takeover for a single project's pi configuration: register the
+ * global ccr provider (idempotent), trust the project folder, and point the
+ * project's `.pi/settings.json` `defaultProvider`/`defaultModel` at ccr. Other
+ * keys in `.pi/settings.json` are preserved.
+ */
+export function applyPiProjectTakeover(projectPath: string, config: Record<string, any>): void {
+  const { defaultModel } = ensurePiCcrProvider(config);
+  addPiProjectTrust(projectPath, config);
+
+  const settingsPath = getPiProjectSettingsPath(projectPath);
+  const settings = readJsonObject(settingsPath);
+  settings.defaultProvider = PI_PROVIDER_NAME;
+  settings.defaultModel = defaultModel;
+  writeJsonObject(settingsPath, settings);
+}
+
+/**
+ * Disable ccr takeover for a project's pi configuration by clearing the ccr
+ * `defaultProvider`/`defaultModel` from `.pi/settings.json` (removing the file
+ * if nothing else remains). The shared global provider definition and trust
+ * entry are intentionally left in place, since other projects may rely on them.
+ */
+export function removePiProjectTakeover(projectPath: string): void {
+  const settingsPath = getPiProjectSettingsPath(projectPath);
+  if (!fs.existsSync(settingsPath)) return;
+
+  const settings = readJsonObject(settingsPath);
+  if (settings.defaultProvider !== PI_PROVIDER_NAME) return;
+
+  delete settings.defaultProvider;
+  delete settings.defaultModel;
+  if (Object.keys(settings).length === 0) {
+    fs.unlinkSync(settingsPath);
+  } else {
+    writeJsonObject(settingsPath, settings);
+  }
+}
+
+/** Whether a project's `.pi/settings.json` currently routes pi through ccr. */
+export function isPiProjectTakeoverActive(projectPath: string): boolean {
+  const settings = readJsonObject(getPiProjectSettingsPath(projectPath));
+  return settings.defaultProvider === PI_PROVIDER_NAME;
+}
+
+/**
+ * Clients that support *project-level* ccr takeover (writing a project-scoped
+ * config file). Claude Code uses `.claude/settings.local.json`; pi uses
+ * `.pi/settings.json`. Codex is intentionally excluded — its config
+ * (`~/.codex/config.toml`) is global-only, so it can only be taken over from
+ * the Clients page, not per project.
+ */
+export const PROJECT_TAKEOVER_CLIENT_IDS: ClientId[] = ["claudeCode", "pi"];
+
+/** Type guard for {@link PROJECT_TAKEOVER_CLIENT_IDS}. */
+export function isProjectTakeoverClient(value: string): value is ClientId {
+  return (PROJECT_TAKEOVER_CLIENT_IDS as string[]).includes(value);
+}
+
 const CLIENT_ADAPTERS: Record<ClientId, ClientAdapter> = {
   claudeCode: claudeCodeAdapter,
   codex: codexAdapter,
+  pi: piAdapter,
 };
 
 export function listClientStatuses(config: Record<string, any>): ClientStatus[] {

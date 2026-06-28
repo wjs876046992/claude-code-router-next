@@ -275,6 +275,9 @@
     "ccr_takeover_desc": "When enabled, this project's Claude Code CLI routes requests through ccr by writing ANTHROPIC_BASE_URL/ANTHROPIC_AUTH_TOKEN into .claude/settings.local.json.",
     "ccr_takeover_on": "Taken over",
     "ccr_takeover_off": "Not taken over",
+    "takeover_clients": "Clients to take over",
+    "takeover_clients_placeholder": "All clients (default)",
+    "takeover_clients_desc": "Choose which clients this project takes over; leaving it empty takes over all supported clients (Claude Code, pi). pi is applied by writing .pi/settings.json.",
     "takeover_update_success": "CCR takeover status updated",
     "takeover_update_failed": "Failed to update CCR takeover status",
     "add_success": "Project added",
@@ -519,6 +522,7 @@
     "client": "Client",
     "client_claude_code": "Claude Code",
     "client_codex": "Codex",
+    "client_pi": "pi",
     "client_api": "API",
     "client_unknown": "Other"
   }
