@@ -200,13 +200,13 @@ export async function setCcrTakeover(projectPath: string, enabled: boolean, conf
     } catch {
       // No usable backup, start from the current settings.
     }
-    applyCcrProjectTakeover(settings, config);
+    applyCcrProjectTakeover(settings, config, projectPath);
   } else {
     if (isCcrProjectTakeoverActive(settings)) {
       await fs.mkdir(path.dirname(backupPath), { recursive: true });
       await fs.writeFile(backupPath, JSON.stringify(settings, null, 2), "utf-8");
     }
-    removeCcrProjectTakeover(settings);
+    removeCcrProjectTakeover(settings, projectPath);
   }
 
   await fs.mkdir(path.dirname(settingsPath), { recursive: true });
@@ -224,7 +224,7 @@ export async function refreshCcrProjectTakeover(projectPath: string, config: Rec
     return false;
   }
 
-  applyCcrProjectTakeover(settings, config);
+  applyCcrProjectTakeover(settings, config, projectPath);
   const settingsPath = getClaudeSettingsLocalPath(projectPath);
   await fs.mkdir(path.dirname(settingsPath), { recursive: true });
   await fs.writeFile(settingsPath, JSON.stringify(settings, null, 2), "utf-8");

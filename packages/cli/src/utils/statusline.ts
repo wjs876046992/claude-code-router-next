@@ -463,13 +463,6 @@ function calculateContextTokens(context_window: StatusLineInput['context_window'
         current_usage.cache_read_input_tokens;
 }
 
-function calculateContextPercent(context_window: StatusLineInput['context_window']): number {
-    if (!context_window?.context_window_size) {
-        return 0;
-    }
-    return Math.round((calculateContextTokens(context_window) / context_window.context_window_size) * 100);
-}
-
 function getContextUsageColor(contextPercent: string): string {
     const percent = parseInt(contextPercent || "0", 10);
     if (percent > 75) {
@@ -1029,10 +1022,20 @@ export async function parseStatusLineData(input: StatusLineInput, presetName?: s
             streamingIndicator = isStreaming ? '[Streaming]' : '';
         }
 
-        // Process context window data
-        const contextPercent = input.context_window ? calculateContextPercent(input.context_window) : 0;
+        // Process context window data.
+        // Prefer the context window configured via the CLAUDE_CODE_AUTO_COMPACT_WINDOW
+        // env var (written by CCR from the top-level ContextWindow setting) over Claude
+        // Code's own context_window_size, so the statusline reflects the actual
+        // auto-compact threshold the user configured rather than the model's full window
+        // (which Claude Code always reports, even when a lower compact window is set).
         const contextUsedTokens = input.context_window ? calculateContextTokens(input.context_window) : 0;
-        const contextWindowSize = input.context_window?.context_window_size || 0;
+        const configuredContextWindow = Math.floor(parseNumericValue(process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW));
+        const contextWindowSize = configuredContextWindow > 0
+            ? configuredContextWindow
+            : (input.context_window?.context_window_size || 0);
+        const contextPercent = contextWindowSize
+            ? Math.round((contextUsedTokens / contextWindowSize) * 100)
+            : 0;
 
         // Session total tokens: persist a session-level peak to guarantee monotonicity.
         // Take the max of transcript accumulation and context_window as the current

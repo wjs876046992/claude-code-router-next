@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [2.3.22] - 2026-06-29
+
+### Added
+
+- **状态栏按用户配置的压缩阈值显示上下文上限**: `ccr statusline` 此前直接用 Claude Code 传入的 `context_window.context_window_size`（模型完整窗口，标准 claude 为 200000、扩展上下文为 1000000）作为分母计算百分比与显示上限，即使用户通过 `CLAUDE_CODE_AUTO_COMPACT_WINDOW` 设了更低的压缩阈值（如 400000），状态栏仍显示 1M/200k，与实际压缩时机脱节。现在优先读取 `CLAUDE_CODE_AUTO_COMPACT_WINDOW` 环境变量（即 CCR 从顶层 `ContextWindow` 写入的值）作为上限，未设时才回退到 Claude Code 的窗口值，使状态栏百分比与实际 auto-compact 触发点对齐。
+
+### Changed
+
+- **接管时保留用户手写的 auto-compact 自定义值**: CCR 接管 Claude Code（全局 `~/.claude/settings.json` 或项目 `.claude/settings.local.json`）时，`applyClaudeAutoCompactSettings` 此前无条件用全局 `ContextWindow` 覆盖 `CLAUDE_CODE_AUTO_COMPACT_WINDOW`，会把用户为某项目手写的自定义值（如 400000）打回默认 200000；卸载时则无条件删除该字段。现在 CCR 用状态文件精确区分「自己写入的值」与「用户手写的值」：全局状态存于 `~/.claude-code-router/client-state.json`（按 clientId 分键），项目状态存于 `~/.claude-code-router/<project-id>/ccr-state.json`。接管/刷新时，仅当字段缺失或仍等于 CCR 上次写入值才随 `ContextWindow` 更新并刷新状态记录；与记录不符的值视为用户自定义予以保留。卸载时只清除仍等于 CCR 写入值的字段并清空状态记录，用户自定义值保留。状态文件缺失时退化为保守策略（已存在的值一律保留，绝不误覆盖）。正常用户在 UI 改 `ContextWindow` 后刷新仍能生效（此时字段值==记录值，会被更新）。
+
+### Fixed
+
+- **UI 上下文窗口配置项补充与扩展上下文的配合提示**: 顶层「上下文窗口 (ContextWindow)」配置项此前未说明：设为大于 200000 时必须同时在该模型家族的路由中启用「扩展上下文 (1M)」（使模型名带 `[1m]` 后缀），否则 Claude Code 会把 `CLAUDE_CODE_AUTO_COMPACT_WINDOW` 封顶至 200000、配置不生效。现在在该输入框下方补充配合说明，并在 `ContextWindow > 200000` 且对应模型家族未启用扩展上下文时显示红色警告条；「扩展上下文 (1M)」开关的描述也同步补充了与顶层上下文窗口的配合关系。
+
 ## [2.3.21] - 2026-06-27
 
 ### Added

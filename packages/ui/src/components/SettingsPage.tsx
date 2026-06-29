@@ -206,6 +206,22 @@ export function SettingsPage() {
     image: "",
   };
 
+  // Whether the model family Claude Code will actually use has extended context
+  // (1M) enabled. The env model name only gets the [1m] suffix when the default
+  // family (opus preferred) has enableExtendedContext=true; without it, Claude Code
+  // caps CLAUDE_CODE_AUTO_COMPACT_WINDOW at 200000, so a ContextWindow above 200000
+  // silently has no effect. Warn the user in that case.
+  const routerFamilies = config.Router?.families as Record<string, any> | undefined;
+  const defaultFamilyName = routerFamilies?.opus
+    ? "opus"
+    : routerFamilies && Object.keys(routerFamilies).length > 0
+      ? Object.keys(routerFamilies)[0]
+      : null;
+  const extendedContextEnabled = defaultFamilyName
+    ? routerFamilies![defaultFamilyName]?.enableExtendedContext === true
+    : config.Router?.enableExtendedContext === true;
+  const showContextWindowWarning = (config.ContextWindow ?? 200000) > 200000 && !extendedContextEnabled;
+
   const handleRouterChange = (field: string, value: string | number | boolean) => {
     const currentRouter = config.Router || {};
     setConfig({ ...config, Router: { ...currentRouter, [field]: value } });
@@ -829,6 +845,9 @@ export function SettingsPage() {
                     placeholder="200000"
                   />
                   <p className="text-xs text-gray-500">{t("toplevel.context_window_desc")}</p>
+                  {showContextWindowWarning && (
+                    <p className="text-xs text-red-500 dark:text-red-400">{t("toplevel.context_window_warn")}</p>
+                  )}
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="ccr-proxy-config">{t("toplevel.proxy_url")}</Label>
