@@ -212,7 +212,7 @@ export async function setCcrTakeover(projectPath: string, enabled: boolean, conf
     // avoids a stale managed window being restored later and mistaken for a user
     // value (which would freeze it and stop ContextWindow changes from applying).
     const wasActive = isCcrProjectTakeoverActive(settings);
-    removeCcrProjectTakeover(settings, projectPath);
+    removeCcrProjectTakeover(settings, projectPath, config);
     if (wasActive) {
       await fs.mkdir(path.dirname(backupPath), { recursive: true });
       await fs.writeFile(backupPath, JSON.stringify(settings, null, 2), "utf-8");

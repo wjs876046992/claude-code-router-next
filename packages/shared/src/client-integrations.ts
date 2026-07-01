@@ -594,10 +594,22 @@ function applyClaudeAutoCompactSettings(
   // (and updates) when the field is absent or still holds the value CCR last
   // wrote. A divergent value means the user customized it — keep it and leave
   // the recorded state untouched so the divergence stays detectable next time.
+  //
+  // State can be missing after a disable->enable cycle (disable clears it, and
+  // a stale managed window restored from the backup used to be mistaken for a
+  // user value, so the state was never rebuilt — freezing the window). When the
+  // state is empty but the current value matches what CCR would write for the
+  // current config, treat it as CCR-managed and re-establish the state so the
+  // window stays manageable. A genuinely divergent value with no state is still
+  // treated as a user customization and left untouched.
   const managedWindow = String(getContextWindow(config));
   const currentWindow = settings.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
   const lastWrittenWindow = state?.read().autoCompactWindow;
-  if (currentWindow === undefined || currentWindow === lastWrittenWindow) {
+  const isManaged =
+    currentWindow === undefined ||
+    currentWindow === lastWrittenWindow ||
+    (lastWrittenWindow === undefined && currentWindow === managedWindow);
+  if (isManaged) {
     settings.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = managedWindow;
     state?.write({ autoCompactWindow: managedWindow });
   }
@@ -827,7 +839,11 @@ export function applyCcrProjectTakeover(
  * Remove ccr-managed fields from a project's `.claude/settings.local.json`,
  * preserving any unrelated settings (permissions, hooks, etc.).
  */
-export function removeCcrProjectTakeover(settings: Record<string, any>, projectPath?: string): void {
+export function removeCcrProjectTakeover(
+  settings: Record<string, any>,
+  projectPath?: string,
+  config?: Record<string, any>,
+): void {
   const state = projectStateAccess(projectPath);
   if (isObject(settings.env)) {
     if (isCcrBaseUrl(settings.env.ANTHROPIC_BASE_URL)) {
@@ -841,11 +857,18 @@ export function removeCcrProjectTakeover(settings: Record<string, any>, projectP
       }
     }
 
-    // Auto-compact window: only remove it if it still holds the value CCR last
-    // wrote. A divergent value is a user customization — keep it. Always clear
-    // the recorded state for this project afterward.
+    // Auto-compact window: remove it if it still holds the value CCR last wrote,
+    // OR — when the state is missing (e.g. after a prior disable->enable cycle
+    // failed to rebuild it) — if it matches the value CCR would write for the
+    // current config. A divergent value is a user customization — keep it.
+    // Always clear the recorded state for this project afterward.
     const lastWrittenWindow = state?.read().autoCompactWindow;
-    if (settings.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW === lastWrittenWindow) {
+    const currentWindow = settings.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
+    const managedWindow = config ? String(getContextWindow(config)) : undefined;
+    const shouldRemove =
+      currentWindow === lastWrittenWindow ||
+      (lastWrittenWindow === undefined && managedWindow !== undefined && currentWindow === managedWindow);
+    if (shouldRemove) {
       delete settings.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
     }
     state?.clear();
