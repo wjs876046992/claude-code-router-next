@@ -486,10 +486,23 @@ function restoreLatestBackup(clientId: string, filePath: string): string | null 
 function readJsonObject(filePath: string): Record<string, any> {
   if (!fs.existsSync(filePath)) return {};
 
-  const raw = fs.readFileSync(filePath, "utf-8");
+  let raw: string;
+  try {
+    raw = fs.readFileSync(filePath, "utf-8");
+  } catch {
+    return {};
+  }
   if (!raw.trim()) return {};
 
-  const parsed = JSON.parse(raw);
+  // Tolerate a corrupted/truncated state file (user-writable location): treat
+  // parse failures as "no state" so takeover/refresh/teardown still work and
+  // CCR stays conservative rather than throwing mid-flow.
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return {};
+  }
   return isObject(parsed) ? parsed : {};
 }
 

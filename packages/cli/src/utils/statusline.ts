@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { execSync } from "child_process";
-import { tmpdir } from "node:os";
+import { tmpdir, homedir } from "node:os";
 import { CONFIG_FILE, HOME_DIR, readPresetFile, getPresetDir, loadConfigFromManifest } from "@wengine-ai/claude-code-router-shared";
 import JSON5 from "json5";
 
@@ -617,7 +617,7 @@ function resolveConfiguredContextWindow(workDir: string): number {
 
     const candidates = [
         path.join(workDir, ".claude", "settings.local.json"),
-        path.join(HOME_DIR, ".claude", "settings.json"),
+        path.join(homedir(), ".claude", "settings.json"),
     ];
     for (const candidate of candidates) {
         try {
