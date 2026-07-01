@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [2.3.22] - 2026-06-29
+
+### Added
+
+- **状态栏按用户配置的压缩阈值显示上下文上限**: `ccr statusline` 此前直接用 Claude Code 传入的 `context_window.context_window_size`（模型完整窗口，标准 claude 为 200000、扩展上下文为 1000000）作为分母计算百分比与显示上限，即使用户通过 `CLAUDE_CODE_AUTO_COMPACT_WINDOW` 设了更低的压缩阈值（如 400000），状态栏仍显示 1M/200k，与实际压缩时机脱节。现在优先读取 `CLAUDE_CODE_AUTO_COMPACT_WINDOW` 环境变量（即 CCR 从顶层 `ContextWindow` 写入的值）作为上限，未设时才回退到 Claude Code 的窗口值，使状态栏百分比与实际 auto-compact 触发点对齐。
+
+### Changed
+
+- **接管时保留用户手写的 auto-compact 自定义值**: CCR 接管 Claude Code（全局 `~/.claude/settings.json` 或项目 `.claude/settings.local.json`）时，`applyClaudeAutoCompactSettings` 此前无条件用全局 `ContextWindow` 覆盖 `CLAUDE_CODE_AUTO_COMPACT_WINDOW`，会把用户为某项目手写的自定义值（如 400000）打回默认 200000；卸载时则无条件删除该字段。现在 CCR 用状态文件精确区分「自己写入的值」与「用户手写的值」：全局状态存于 `~/.claude-code-router/client-state.json`（按 clientId 分键），项目状态存于 `~/.claude-code-router/<project-id>/ccr-state.json`。接管/刷新时，仅当字段缺失或仍等于 CCR 上次写入值才随 `ContextWindow` 更新并刷新状态记录；与记录不符的值视为用户自定义予以保留。卸载时只清除仍等于 CCR 写入值的字段并清空状态记录，用户自定义值保留。状态文件缺失时退化为保守策略（已存在的值一律保留，绝不误覆盖）。正常用户在 UI 改 `ContextWindow` 后刷新仍能生效（此时字段值==记录值，会被更新）。
+
+### Fixed
+
+- **UI 上下文窗口配置项补充与扩展上下文的配合提示**: 顶层「上下文窗口 (ContextWindow)」配置项此前未说明：设为大于 200000 时必须同时在该模型家族的路由中启用「扩展上下文 (1M)」（使模型名带 `[1m]` 后缀），否则 Claude Code 会把 `CLAUDE_CODE_AUTO_COMPACT_WINDOW` 封顶至 200000、配置不生效。现在在该输入框下方补充配合说明，并在 `ContextWindow > 200000` 且对应模型家族未启用扩展上下文时显示红色警告条；「扩展上下文 (1M)」开关的描述也同步补充了与顶层上下文窗口的配合关系。
+- **修复状态栏百分比按 1M 计算的问题**: `ccr statusline` 的子进程不一定继承项目级 settings 的环境变量，导致写在项目 `.claude/settings.local.json` 里的 `CLAUDE_CODE_AUTO_COMPACT_WINDOW` 被漏读，百分比回退到模型完整窗口（如 1M）。现在依次从 `process.env`、项目 `settings.local.json`、全局 `settings.json` 读取该值，都没有才回退到 Claude Code 报告的窗口值。
+- **修复状态栏上下文百分比偶发闪 0%**: 状态栏分子取自 `current_usage`（Claude Code 的当前一轮快照），在请求进行中或 auto-compact 刚触发后这一瞬为空，导致百分比短暂显示 0%。现在在快照为空时回退到 transcript 中最近一条 assistant 消息的上下文用量（`input + cache_creation + cache_read`，与原计算同口径），保持百分比稳定。
+- **修复项目接管 disable→enable 循环后 auto-compact 窗口冻结**: 项目级接管的 `ccr-state.json`（记录 CCR 上次写入值）在 disable 时被清除，而再 enable 时从备份恢复的旧 managed 窗口被误判为用户手写值、状态不重建，导致后续 `ContextWindow` 变更无法通过刷新生效；更严重的，一旦状态文件丢失，CCR 无法识别自己写入的窗口，关闭接管时该字段作为残留遗留（用户报告的 400000 残留即此）。现在状态缺失时用「值等于当前 `ContextWindow`」兜底识别 CCR-managed：enable 重建状态、disable 清除残留；真正的用户手写值（与配置不符）仍予以保留。
+
 ## [2.3.21] - 2026-06-27
 
 ### Added

@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { execSync } from "child_process";
-import { tmpdir } from "node:os";
+import { tmpdir, homedir } from "node:os";
 import { CONFIG_FILE, HOME_DIR, readPresetFile, getPresetDir, loadConfigFromManifest } from "@wengine-ai/claude-code-router-shared";
 import JSON5 from "json5";
 
@@ -463,13 +463,6 @@ function calculateContextTokens(context_window: StatusLineInput['context_window'
         current_usage.cache_read_input_tokens;
 }
 
-function calculateContextPercent(context_window: StatusLineInput['context_window']): number {
-    if (!context_window?.context_window_size) {
-        return 0;
-    }
-    return Math.round((calculateContextTokens(context_window) / context_window.context_window_size) * 100);
-}
-
 function getContextUsageColor(contextPercent: string): string {
     const percent = parseInt(contextPercent || "0", 10);
     if (percent > 75) {
@@ -610,6 +603,35 @@ function parseNumericValue(value: any): number {
 
 function hasTokenSpeedValue(value: any): boolean {
     return Math.round(parseNumericValue(value)) > 0;
+}
+
+// Resolve the auto-compact window the user actually configured. Claude Code does
+// not reliably inject project-level settings env into the statusline child
+// process, so process.env alone can miss a value set in a project's
+// settings.local.json and the percentage falls back to the model's full window
+// (e.g. 1M). Read the settings files directly as a fallback, preferring the
+// project file (CCR writes the managed value there) over the global one.
+function resolveConfiguredContextWindow(workDir: string): number {
+    const fromEnv = parseNumericValue(process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW);
+    if (fromEnv > 0) return Math.floor(fromEnv);
+
+    const candidates = [
+        path.join(workDir, ".claude", "settings.local.json"),
+        path.join(homedir(), ".claude", "settings.json"),
+    ];
+    for (const candidate of candidates) {
+        try {
+            // Synchronous read: statusline is a short-lived process and must
+            // return quickly; fs/promises would add async overhead per call.
+            const raw = require("fs").readFileSync(candidate, "utf-8");
+            const env = (JSON5.parse(raw) || {}).env;
+            const value = parseNumericValue(env && env.CLAUDE_CODE_AUTO_COMPACT_WINDOW);
+            if (value > 0) return Math.floor(value);
+        } catch {
+            // Missing or unreadable settings file — try the next candidate.
+        }
+    }
+    return 0;
 }
 
 function normalizeTokenSpeed(value: any): number {
@@ -901,6 +923,10 @@ export async function parseStatusLineData(input: StatusLineInput, presetName?: s
         let model = "";
         let inputTokens = 0;
         let outputTokens = 0;
+        // Latest assistant message's context usage (same basis as
+        // calculateContextTokens): used as a fallback for the context percent
+        // when Claude Code's current_usage snapshot is transiently empty.
+        let transcriptContextTokens = 0;
 
         // Also accumulate total tokens from all assistant messages
         let sessionTotalInputTokens = 0;
@@ -938,8 +964,14 @@ export async function parseStatusLineData(input: StatusLineInput, presetName?: s
                     if (!model) {
                         model = message.message.model;
                         if (message.message.usage) {
-                            inputTokens = message.message.usage.input_tokens;
-                            outputTokens = message.message.usage.output_tokens;
+                            const usage = message.message.usage;
+                            inputTokens = usage.input_tokens;
+                            outputTokens = usage.output_tokens;
+                            // Mirror calculateContextTokens' basis so this is a
+                            // faithful stand-in for the live current_usage snapshot.
+                            transcriptContextTokens = usage.input_tokens
+                                + (usage.cache_creation_input_tokens || 0)
+                                + (usage.cache_read_input_tokens || 0);
                         }
                     }
                 }
@@ -1029,10 +1061,28 @@ export async function parseStatusLineData(input: StatusLineInput, presetName?: s
             streamingIndicator = isStreaming ? '[Streaming]' : '';
         }
 
-        // Process context window data
-        const contextPercent = input.context_window ? calculateContextPercent(input.context_window) : 0;
-        const contextUsedTokens = input.context_window ? calculateContextTokens(input.context_window) : 0;
-        const contextWindowSize = input.context_window?.context_window_size || 0;
+        // Process context window data.
+        // Prefer the context window configured via the CLAUDE_CODE_AUTO_COMPACT_WINDOW
+        // env var (written by CCR from the top-level ContextWindow setting) over Claude
+        // Code's own context_window_size, so the statusline reflects the actual
+        // auto-compact threshold the user configured rather than the model's full window
+        // (which Claude Code always reports, even when a lower compact window is set).
+        const rawContextUsedTokens = input.context_window ? calculateContextTokens(input.context_window) : 0;
+        const configuredContextWindow = resolveConfiguredContextWindow(workDir);
+        const contextWindowSize = configuredContextWindow > 0
+            ? configuredContextWindow
+            : (input.context_window?.context_window_size || 0);
+        // current_usage is Claude Code's per-turn snapshot and is transiently
+        // empty (null / zero) during brief windows — a request in flight, or just
+        // after auto-compact. Falling back to the last assistant message's context
+        // usage from the transcript keeps the percent stable instead of flashing
+        // 0% until the next snapshot arrives.
+        const contextUsedTokens = rawContextUsedTokens > 0
+            ? rawContextUsedTokens
+            : transcriptContextTokens;
+        const contextPercent = contextWindowSize
+            ? Math.round((contextUsedTokens / contextWindowSize) * 100)
+            : 0;
 
         // Session total tokens: persist a session-level peak to guarantee monotonicity.
         // Take the max of transcript accumulation and context_window as the current

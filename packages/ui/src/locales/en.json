@@ -67,7 +67,8 @@
     "apikey": "API Key",
     "timeout": "API Timeout (ms)",
     "context_window": "Context Window (tokens)",
-    "context_window_desc": "Default context window used when taking over Claude Code / Codex; auto-compaction triggers at ~90%. Defaults to 200000 — a larger window is not always better (higher cost and more context drift).",
+    "context_window_desc": "Default context window used when taking over Claude Code / Codex; auto-compaction triggers at ~90%. Defaults to 200000 — a larger window is not always better (higher cost and more context drift). To set a value above 200000, you must also enable 'Extended Context (1M)' for the corresponding model family in the router (appends [1m] to the model name); otherwise Claude Code caps it at 200000 and the setting has no effect.",
+    "context_window_warn": "Value exceeds 200000 but the model family's 'Extended Context (1M)' is not enabled. Claude Code caps it at 200000, so this setting won't take effect — enable Extended Context in the router.",
     "proxy_url": "Proxy URL",
     "custom_router_path": "Custom Router Script Path",
     "custom_router_path_placeholder": "Enter absolute path to custom router script file"
@@ -154,7 +155,7 @@
     "extendedContext": "Extended Context (1M)",
     "extendedContextThreshold": "Extended Threshold",
     "enableExtendedContext": "Enable Extended Context (1M)",
-    "enableExtendedContextDesc": "Append [1m] to Claude Code model name for 1M context window support",
+    "enableExtendedContextDesc": "Append [1m] to the Claude Code model name for 1M context window support. Only when enabled can the top-level 'Context Window' be set above 200000 (e.g. 400000) — Claude Code then caps it at 1M and compaction triggers at the configured value; without this, any value above 200000 is capped back to 200000.",
     "webSearch": "Web Search",
     "image": "Image",
     "threshold": "Threshold",

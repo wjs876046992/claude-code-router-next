@@ -67,7 +67,8 @@
     "apikey": "API 密钥",
     "timeout": "API 超时时间 (毫秒)",
     "context_window": "上下文窗口 (tokens)",
-    "context_window_desc": "接管 Claude Code / Codex 时使用的默认上下文窗口，触达约 90% 时自动压缩。默认 200000，上下文并非越大越好（成本更高且易产生漂移）。",
+    "context_window_desc": "接管 Claude Code / Codex 时使用的默认上下文窗口，触达约 90% 时自动压缩。默认 200000，上下文并非越大越好（成本更高且易产生漂移）。若设为大于 200000，需同时在路由中启用对应模型家族的「扩展上下文 (1M)」（模型名会加 [1m]），否则 Claude Code 会将其封顶至 200000，配置不生效。",
+    "context_window_warn": "当前值大于 200000，但对应模型家族未启用「扩展上下文 (1M)」，Claude Code 会将其封顶至 200000，此设置不生效。请在路由中启用扩展上下文。",
     "proxy_url": "代理地址",
     "custom_router_path": "自定义路由脚本路径",
     "custom_router_path_placeholder": "输入自定义路由脚本文件的绝对路径"
@@ -154,7 +155,7 @@
     "extendedContext": "扩展上下文 (1M)",
     "extendedContextThreshold": "扩展阈值",
     "enableExtendedContext": "启用扩展上下文 (1M)",
-    "enableExtendedContextDesc": "在 Claude Code 模型名后添加 [1m] 以支持 1M 上下文窗口",
+    "enableExtendedContextDesc": "在 Claude Code 模型名后添加 [1m] 以支持 1M 上下文窗口。启用后顶层「上下文窗口」才可设为大于 200000 的值（如 400000），Claude Code 按 1M 上限计算、在所设值处触发压缩；未启用时大于 200000 的设置会被封顶至 200000。",
     "webSearch": "网络搜索",
     "image": "图像",
     "threshold": "触发阈值",

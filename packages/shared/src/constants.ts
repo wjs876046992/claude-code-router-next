@@ -11,6 +11,12 @@ export const PRESETS_DIR = path.join(HOME_DIR, "presets");
 
 export const PID_FILE = path.join(HOME_DIR, '.claude-code-router.pid');
 
+// CCR-managed client state: records the values CCR last wrote into a client's
+// settings file (e.g. ~/.claude/settings.json), so CCR can distinguish values it
+// wrote (safe to update/remove with the global config) from values the user hand-
+// edited (must be preserved). Per-project state lives under getProjectConfigDir().
+export const CLIENT_STATE_FILE = path.join(HOME_DIR, "client-state.json");
+
 export const REFERENCE_COUNT_FILE = path.join(os.tmpdir(), "claude-code-reference-count.txt");
 
 // Claude projects directory

@@ -181,9 +181,11 @@ function getCcrTakeoverBackupPath(projectPath: string): string {
  * global config, so model routing stays in sync even if the global config
  * changed since the backup was taken.
  *
- * When disabling, the current (ccr-managed) settings are backed up before the
- * ccr-managed fields are removed, so re-enabling takeover later restores them
- * instead of losing any personalized adjustments.
+ * When disabling, the ccr-managed fields are removed first, then the remaining
+ * (user-customized) settings are backed up, so re-enabling takeover later
+ * restores those personalizations instead of losing them. Ccr-managed fields
+ * are not backed up — they are re-applied from the current global config on the
+ * next enable.
  */
 export async function setCcrTakeover(projectPath: string, enabled: boolean, config: Record<string, any>): Promise<void> {
   const settingsPath = getClaudeSettingsLocalPath(projectPath);
@@ -200,13 +202,21 @@ export async function setCcrTakeover(projectPath: string, enabled: boolean, conf
     } catch {
       // No usable backup, start from the current settings.
     }
-    applyCcrProjectTakeover(settings, config);
+    applyCcrProjectTakeover(settings, config, projectPath);
   } else {
-    if (isCcrProjectTakeoverActive(settings)) {
+    // Snapshot the pre-removal active state, then strip ccr-managed fields
+    // (including the auto-compact window CCR owns) before backing up. The backup
+    // is meant to preserve *user* customizations (permissions, hooks, a
+    // hand-edited auto-compact window) — ccr-managed fields are re-applied fresh
+    // from the current global config on the next enable, so stripping them here
+    // avoids a stale managed window being restored later and mistaken for a user
+    // value (which would freeze it and stop ContextWindow changes from applying).
+    const wasActive = isCcrProjectTakeoverActive(settings);
+    removeCcrProjectTakeover(settings, projectPath, config);
+    if (wasActive) {
       await fs.mkdir(path.dirname(backupPath), { recursive: true });
       await fs.writeFile(backupPath, JSON.stringify(settings, null, 2), "utf-8");
     }
-    removeCcrProjectTakeover(settings);
   }
 
   await fs.mkdir(path.dirname(settingsPath), { recursive: true });
@@ -224,7 +234,7 @@ export async function refreshCcrProjectTakeover(projectPath: string, config: Rec
     return false;
   }
 
-  applyCcrProjectTakeover(settings, config);
+  applyCcrProjectTakeover(settings, config, projectPath);
   const settingsPath = getClaudeSettingsLocalPath(projectPath);
   await fs.mkdir(path.dirname(settingsPath), { recursive: true });
   await fs.writeFile(settingsPath, JSON.stringify(settings, null, 2), "utf-8");

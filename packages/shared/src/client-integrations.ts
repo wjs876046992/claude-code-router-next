@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
-import { HOME_DIR } from "./constants";
+import { HOME_DIR, CLIENT_STATE_FILE, getProjectConfigDir } from "./constants";
 
 export const CLIENT_IDS = ["claudeCode", "codex", "pi", "qwenCode", "opencode"] as const;
 export type ClientId = (typeof CLIENT_IDS)[number];
@@ -255,6 +255,101 @@ function getContextWindow(config: Record<string, any>): number {
   return DEFAULT_CONTEXT_WINDOW;
 }
 
+// --- CCR-managed state -----------------------------------------------------
+// Records the exact values CCR last wrote into a client's settings file, so CCR
+// can tell apart values it owns (safe to overwrite/clear when the global config
+// changes) from values the user hand-edited (must be preserved). The global
+// settings.json state lives in one file keyed by clientId; each project's state
+// lives in its own ccr-state.json next to settings.local.backup.json.
+
+interface ManagedState {
+  autoCompactWindow?: string;
+}
+
+/** State file path for a global client takeover (e.g. ~/.claude/settings.json). */
+function getGlobalManagedStatePath(): string {
+  return CLIENT_STATE_FILE;
+}
+
+/** State file path for a project-level takeover (.claude/settings.local.json). */
+function getProjectManagedStatePath(projectPath: string): string {
+  return path.join(getProjectConfigDir(projectPath), "ccr-state.json");
+}
+
+/** Read a per-project managed-state file (a flat ManagedState object). */
+function readManagedState(statePath: string): ManagedState {
+  return readJsonObject(statePath) as ManagedState;
+}
+
+/** Read one clientId's slot from the global managed-state file. */
+function readGlobalManagedState(clientId: ClientId): ManagedState {
+  const all = readJsonObject(getGlobalManagedStatePath()) as Record<string, ManagedState>;
+  return (all && all[clientId]) || {};
+}
+
+/** Persist a per-project managed-state file. */
+function writeManagedState(statePath: string, value: ManagedState): void {
+  writeJsonObject(statePath, value);
+}
+
+/** Persist one clientId's slot in the global managed-state file. */
+function writeGlobalManagedState(clientId: ClientId, value: ManagedState): void {
+  const statePath = getGlobalManagedStatePath();
+  const all = readJsonObject(statePath) as Record<string, ManagedState>;
+  all[clientId] = value;
+  writeJsonObject(statePath, all);
+}
+
+/** Clear a per-project managed-state file. */
+function clearManagedState(statePath: string): void {
+  try {
+    if (fs.existsSync(statePath)) fs.unlinkSync(statePath);
+  } catch {
+    // Best-effort; stale state just makes CCR conservative next time.
+  }
+}
+
+/** Clear one clientId's slot from the global managed-state file. */
+function clearGlobalManagedState(clientId: ClientId): void {
+  const statePath = getGlobalManagedStatePath();
+  const all = readJsonObject(statePath) as Record<string, ManagedState>;
+  if (all && all[clientId]) {
+    delete all[clientId];
+    if (Object.keys(all).length > 0) {
+      writeJsonObject(statePath, all);
+    } else {
+      clearManagedState(statePath);
+    }
+  }
+}
+
+/**
+ * Build a ManagedStateAccess backed by the global client-state file for a given
+ * client. Used by the global enable/disable path (~/.claude/settings.json).
+ */
+function globalStateAccess(clientId: ClientId): ManagedStateAccess {
+  return {
+    read: () => readGlobalManagedState(clientId),
+    write: (value) => writeGlobalManagedState(clientId, value),
+    clear: () => clearGlobalManagedState(clientId),
+  };
+}
+
+/**
+ * Build a ManagedStateAccess backed by a project's ccr-state.json. Returns
+ * undefined when projectPath is absent (no state tracked — apply/remove then
+ * fall back to the conservative preserve-on-divergence behavior).
+ */
+function projectStateAccess(projectPath?: string): ManagedStateAccess | undefined {
+  if (!projectPath) return undefined;
+  const statePath = getProjectManagedStatePath(projectPath);
+  return {
+    read: () => readManagedState(statePath),
+    write: (value) => writeManagedState(statePath, value),
+    clear: () => clearManagedState(statePath),
+  };
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -391,10 +486,23 @@ function restoreLatestBackup(clientId: string, filePath: string): string | null 
 function readJsonObject(filePath: string): Record<string, any> {
   if (!fs.existsSync(filePath)) return {};
 
-  const raw = fs.readFileSync(filePath, "utf-8");
+  let raw: string;
+  try {
+    raw = fs.readFileSync(filePath, "utf-8");
+  } catch {
+    return {};
+  }
   if (!raw.trim()) return {};
 
-  const parsed = JSON.parse(raw);
+  // Tolerate a corrupted/truncated state file (user-writable location): treat
+  // parse failures as "no state" so takeover/refresh/teardown still work and
+  // CCR stays conservative rather than throwing mid-flow.
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return {};
+  }
   return isObject(parsed) ? parsed : {};
 }
 
@@ -472,14 +580,62 @@ function applyClaudeModelFamilies(settings: Record<string, any>, config: Record<
   }
 }
 
-function applyClaudeAutoCompactSettings(settings: Record<string, any>, config: Record<string, any>): void {
+/**
+ * Accessor for the managed-state slot backing a given takeover target (global
+ * settings.json keyed by clientId, or a per-project ccr-state.json). Lets
+ * apply/remove read what CCR last wrote and update/clear it, without each call
+ * site needing to know which storage layout is in use.
+ */
+interface ManagedStateAccess {
+  read(): ManagedState;
+  write(value: ManagedState): void;
+  clear(): void;
+}
+
+function applyClaudeAutoCompactSettings(
+  settings: Record<string, any>,
+  config: Record<string, any>,
+  state?: ManagedStateAccess,
+): void {
   settings.autoCompactEnabled = true;
   if (!isObject(settings.env)) settings.env = {};
   if (settings.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE === "0.8") {
     delete settings.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE;
   }
-  settings.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = String(getContextWindow(config));
-  settings.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE = CLAUDE_AUTO_COMPACT_ENV.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE;
+
+  // Auto-compact window: preserve a value the user hand-edited. CCR only writes
+  // (and updates) when the field is absent or still holds the value CCR last
+  // wrote. A divergent value means the user customized it — keep it and leave
+  // the recorded state untouched so the divergence stays detectable next time.
+  //
+  // State can be missing after a disable->enable cycle (disable clears it, and
+  // a stale managed window restored from the backup used to be mistaken for a
+  // user value, so the state was never rebuilt — freezing the window). When the
+  // state is empty but the current value matches what CCR would write for the
+  // current config, treat it as CCR-managed and re-establish the state so the
+  // window stays manageable. A genuinely divergent value with no state is still
+  // treated as a user customization and left untouched.
+  const managedWindow = String(getContextWindow(config));
+  const currentWindow = settings.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
+  const lastWrittenWindow = state?.read().autoCompactWindow;
+  const isManaged =
+    currentWindow === undefined ||
+    currentWindow === lastWrittenWindow ||
+    (lastWrittenWindow === undefined && currentWindow === managedWindow);
+  if (isManaged) {
+    settings.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = managedWindow;
+    state?.write({ autoCompactWindow: managedWindow });
+  }
+
+  // PCT has a fixed CCR default, so a plain value comparison is enough to tell
+  // CCR-managed from user-customized; no state file needed for it.
+  const defaultPct = CLAUDE_AUTO_COMPACT_ENV.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE;
+  if (
+    settings.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE === undefined ||
+    settings.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE === defaultPct
+  ) {
+    settings.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE = defaultPct;
+  }
 }
 
 function applyClaudeAttributionHeader(settings: Record<string, any>, config: Record<string, any>): void {
@@ -519,7 +675,7 @@ function restoreLegacyClaudeBackups(settings: Record<string, any>): void {
   }
 }
 
-function removeClaudeManagedFields(settings: Record<string, any>): void {
+function removeClaudeManagedFields(settings: Record<string, any>, state?: ManagedStateAccess): void {
   restoreLegacyClaudeBackups(settings);
 
   if (isObject(settings.env)) {
@@ -535,10 +691,14 @@ function removeClaudeManagedFields(settings: Record<string, any>): void {
       }
     }
 
-    // The auto-compact window is set to a dynamic value (from ContextWindow),
-    // so remove it unconditionally; the rest are removed only when they still
-    // hold the ccr-managed default.
-    delete settings.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
+    // Auto-compact window: only remove it if it still holds the value CCR last
+    // wrote. A divergent value is a user customization — keep it. Always clear
+    // the recorded state for this target afterward.
+    const lastWrittenWindow = state?.read().autoCompactWindow;
+    if (settings.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW === lastWrittenWindow) {
+      delete settings.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
+    }
+    state?.clear();
     for (const [key, value] of Object.entries(CLAUDE_AUTO_COMPACT_ENV)) {
       if (key === "CLAUDE_CODE_AUTO_COMPACT_WINDOW") continue;
       if (settings.env[key] === value) {
@@ -622,7 +782,7 @@ const claudeCodeAdapter: ClientAdapter = {
     settings.env.ANTHROPIC_BASE_URL = getCcrBaseUrl(config);
     settings.env.ANTHROPIC_AUTH_TOKEN = config.APIKEY || "test";
     applyClaudeModelFamilies(settings, config);
-    applyClaudeAutoCompactSettings(settings, config);
+    applyClaudeAutoCompactSettings(settings, config, globalStateAccess("claudeCode"));
     applyClaudeAttributionHeader(settings, config);
 
     if (config?.StatusLine?.enabled) {
@@ -649,7 +809,7 @@ const claudeCodeAdapter: ClientAdapter = {
     }
 
     const settings = readJsonObject(filePath);
-    removeClaudeManagedFields(settings);
+    removeClaudeManagedFields(settings, globalStateAccess("claudeCode"));
     writeJsonObject(filePath, settings);
     return createClaudeStatus(config, settings);
   },
@@ -664,13 +824,17 @@ const claudeCodeAdapter: ClientAdapter = {
  * auto-compact, status line) to a project's `.claude/settings.local.json`,
  * mirroring what `claudeCodeAdapter.enable` does for `~/.claude/settings.json`.
  */
-export function applyCcrProjectTakeover(settings: Record<string, any>, config: Record<string, any>): void {
+export function applyCcrProjectTakeover(
+  settings: Record<string, any>,
+  config: Record<string, any>,
+  projectPath?: string,
+): void {
   if (!isObject(settings.env)) settings.env = {};
 
   settings.env.ANTHROPIC_BASE_URL = getCcrBaseUrl(config);
   settings.env.ANTHROPIC_AUTH_TOKEN = config.APIKEY || "test";
   applyClaudeModelFamilies(settings, config);
-  applyClaudeAutoCompactSettings(settings, config);
+  applyClaudeAutoCompactSettings(settings, config, projectStateAccess(projectPath));
   applyClaudeAttributionHeader(settings, config);
 
   if (config?.StatusLine?.enabled) {
@@ -688,7 +852,12 @@ export function applyCcrProjectTakeover(settings: Record<string, any>, config: R
  * Remove ccr-managed fields from a project's `.claude/settings.local.json`,
  * preserving any unrelated settings (permissions, hooks, etc.).
  */
-export function removeCcrProjectTakeover(settings: Record<string, any>): void {
+export function removeCcrProjectTakeover(
+  settings: Record<string, any>,
+  projectPath?: string,
+  config?: Record<string, any>,
+): void {
+  const state = projectStateAccess(projectPath);
   if (isObject(settings.env)) {
     if (isCcrBaseUrl(settings.env.ANTHROPIC_BASE_URL)) {
       delete settings.env.ANTHROPIC_BASE_URL;
@@ -701,10 +870,21 @@ export function removeCcrProjectTakeover(settings: Record<string, any>): void {
       }
     }
 
-    // The auto-compact window is set to a dynamic value (from ContextWindow),
-    // so remove it unconditionally; the rest are removed only when they still
-    // hold the ccr-managed default.
-    delete settings.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
+    // Auto-compact window: remove it if it still holds the value CCR last wrote,
+    // OR — when the state is missing (e.g. after a prior disable->enable cycle
+    // failed to rebuild it) — if it matches the value CCR would write for the
+    // current config. A divergent value is a user customization — keep it.
+    // Always clear the recorded state for this project afterward.
+    const lastWrittenWindow = state?.read().autoCompactWindow;
+    const currentWindow = settings.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
+    const managedWindow = config ? String(getContextWindow(config)) : undefined;
+    const shouldRemove =
+      currentWindow === lastWrittenWindow ||
+      (lastWrittenWindow === undefined && managedWindow !== undefined && currentWindow === managedWindow);
+    if (shouldRemove) {
+      delete settings.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
+    }
+    state?.clear();
     for (const [key, value] of Object.entries(CLAUDE_AUTO_COMPACT_ENV)) {
       if (key === "CLAUDE_CODE_AUTO_COMPACT_WINDOW") continue;
       if (settings.env[key] === value) {
