@@ -17,6 +17,9 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 
 - **UI 上下文窗口配置项补充与扩展上下文的配合提示**: 顶层「上下文窗口 (ContextWindow)」配置项此前未说明：设为大于 200000 时必须同时在该模型家族的路由中启用「扩展上下文 (1M)」（使模型名带 `[1m]` 后缀），否则 Claude Code 会把 `CLAUDE_CODE_AUTO_COMPACT_WINDOW` 封顶至 200000、配置不生效。现在在该输入框下方补充配合说明，并在 `ContextWindow > 200000` 且对应模型家族未启用扩展上下文时显示红色警告条；「扩展上下文 (1M)」开关的描述也同步补充了与顶层上下文窗口的配合关系。
+- **修复状态栏百分比按 1M 计算的问题**: `ccr statusline` 的子进程不一定继承项目级 settings 的环境变量，导致写在项目 `.claude/settings.local.json` 里的 `CLAUDE_CODE_AUTO_COMPACT_WINDOW` 被漏读，百分比回退到模型完整窗口（如 1M）。现在依次从 `process.env`、项目 `settings.local.json`、全局 `settings.json` 读取该值，都没有才回退到 Claude Code 报告的窗口值。
+- **修复状态栏上下文百分比偶发闪 0%**: 状态栏分子取自 `current_usage`（Claude Code 的当前一轮快照），在请求进行中或 auto-compact 刚触发后这一瞬为空，导致百分比短暂显示 0%。现在在快照为空时回退到 transcript 中最近一条 assistant 消息的上下文用量（`input + cache_creation + cache_read`，与原计算同口径），保持百分比稳定。
+- **修复项目接管 disable→enable 循环后 auto-compact 窗口冻结**: 项目级接管的 `ccr-state.json`（记录 CCR 上次写入值）在 disable 时被清除，而再 enable 时从备份恢复的旧 managed 窗口被误判为用户手写值、状态不重建，导致后续 `ContextWindow` 变更无法通过刷新生效；更严重的，一旦状态文件丢失，CCR 无法识别自己写入的窗口，关闭接管时该字段作为残留遗留（用户报告的 400000 残留即此）。现在状态缺失时用「值等于当前 `ContextWindow`」兜底识别 CCR-managed：enable 重建状态、disable 清除残留；真正的用户手写值（与配置不符）仍予以保留。
 
 ## [2.3.21] - 2026-06-27
 
