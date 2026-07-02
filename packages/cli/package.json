@@ -1,6 +1,6 @@
 {
   "name": "@wengine-ai/claude-code-router-next",
-  "version": "2.3.22",
+  "version": "2.3.23",
   "description": "CLI for Claude Code Router",
   "bin": {
     "ccr": "dist/cli.js"
