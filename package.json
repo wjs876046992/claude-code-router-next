@@ -8,7 +8,7 @@
     "build:shared": "pnpm --filter @wengine-ai/claude-code-router-shared build",
     "build:cli": "pnpm --filter @wengine-ai/claude-code-router-next build",
     "build:server": "pnpm --filter @wengine-ai/claude-code-router-server build",
-    "build:ui": "pnpm --filter @wengine-ai/claude-code-router-ui build",
+    "build:ui": "node scripts/build-ui.js",
     "build:docs": "pnpm --filter claude-code-router-docs build",
     "release": "pnpm build && bash scripts/release.sh all",
     "release:npm": "pnpm build && bash scripts/release.sh npm",

@@ -96,15 +96,15 @@ export function createDefaultStatusLineConfig(): StatusLineConfig {
   return {
     enabled: false,
     currentStyle: "default",
-    default: { 
+    default: {
       modules: [
-        { type: "workDir", icon: "󰉋", text: "{{workDirName}}", color: "bright_blue" },
-        { type: "gitBranch", icon: "", text: "{{gitBranch}}", color: "bright_magenta" },
-        { type: "model", icon: "󰚩", text: "{{model}}", color: "bright_cyan" },
+        { type: "workDir", icon: "", text: "{{workDirName}}", color: "bright_blue" },
+        { type: "gitBranch", icon: "", text: "{{gitBranch}}", color: "bright_magenta" },
+        { type: "model", icon: "", text: "{{model}}", color: "bright_cyan" },
         { type: "contextBar", icon: "", text: "Context {{contextBar}} {{contextPercent}}%", color: "bright_green" },
         { type: "usage", icon: "↑", text: "{{inputTokens}}", color: "bright_green" },
         { type: "usage", icon: "↓", text: "{{outputTokens}}", color: "bright_yellow" }
-      ] 
+      ]
     },
     powerline: { 
       modules: [
@@ -116,6 +116,34 @@ export function createDefaultStatusLineConfig(): StatusLineConfig {
         { type: "usage", icon: "↓", text: "{{outputTokens}}", color: "white", background: "bg_bright_yellow" }
       ] 
     }
+  };
+}
+
+/**
+ * 将旧版 contextCircle 模块迁移为 contextBar，与 CLI 渲染时的自动升级保持一致
+ * （见 packages/cli/src/utils/statusline.ts 的 auto-upgrade 逻辑）。
+ * 这样界面显示为长条进度条，保存后旧配置也会被顺带清理。
+ */
+function migrateModule(module: StatusLineModuleConfig): StatusLineModuleConfig {
+  if (module.type === "contextCircle") {
+    return {
+      ...module,
+      type: "contextBar",
+      icon: "",
+      text: "Context {{contextBar}} {{contextPercent}}%",
+    };
+  }
+  return module;
+}
+
+/**
+ * 对整份 StatusLine 配置执行向后兼容迁移。
+ */
+export function migrateStatusLineConfig(config: StatusLineConfig): StatusLineConfig {
+  return {
+    ...config,
+    default: { ...config.default, modules: (config.default?.modules || []).map(migrateModule) },
+    powerline: { ...config.powerline, modules: (config.powerline?.modules || []).map(migrateModule) },
   };
 }
 

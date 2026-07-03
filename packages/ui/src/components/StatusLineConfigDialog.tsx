@@ -21,6 +21,7 @@ import {
   validateStatusLineConfig,
   formatValidationError,
   createDefaultStatusLineConfig,
+  migrateStatusLineConfig,
 } from "@/utils/statusline";
 import type {
   StatusLineConfig,
@@ -30,7 +31,7 @@ import type {
 
 const DEFAULT_MODULE: StatusLineModuleConfig = {
   type: "workDir",
-  icon: "󰉋",
+  icon: "",
   text: "{{workDirName}}",
   color: "bright_blue",
 };
@@ -124,6 +125,13 @@ const IconSearchInput = React.memo(({ value, onChange, fontFamily, t }: IconSear
   const [filteredIcons, setFilteredIcons] = useState<IconData[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const inputRef = React.useRef<HTMLInputElement>(null);
+
+  // Sync the internal input state when the `value` prop changes (e.g. switching
+  // the selected module). Without this, searchTerm only seeds at mount and the
+  // field desyncs from the actual module icon, making icons look undeletable.
+  useEffect(() => {
+    setSearchTerm(value);
+  }, [value]);
 
   // 加载Nerdfonts图标数据
   const loadIcons = useCallback(async () => {
@@ -337,6 +345,7 @@ function renderModulePreview(
     inputTokens: "1.2k",
     outputTokens: "2.5k",
     contextPercent: "62",
+    contextBar: "████░░",
     contextUsedTokens: "124k",
     contextWindowSize: "200k",
     contextUsage: "124k/200k",
@@ -443,13 +452,13 @@ export function StatusLineConfigDialog({
   const { config, setConfig } = useConfig();
 
   const [statusLineConfig, setStatusLineConfig] = useState<StatusLineConfig>(
-    config?.StatusLine || createDefaultStatusLineConfig()
+    config?.StatusLine ? migrateStatusLineConfig(config.StatusLine) : createDefaultStatusLineConfig()
   );
 
   // Sync local state when config changes (e.g. after server reload)
   useEffect(() => {
     if (config?.StatusLine) {
-      setStatusLineConfig(config.StatusLine);
+      setStatusLineConfig(migrateStatusLineConfig(config.StatusLine));
       setFontFamily(config.StatusLine.fontFamily || "Hack Nerd Font Mono");
     }
   }, [config?.StatusLine]);
@@ -457,7 +466,7 @@ export function StatusLineConfigDialog({
   // Reset local state when dialog opens to reflect latest saved config
   useEffect(() => {
     if (isOpen && config?.StatusLine) {
-      setStatusLineConfig(config.StatusLine);
+      setStatusLineConfig(migrateStatusLineConfig(config.StatusLine));
       setFontFamily(config.StatusLine.fontFamily || "Hack Nerd Font Mono");
       setSelectedModuleIndex(null);
       setValidationErrors([]);
@@ -970,7 +979,7 @@ export function StatusLineConfigDialog({
                       case "workDir":
                         newModule = {
                           type: "workDir",
-                          icon: "󰉋",
+                          icon: "",
                           text: "{{workDirName}}",
                           color: "bright_blue",
                         };
@@ -978,7 +987,7 @@ export function StatusLineConfigDialog({
                       case "gitBranch":
                         newModule = {
                           type: "gitBranch",
-                          icon: "🌿",
+                          icon: "",
                           text: "{{gitBranch}}",
                           color: "bright_green",
                         };
@@ -986,7 +995,7 @@ export function StatusLineConfigDialog({
                       case "model":
                         newModule = {
                           type: "model",
-                          icon: "🤖",
+                          icon: "",
                           text: "{{model}}",
                           color: "bright_yellow",
                         };
@@ -994,7 +1003,7 @@ export function StatusLineConfigDialog({
                       case "usage":
                         newModule = {
                           type: "usage",
-                          icon: "📊",
+                          icon: "",
                           text: "{{inputTokens}} → {{outputTokens}}",
                           color: "bright_magenta",
                         };
@@ -1002,7 +1011,7 @@ export function StatusLineConfigDialog({
                       case "speed":
                         newModule = {
                           type: "speed",
-                          icon: "⚡",
+                          icon: "",
                           text: "{{tokenSpeed}}",
                           color: "bright_green",
                         };
@@ -1018,7 +1027,7 @@ export function StatusLineConfigDialog({
                       case "totalTokens":
                         newModule = {
                           type: "totalTokens",
-                          icon: "📋",
+                          icon: "",
                           text: "{{totalTokens}}",
                           color: "bright_white",
                         };
@@ -1026,7 +1035,7 @@ export function StatusLineConfigDialog({
                       case "script":
                         newModule = {
                           type: "script",
-                          icon: "📜",
+                          icon: "",
                           text: "Script Module",
                           color: "bright_cyan",
                           scriptPath: "",
@@ -1048,8 +1057,11 @@ export function StatusLineConfigDialog({
                 {currentModules.length > 0 ? (
                   <div className="flex items-center flex-wrap gap-0">
                     {currentModules.map((module, index) => (
+                      <React.Fragment key={index}>
+                        {statusLineConfig.currentStyle !== "powerline" && index > 0 && (
+                          <span className="text-gray-400 select-none px-0.5">│</span>
+                        )}
                       <div
-                        key={index}
                         tabIndex={0}
                         className={`cursor-pointer ${
                           selectedModuleIndex === index
@@ -1120,6 +1132,7 @@ export function StatusLineConfigDialog({
                           statusLineConfig.currentStyle === "powerline"
                         )}
                       </div>
+                      </React.Fragment>
                     ))}
                   </div>
                 ) : (
