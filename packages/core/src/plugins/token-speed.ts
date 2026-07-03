@@ -229,7 +229,13 @@ export const tokenSpeedPlugin: CCRPlugin = {
             if (!stats) return;
 
             const ttft = stats.firstTokenTime ? (stats.firstTokenTime - stats.startTime) : 0;
-            const totalDuration = stats.lastTokenTime - stats.startTime;
+            // Interim updates use the current time as the end boundary so a
+            // stall after an SSE burst lets the reported rate decay toward the
+            // real sustained rate (lastTokenTime only advances on text deltas,
+            // so it would otherwise freeze the burst-time average). The final
+            // report uses the last-token time as the true decode end.
+            const endTime = isFinal ? stats.lastTokenTime : performance.now();
+            const totalDuration = endTime - stats.startTime;
             stats.tokensPerSecond = calculateFinalTokensPerSecond(stats.tokenCount, totalDuration, ttft);
 
             await outputStats(stats, reporters, opts.outputOptions, isFinal).catch(err => {
