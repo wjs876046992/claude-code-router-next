@@ -53,7 +53,6 @@ import {
   syncGlobalProjectTakeovers,
   getProjectTakeoverClients,
   setProjectTakeover,
-  PROJECT_TAKEOVER_CLIENT_IDS,
   isProjectTakeoverClient,
   type ClientId,
 } from "@wengine-ai/claude-code-router-shared";
@@ -881,12 +880,15 @@ export const createServer = async (config: any): Promise<any> => {
       const body = req.body || {};
 
       // Preferred: an explicit list of clients to take over. Legacy callers may
-      // still send `enabled: boolean` (true = all supported clients, false = none).
+      // still send `enabled: boolean` (true = Claude Code only, false = none).
+      // Only Claude Code is taken over by default: the other clients write
+      // config files into the project root (e.g. opencode.json), which users
+      // must opt into explicitly via the clients array.
       let clients: ClientId[];
       if (Array.isArray(body.clients)) {
         clients = body.clients.filter(isProjectTakeoverClient);
       } else if (typeof body.enabled === "boolean") {
-        clients = body.enabled ? [...PROJECT_TAKEOVER_CLIENT_IDS] : [];
+        clients = body.enabled ? ["claudeCode"] : [];
       } else {
         reply.status(400).send({ error: "clients (array) or enabled (boolean) is required" });
         return;

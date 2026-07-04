@@ -11,6 +11,10 @@ All notable changes to this project will be documented in this file.
 - **发布确认点闸门（release gate）**: `scripts/release.sh` 新增 `validate_release_docs`，在任何发布动作前（npm/docker/all 所有模式，含 dry-run）强制校验：① 6 个 `package.json`（root + 5 包）版本一致且等于待发布版本；② `CHANGELOG.md` 存在该版本的非空 `## [x.y.z]` 段落；③ 两份 README 更新日志表格均有 `| **vx.y.z** |` 行；④ 版本号严格大于 npm 已发布的 latest（逐段数字比较，registry 不可达时警告跳过）。任何一项不满足即中止发布，把 CLAUDE.md 的 Release checklist 从人工约定变为自动确认点。
 - **版本号策略：支持多位 patch 的日常小迭代**: 自本版本起，日常小迭代在 patch 段追加一位数字（`2.3.23` → `2.3.231` → `2.3.232`），避免每日发布把主版本数字推得过快。patch 按数字比较（CLI 更新检查与发布闸门同一规则），因此用过 `2.3.23x` 后下一个功能版本是 `2.3.240`（而非 `2.3.24`，会被闸门当降级拦截），或直接升 `2.4.0`。
 
+### Changed
+
+- **项目级接管默认仅接管 Claude Code**: 此前在 UI 打开项目「CCR 接管」开关（或 API 只传 `enabled: true`）会默认接管全部受支持客户端（Claude Code、pi、qwen-code、opencode），导致 pi/qwen/opencode 的项目级配置文件（`.pi/settings.json`、`.qwen/settings.json`、`opencode.json`）被写进项目目录（opencode 首次运行还会自行生成 `AGENTS.md`），污染项目根目录。现在所有默认路径（主开关开启、多选清空、legacy `enabled: true`、添加项目时的自动接管）都只接管 Claude Code；pi / qwen-code / opencode 改为在「接管的客户端」多选中显式勾选后才接管，UI 文案同步更新。
+
 ### Fixed
 
 - **修复「检查更新」永远提示已是最新（双重 bug）**: ① 后端 `checkForUpdates`/`performUpdate`（`packages/cli/src/utils/update.ts`）硬编码了已从 npm unpublish 的旧包名 `claude-code-router-next`，`npm view` 返回 404 后被 catch 静默吞掉、恒返回 `hasUpdate: false`，UI 点「检查更新」永远提示已是最新，「立即更新」也会因同样的错包名安装失败；现改为从 `package.json` 动态读取包名（`@wengine-ai/claude-code-router-next`），与 `version` 的取法一致，今后改包名不会再失效。② 前端 `App.tsx` 的更新弹窗条件要求 `changelog` 非空，而后端该字段恒为空字符串，即使修复①后有新版本也不会弹窗；现去掉对 `changelog` 的强制判断（弹窗内已有「暂无更新日志」兜底文案）。
