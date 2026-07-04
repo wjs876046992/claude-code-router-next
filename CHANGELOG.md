@@ -8,7 +8,7 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
-- **状态栏默认改为无图标表格风格**: 默认主题（CLI `DEFAULT_THEME`/`SIMPLE_THEME` 与 UI `createDefaultStatusLineConfig`）不再带装饰图标，模块之间改用细竖线 `│`（U+2502）分隔，呈简洁表格样式；默认模块与顺序调整为「模型 │ 上下文进度条 │ git 分支 │ token 速率 │ 会话总 token」。动机是歧义宽度的 emoji 图标（如闪电 `⚡` U+26A1）会让 Claude Code 误算状态栏显示宽度、在交互（如双击）重绘时产生数字重影/位移；改用定宽字符或不带图标可避免。图标仍支持在 UI 中自定义，通过 UI 新增的模块默认不带图标。
+- **状态栏默认改为无图标表格风格**: 默认主题（CLI `DEFAULT_THEME`/`SIMPLE_THEME` 与 UI `createDefaultStatusLineConfig`）不再带装饰图标，模块之间改用细竖线 `│`（U+2502）分隔，呈简洁表格样式；默认模块与顺序调整为「模型 │ 工作目录 │ git 分支 │ 上下文进度条 │ token 速率 │ 会话总 token」。动机是歧义宽度的 emoji 图标（如闪电 `⚡` U+26A1）会让 Claude Code 误算状态栏显示宽度、在交互（如双击）重绘时产生数字重影/位移；改用定宽字符或不带图标可避免。图标仍支持在 UI 中自定义，通过 UI 新增的模块默认不带图标。
 - **`build:ui` 构建后同步产物到 CLI/根 dist**: `pnpm build:ui` 改为经 `scripts/build-ui.js`，在构建 UI 后把 `index.html` 同步到已存在的 `packages/cli/dist` 与根 `dist`，使单独运行 `build:ui` 也能更新本地运行中的 ccr 实际读取的包（此前仅 `build:cli` 会拷贝，导致单跑 `build:ui` 后本地界面仍是旧包）。
 
 ### Fixed

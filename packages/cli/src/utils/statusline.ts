@@ -220,8 +220,9 @@ async function executeScript(scriptPath: string, variables: Record<string, strin
 const DEFAULT_THEME: StatusLineThemeConfig = {
     modules: [
         { type: "model", icon: "", text: "{{model}}", color: "bright_yellow" },
-        { type: "contextBar", icon: "", text: "Context {{contextBar}} {{contextPercent}}%", color: "#22c55e" },
+        { type: "workDir", icon: "", text: "{{workDirName}}", color: "bright_blue" },
         { type: "gitBranch", icon: "", text: "{{gitBranch}}", color: "bright_green" },
+        { type: "contextBar", icon: "", text: "Context {{contextBar}} {{contextPercent}}%", color: "#22c55e" },
         { type: "speed", icon: "", text: "{{tokenSpeed}}", color: "bright_green" },
         { type: "totalTokens", icon: "", text: "{{totalTokens}}", color: "bright_white" }
     ]
@@ -287,8 +288,9 @@ const POWERLINE_THEME: StatusLineThemeConfig = {
 const SIMPLE_THEME: StatusLineThemeConfig = {
     modules: [
         { type: "model", icon: "", text: "{{model}}", color: "bright_yellow" },
-        { type: "contextBar", icon: "", text: "Context {{contextBar}} {{contextPercent}}%", color: "#22c55e" },
+        { type: "workDir", icon: "", text: "{{workDirName}}", color: "bright_blue" },
         { type: "gitBranch", icon: "", text: "{{gitBranch}}", color: "bright_green" },
+        { type: "contextBar", icon: "", text: "Context {{contextBar}} {{contextPercent}}%", color: "#22c55e" },
         { type: "speed", icon: "", text: "{{tokenSpeed}}", color: "bright_green" },
         { type: "totalTokens", icon: "", text: "{{totalTokens}}", color: "bright_white" }
     ]
