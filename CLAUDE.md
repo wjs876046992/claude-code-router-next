@@ -253,6 +253,15 @@ When releasing a new version, keep changelog records in three places consistent:
 
 Release checklist: bump the `version` in all 6 `package.json` files (root + 5 packages) to the same value, prepend a new section to `CHANGELOG.md`, add the new top row to both README tables, and if either table now exceeds 10 rows move the oldest rows into `CHANGELOG-archive.md`.
 
+**Automated gate**: `scripts/release.sh` runs `validate_release_docs` before publishing anything (all modes, including dry-run). It aborts the release unless: all 6 `package.json` versions equal the version being released, `CHANGELOG.md` has a non-empty `## [<version>]` section, both README tables have a `| **v<version>** |` row, and the version is strictly greater than the latest published on npm (numeric per-segment compare; skipped with a warning if the registry is unreachable).
+
+### Version numbering
+
+Daily/minor iterations may extend the patch segment with an extra digit (e.g. `2.3.23` → `2.3.231` → `2.3.232`) to keep headline version numbers from inflating. Rules (enforced by the release gate's monotonic check):
+
+- Patch segments compare **numerically**, so once a `2.3.23x` version ships, `2.3.24` would be a downgrade (`24 < 231`) and is rejected. The next "feature" version after `2.3.23x` is `2.3.240` (then `2.3.241`… for its dailies), or bump the minor to `2.4.0` for a clean number.
+- Stable releases must never carry a pre-release suffix. Pre-release validation versions (`2.3.x-beta.0`, published manually with `npm publish --tag beta`) must NOT go through `scripts/release.sh`: both the release gate and the CLI's update check (`compareVersions` in `packages/cli/src/utils/update.ts`) do plain numeric segment comparison and do not understand suffixes.
+
 ## Configuration Example Locations
 
 - Main configuration example: Complete example in README.md

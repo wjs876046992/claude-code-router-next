@@ -23,6 +23,10 @@ const TAKEOVER_CLIENTS: { id: ClientId; name: string }[] = [
   { id: "opencode", name: "opencode" },
 ];
 const ALL_TAKEOVER_CLIENT_IDS = TAKEOVER_CLIENTS.map((client) => client.id);
+// Default takeover set: Claude Code only. The other clients write config
+// files into the project root (e.g. opencode.json, .qwen/), so they are
+// strictly opt-in via the multi-select.
+const DEFAULT_TAKEOVER_CLIENT_IDS: ClientId[] = ["claudeCode"];
 
 export function ProjectsPage() {
   const { t } = useTranslation();
@@ -166,20 +170,20 @@ export function ProjectsPage() {
     }
   };
 
-  // The master switch enables/disables takeover entirely. Enabling without
-  // picking specific clients defaults to all supported ones ("不选 = 全部").
+  // The master switch enables/disables takeover entirely. Enabling defaults
+  // to Claude Code only; other clients are opt-in via the multi-select.
   const handleToggleTakeover = (id: string, checked: boolean) => {
-    applyTakeover(id, checked ? [...ALL_TAKEOVER_CLIENT_IDS] : []);
+    applyTakeover(id, checked ? [...DEFAULT_TAKEOVER_CLIENT_IDS] : []);
   };
 
-  // The multi-select narrows which clients are taken over. Clearing it falls
-  // back to all supported clients rather than turning takeover off (use the
-  // master switch for that).
+  // The multi-select picks which clients are taken over. Clearing it falls
+  // back to the default (Claude Code only) rather than turning takeover off
+  // (use the master switch for that).
   const handleTakeoverClientsChange = (id: string, clients: string[]) => {
     const selected = clients.filter((value): value is ClientId =>
       ALL_TAKEOVER_CLIENT_IDS.includes(value as ClientId)
     );
-    applyTakeover(id, selected.length > 0 ? selected : [...ALL_TAKEOVER_CLIENT_IDS]);
+    applyTakeover(id, selected.length > 0 ? selected : [...DEFAULT_TAKEOVER_CLIENT_IDS]);
   };
 
   const handleSave = async (id: string) => {

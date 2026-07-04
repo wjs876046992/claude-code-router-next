@@ -1,7 +1,6 @@
 import { exec } from "child_process";
 import { promisify } from "util";
-import { join } from "path";
-import { readFileSync } from "fs";
+import { name as packageName } from "../../package.json";
 
 const execPromise = promisify(exec);
 
@@ -13,7 +12,7 @@ const execPromise = promisify(exec);
 export async function checkForUpdates(currentVersion: string) {
   try {
     // Get latest version info from npm registry
-    const { stdout } = await execPromise("npm view claude-code-router-next version");
+    const { stdout } = await execPromise(`npm view ${packageName} version`);
     const latestVersion = stdout.trim();
     
     // Compare versions
@@ -37,7 +36,7 @@ export async function checkForUpdates(currentVersion: string) {
 export async function performUpdate() {
   try {
     // Execute npm update command
-    const { stdout, stderr } = await execPromise("npm install -g claude-code-router-next@latest");
+    const { stdout, stderr } = await execPromise(`npm install -g ${packageName}@latest`);
     
     if (stderr) {
       console.error("Update stderr:", stderr);
