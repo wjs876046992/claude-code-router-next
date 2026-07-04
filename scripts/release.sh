@@ -65,6 +65,95 @@ require_npm_login() {
   fi
 }
 
+# Pre-publish checklist gate: all package versions aligned, and the
+# changelog/README release notes for $VERSION are actually written.
+# Runs for every publish mode (npm/docker/all), including dry-run.
+validate_release_docs() {
+  echo ""
+  echo "校验发布确认点（版本一致性 + changelog）..."
+
+  ROOT_DIR="$ROOT_DIR" VERSION="$VERSION" node <<'EOF'
+const fs = require('fs');
+const path = require('path');
+
+const root = process.env.ROOT_DIR;
+const version = process.env.VERSION;
+const errors = [];
+
+// 1. All 6 package.json files (root + 5 packages) must carry the same version
+const pkgPaths = [
+  'package.json',
+  'packages/cli/package.json',
+  'packages/core/package.json',
+  'packages/server/package.json',
+  'packages/shared/package.json',
+  'packages/ui/package.json',
+];
+for (const rel of pkgPaths) {
+  const v = JSON.parse(fs.readFileSync(path.join(root, rel), 'utf8')).version;
+  if (v !== version) {
+    errors.push(`版本不一致: ${rel} 是 ${v}，应为 ${version}`);
+  }
+}
+
+// 2. CHANGELOG.md must contain a non-empty "## [<version>]" section
+const changelog = fs.readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8');
+const escaped = version.replace(/\./g, '\\.');
+const section = changelog.match(
+  new RegExp(`^## \\[${escaped}\\][^\\n]*\\n([\\s\\S]*?)(?=^## \\[|$(?![\\s\\S]))`, 'm')
+);
+if (!section) {
+  errors.push(`CHANGELOG.md 缺少 "## [${version}]" 版本段落`);
+} else if (!section[1].trim()) {
+  errors.push(`CHANGELOG.md 的 "## [${version}]" 段落是空的，请补全变更内容`);
+}
+
+// 3. Both README changelog tables must contain a row for this version
+for (const readme of ['README.md', 'README_en.md']) {
+  const content = fs.readFileSync(path.join(root, readme), 'utf8');
+  if (!content.includes(`| **v${version}** |`)) {
+    errors.push(`${readme} 的更新日志表格缺少 "| **v${version}** |" 行`);
+  }
+}
+
+// 4. New version must be strictly greater than the latest published version.
+// Numeric per-segment compare (same rule as CLI's checkForUpdates), so
+// multi-digit patch segments like 2.3.231 are supported and ordered
+// correctly (2.3.231 > 2.3.24 would be rejected as a downgrade).
+// Skipped with a warning if the registry is unreachable.
+function compareVersions(v1, v2) {
+  const p1 = v1.split('.').map(Number);
+  const p2 = v2.split('.').map(Number);
+  for (let i = 0; i < Math.max(p1.length, p2.length); i++) {
+    const n1 = i < p1.length ? p1[i] : 0;
+    const n2 = i < p2.length ? p2[i] : 0;
+    if (n1 > n2) return 1;
+    if (n1 < n2) return -1;
+  }
+  return 0;
+}
+try {
+  const { execSync } = require('child_process');
+  const published = execSync('npm view @wengine-ai/claude-code-router-next version', {
+    encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 15000,
+  }).trim();
+  if (published && compareVersions(version, published) <= 0) {
+    errors.push(`版本号未递增: npm 上已发布 ${published}，本次要发布的 ${version} 不比它新`);
+  }
+} catch {
+  console.warn('⚠️  无法从 npm registry 获取已发布版本，跳过版本递增校验');
+}
+
+if (errors.length) {
+  console.error('❌ 发布确认点未通过:');
+  for (const e of errors) console.error(`   ✗ ${e}`);
+  console.error('请按 CLAUDE.md 的 Release checklist 补全后重新发布。');
+  process.exit(1);
+}
+console.log(`✅ 发布确认点通过: 6 个 package.json 均为 ${version}，CHANGELOG.md 与两份 README 均已记录该版本`);
+EOF
+}
+
 validate_cli_dist() {
   local cli_dir="$1"
   local dist_dir="$cli_dir/dist"
@@ -282,6 +371,9 @@ publish_docker() {
   echo "   镜像: ${IMAGE_NAME}:${IMAGE_TAG}"
   echo "   镜像: ${IMAGE_NAME}:latest"
 }
+
+# Pre-publish gate: docs and versions must be release-ready before anything ships
+validate_release_docs
 
 # Run release steps
 if [ "$PUBLISH_TYPE" = "npm" ] || [ "$PUBLISH_TYPE" = "all" ]; then

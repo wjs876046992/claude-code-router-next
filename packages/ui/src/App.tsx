@@ -91,9 +91,9 @@ function App() {
     setIsCheckingUpdate(true);
     try {
       const updateInfo = await api.checkForUpdates();
-      if (updateInfo.hasUpdate && updateInfo.latestVersion && updateInfo.changelog) {
+      if (updateInfo.hasUpdate && updateInfo.latestVersion) {
         setIsNewVersionAvailable(true);
-        setNewVersionInfo({ version: updateInfo.latestVersion, changelog: updateInfo.changelog });
+        setNewVersionInfo({ version: updateInfo.latestVersion, changelog: updateInfo.changelog || '' });
         if (showDialog) setIsUpdateDialogOpen(true);
       } else if (showDialog) {
         setToast({ message: t('app.no_updates_available'), type: 'success' });
