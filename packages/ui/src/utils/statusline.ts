@@ -98,12 +98,11 @@ export function createDefaultStatusLineConfig(): StatusLineConfig {
     currentStyle: "default",
     default: {
       modules: [
-        { type: "workDir", icon: "", text: "{{workDirName}}", color: "bright_blue" },
-        { type: "gitBranch", icon: "", text: "{{gitBranch}}", color: "bright_magenta" },
-        { type: "model", icon: "", text: "{{model}}", color: "bright_cyan" },
-        { type: "contextBar", icon: "", text: "Context {{contextBar}} {{contextPercent}}%", color: "bright_green" },
-        { type: "usage", icon: "↑", text: "{{inputTokens}}", color: "bright_green" },
-        { type: "usage", icon: "↓", text: "{{outputTokens}}", color: "bright_yellow" }
+        { type: "model", icon: "", text: "{{model}}", color: "bright_yellow" },
+        { type: "contextBar", icon: "", text: "Context {{contextBar}} {{contextPercent}}%", color: "#22c55e" },
+        { type: "gitBranch", icon: "", text: "{{gitBranch}}", color: "bright_green" },
+        { type: "speed", icon: "", text: "{{tokenSpeed}}", color: "bright_green" },
+        { type: "totalTokens", icon: "", text: "{{totalTokens}}", color: "bright_white" }
       ]
     },
     powerline: { 

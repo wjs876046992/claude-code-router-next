@@ -349,6 +349,8 @@ function renderModulePreview(
     contextUsedTokens: "124k",
     contextWindowSize: "200k",
     contextUsage: "124k/200k",
+    tokenSpeed: "67",
+    totalTokens: "19.0m",
   };
 
   const text = replaceVariables(module.text, variables);
