@@ -1,9 +1,11 @@
 name: Build and Publish Docker Image
 
+# Manual-only for now: the repo has no Docker registry credentials configured
+# (no DOCKER_USERNAME/DOCKER_PASSWORD secrets) and DOCKER_IMAGE still points at
+# the upstream author's namespace, so a tag-push trigger would fail on every
+# release. Re-add the `push: tags: ['v*.*.*']` trigger once a registry target
+# and credentials are set up.
 on:
-  push:
-    tags:
-      - 'v*.*.*'
   workflow_dispatch:
 
 env:
@@ -26,10 +28,12 @@ jobs:
         with:
           node-version: 22
 
+      # Pin the exact pnpm version used by ci.yml: the lockfile is pnpm 11
+      # format, and pnpm 10 fails with ERR_PNPM_LOCKFILE_CONFIG_MISMATCH.
       - name: Install pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 10.15.1
+          version: 11.1.1
 
       - name: Get version
         id: version
