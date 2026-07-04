@@ -18,7 +18,6 @@ interface TokenStats {
   tokensPerSecond: number;
   timeToFirstToken?: number;
   stream: boolean; // Whether this is a streaming request
-  tokenTimestamps: number[]; // Store timestamps of each token for per-second calculation
 }
 
 /**
@@ -207,7 +206,6 @@ export const tokenSpeedPlugin: CCRPlugin = {
           lastTokenTime: startTime,
           tokenCount: 0,
           tokensPerSecond: 0,
-          tokenTimestamps: [],
           stream: true
         });
 
@@ -218,24 +216,27 @@ export const tokenSpeedPlugin: CCRPlugin = {
         const processStats = async () => {
           let outputTimer: NodeJS.Timeout | null = null;
 
-          // Output stats function - calculate current speed using sliding window
+          // Output stats function - report the cumulative decode speed.
+          // Both the periodic streaming updates and the final report use the
+          // decode-speed formula (tokens over elapsed time minus TTFT), the same
+          // mechanism the usage store records. A sliding "tokens in the last
+          // second" window was previously used for interim updates, but SSE
+          // deltas arrive in bursts (proxy/network buffering timestamps many
+          // tokens at the same instant), so that window spiked to hundreds of
+          // tokens/second and did not reflect the real sustained rate.
           const doOutput = async (isFinal: boolean) => {
             const stats = requestStats.get(requestId);
             if (!stats) return;
 
-            const now = performance.now();
-
-            if (!isFinal) {
-              // For streaming output, use sliding window: count tokens in last 1 second
-              const oneSecondAgo = now - 1000;
-              stats.tokenTimestamps = stats.tokenTimestamps.filter(ts => ts > oneSecondAgo);
-              stats.tokensPerSecond = stats.tokenTimestamps.length;
-            } else {
-              // For final output, use decode speed (total time minus TTFT)
-              const ttft = stats.firstTokenTime ? (stats.firstTokenTime - stats.startTime) : 0;
-              const totalDuration = stats.lastTokenTime - stats.startTime;
-              stats.tokensPerSecond = calculateFinalTokensPerSecond(stats.tokenCount, totalDuration, ttft);
-            }
+            const ttft = stats.firstTokenTime ? (stats.firstTokenTime - stats.startTime) : 0;
+            // Interim updates use the current time as the end boundary so a
+            // stall after an SSE burst lets the reported rate decay toward the
+            // real sustained rate (lastTokenTime only advances on text deltas,
+            // so it would otherwise freeze the burst-time average). The final
+            // report uses the last-token time as the true decode end.
+            const endTime = isFinal ? stats.lastTokenTime : performance.now();
+            const totalDuration = endTime - stats.startTime;
+            stats.tokensPerSecond = calculateFinalTokensPerSecond(stats.tokenCount, totalDuration, ttft);
 
             await outputStats(stats, reporters, opts.outputOptions, isFinal).catch(err => {
               fastify.log?.warn(`Failed to output streaming stats: ${err.message}`);
@@ -319,11 +320,6 @@ export const tokenSpeedPlugin: CCRPlugin = {
 
                 stats.tokenCount += tokenCount;
                 stats.lastTokenTime = now;
-
-                // Record timestamps for each token (for sliding window calculation)
-                for (let i = 0; i < tokenCount; i++) {
-                  stats.tokenTimestamps.push(now);
-                }
               }
 
               // Output final statistics when message/response ends
@@ -417,8 +413,7 @@ export const tokenSpeedPlugin: CCRPlugin = {
           tokenCount,
           tokensPerSecond: calculateFinalTokensPerSecond(tokenCount, totalDuration),
           timeToFirstToken: ttft,
-          stream: false,
-          tokenTimestamps: []
+          stream: false
         };
 
         await outputStats(stats, reporters, opts.outputOptions, true);

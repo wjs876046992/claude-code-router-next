@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [2.3.23] - 2026-07-04
+
+### Changed
+
+- **状态栏默认改为无图标表格风格**: 默认主题（CLI `DEFAULT_THEME`/`SIMPLE_THEME` 与 UI `createDefaultStatusLineConfig`）不再带装饰图标，模块之间改用细竖线 `│`（U+2502）分隔，呈简洁表格样式；默认模块与顺序调整为「模型 │ 工作目录 │ git 分支 │ 上下文进度条 │ token 速率 │ 会话总 token」。动机是歧义宽度的 emoji 图标（如闪电 `⚡` U+26A1）会让 Claude Code 误算状态栏显示宽度、在交互（如双击）重绘时产生数字重影/位移；改用定宽字符或不带图标可避免。图标仍支持在 UI 中自定义，通过 UI 新增的模块默认不带图标。
+- **`build:ui` 构建后同步产物到 CLI/根 dist**: `pnpm build:ui` 改为经 `scripts/build-ui.js`，在构建 UI 后把 `index.html` 同步到已存在的 `packages/cli/dist` 与根 `dist`，使单独运行 `build:ui` 也能更新本地运行中的 ccr 实际读取的包（此前仅 `build:cli` 会拷贝，导致单跑 `build:ui` 后本地界面仍是旧包）。
+
+### Fixed
+
+- **修复状态栏 token 速率虚高（常显示几百、极端撞到 999 上限）**: `ccr statusline` 展示的 token 速率与「用量统计」页对不上——用量统计一般只有几十 t/s，状态栏却常显示几百、极端时撞到 999 上限。根因是 token-speed 插件在流式过程中每秒上报的是一个**滑动窗口值**（最近 1 秒内到达的 token 数），而 SSE delta 常成批到达（代理/网络缓冲会把一批 token 打上同一时间戳），使这个瞬时计数飙高，并不反映真实的持续解码速率；只有响应结束时的最终上报才用了正确的解码平均公式。现在流式过程中的每次上报也统一改用解码平均公式（`输出 token 数 ÷ (总耗时 − TTFT)`，与「用量统计」`usage-store` 记录速率完全同一套机制、同样的 1 秒最小解码时长兜底），状态栏速率会随流式逐步收敛到最终值，与用量统计维度一致，正常为几十 t/s。同时移除了不再使用的滑动窗口记账（`tokenTimestamps` 字段与逐 token 时间戳记录），消除长响应下该数组无限增长的隐患。
+- **状态栏 token 速率流式衰减细化（停顿时向真实速率衰减）**: 流式过程中的每秒上报改用 `performance.now()` 作为解码结束边界，而非只在文本 delta 时才推进的 `lastTokenTime`。此前一次 SSE 突发后若发生停顿，上报速率会冻结在突发时的均值；现在会随停顿向真实持续速率衰减，最终上报仍以 `lastTokenTime` 作为真实解码结束（`now() >= lastTokenTime`，永不虚高）。
+- **修复 UI statusline 配置中图标无法删除**: 切换所选模块时，图标搜索输入框（`IconSearchInput`）此前只在挂载时初始化内部输入状态、不随 `value` 变化同步，导致输入框与模块真实图标脱节、图标看似删不掉。现在在 `value`（所选模块）变化时同步内部输入状态。
+- **UI 迁移旧版 `contextCircle` 上下文模块为 `contextBar`**: 加载配置时把旧的 `contextCircle` 模块迁移为 `contextBar`（与 CLI 渲染时的自动升级一致），使配置弹窗显示长条进度条而非旧圆圈图标，保存时顺带持久化该升级；实时预览也补充了 `contextBar` 示例值与 `│` 分隔符渲染。
+
 ## [2.3.22] - 2026-06-29
 
 ### Added

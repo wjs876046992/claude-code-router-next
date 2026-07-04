@@ -216,51 +216,15 @@ async function executeScript(scriptPath: string, variables: Record<string, strin
     }
 }
 
-// Default theme configuration - using Nerd Fonts icons and beautiful color scheme
+// Default theme configuration - icon-less table style separated by │
 const DEFAULT_THEME: StatusLineThemeConfig = {
     modules: [
-        {
-            type: "workDir",
-            icon: "󰉋", // nf-md-folder_outline
-            text: "{{workDirName}}",
-            color: "bright_blue"
-        },
-        {
-            type: "gitBranch",
-            icon: "", // nf-dev-git_branch
-            text: "{{gitBranch}}",
-            color: "bright_magenta"
-        },
-        {
-            type: "model",
-            icon: "󰚩", // nf-md-robot_outline
-            text: "{{model}}",
-            color: "bright_cyan"
-        },
-        {
-            type: "contextBar",
-            icon: "",
-            text: "Context {{contextBar}} {{contextPercent}}%",
-            color: "#22c55e"
-        },
-        {
-            type: "usage",
-            icon: "↑", // Up arrow
-            text: "{{inputTokens}}",
-            color: "bright_green"
-        },
-        {
-            type: "usage",
-            icon: "↓", // Down arrow
-            text: "{{outputTokens}}",
-            color: "bright_yellow"
-        },
-        {
-            type: "totalTokens",
-            icon: "📋",
-            text: "{{totalTokens}}",
-            color: "bright_white"
-        }
+        { type: "model", icon: "", text: "{{model}}", color: "bright_yellow" },
+        { type: "workDir", icon: "", text: "{{workDirName}}", color: "bright_blue" },
+        { type: "gitBranch", icon: "", text: "{{gitBranch}}", color: "bright_green" },
+        { type: "contextBar", icon: "", text: "Context {{contextBar}} {{contextPercent}}%", color: "#22c55e" },
+        { type: "speed", icon: "", text: "{{tokenSpeed}}", color: "bright_green" },
+        { type: "totalTokens", icon: "", text: "{{totalTokens}}", color: "bright_white" }
     ]
 };
 
@@ -319,45 +283,16 @@ const POWERLINE_THEME: StatusLineThemeConfig = {
     ]
 };
 
-// Simple text theme configuration - fallback for when icons cannot be displayed
+// Simple text theme configuration - fallback for when icons cannot be displayed.
+// The default theme is icon-less already, so this mirrors it.
 const SIMPLE_THEME: StatusLineThemeConfig = {
     modules: [
-        {
-            type: "workDir",
-            icon: "",
-            text: "{{workDirName}}",
-            color: "bright_blue"
-        },
-        {
-            type: "gitBranch",
-            icon: "",
-            text: "{{gitBranch}}",
-            color: "bright_magenta"
-        },
-        {
-            type: "model",
-            icon: "",
-            text: "{{model}}",
-            color: "bright_cyan"
-        },
-        {
-            type: "contextBar",
-            icon: "",
-            text: "Context {{contextBar}} {{contextPercent}}%",
-            color: "#22c55e"
-        },
-        {
-            type: "usage",
-            icon: "↑",
-            text: "{{inputTokens}}",
-            color: "bright_green"
-        },
-        {
-            type: "usage",
-            icon: "↓",
-            text: "{{outputTokens}}",
-            color: "bright_yellow"
-        }
+        { type: "model", icon: "", text: "{{model}}", color: "bright_yellow" },
+        { type: "workDir", icon: "", text: "{{workDirName}}", color: "bright_blue" },
+        { type: "gitBranch", icon: "", text: "{{gitBranch}}", color: "bright_green" },
+        { type: "contextBar", icon: "", text: "Context {{contextBar}} {{contextPercent}}%", color: "#22c55e" },
+        { type: "speed", icon: "", text: "{{tokenSpeed}}", color: "bright_green" },
+        { type: "totalTokens", icon: "", text: "{{totalTokens}}", color: "bright_white" }
     ]
 };
 
@@ -396,7 +331,7 @@ const FULL_THEME: StatusLineThemeConfig = {
         },
         {
             type: "speed",
-            icon: "⚡",
+            icon: "",
             text: "{{tokenSpeed}} {{isStreaming}}",
             color: "bright_yellow"
         },
@@ -1203,7 +1138,7 @@ async function renderDefaultStyle(
 
     // Join all parts with double spaces for clearer visual separation
     // Prevents emoji-width issues where single space might visually overlap
-    return parts.join("  ");
+    return parts.join(" │ ");
 }
 
 // Powerline symbols
