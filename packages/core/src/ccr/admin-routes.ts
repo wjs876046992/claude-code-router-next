@@ -1,14 +1,23 @@
-import Server, { calculateTokenCount, TokenizerService, getAllRateLimitInfo, getAllQuotaResults, setRuntimeDebugLog, getRuntimeDebugLog } from "@wengine-ai/llms";
-const _llmsModule = require("@wengine-ai/llms") as any;
-const initRateLimitPersistence: () => void = _llmsModule.initRateLimitPersistence;
-const initQuotaStorePersistence: () => void = _llmsModule.initQuotaStorePersistence;
-const ProviderService = _llmsModule.ProviderService;
-const startActiveProbe = _llmsModule.startActiveProbe;
-const resetActiveProbeService = _llmsModule.resetActiveProbeService;
-import { getHealthStore } from "@wengine-ai/llms";
-import { reconcileHealthStore, clearProviderHealth } from "./utils/health-reconcile";
-import { readConfigFile, readConfigFileRaw, writeConfigFile, backupConfigFile } from "./utils";
-import { join, isAbsolute, normalize } from "path";
+/**
+ * CCR admin/management API routes — models, config, clients, projects, presets,
+ * logs, usage, health, quota, probe, debug-log, UI static serving.
+ *
+ * Migrated from the legacy server's server.ts createServer() function.
+ * These routes are registered on the Fastify app BEFORE namespaces, so they
+ * run at the root level (no prefix).
+ */
+import { calculateTokenCount } from "../utils/router";
+import { TokenizerService } from "../services/tokenizer";
+import { getAllRateLimitInfo, initRateLimitPersistence } from "../services/rate-limit";
+import { getAllQuotaResults, initQuotaStorePersistence } from "../services/quota-store";
+import { ProviderService } from "../services/provider";
+import { startActiveProbe, resetActiveProbeService } from "../services/active-probe";
+import { setRuntimeDebugLog, getRuntimeDebugLog } from "../utils/debug-log";
+import { getHealthStore } from "../services/provider-health";
+import { reconcileHealthStore, clearProviderHealth } from "./health-reconcile";
+import { readConfigFile, readConfigFileRaw, writeConfigFile, backupConfigFile } from "./config";
+import { join, isAbsolute, normalize, dirname } from "path";
+import { fileURLToPath } from "url";
 import fastifyStatic from "@fastify/static";
 import { readdirSync, statSync, readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync, rmSync } from "fs";
 import { homedir } from "os";
@@ -20,10 +29,8 @@ import {
   isPresetInstalled,
   extractPreset,
   HOME_DIR,
-  extractMetadata,
   loadConfigFromManifest,
   downloadPresetToTemp,
-  getTempDir,
   findMarketPresetByName,
   getMarketPresets,
   applyClientSelection,
@@ -58,7 +65,9 @@ import {
 } from "@wengine-ai/claude-code-router-shared";
 import fastifyMultipart from "@fastify/multipart";
 import AdmZip from "adm-zip";
-import { query as queryUsage, querySummary as queryUsageSummary, clear as clearUsage } from "./services/usage-store";
+import { query as queryUsage, querySummary as queryUsageSummary, clear as clearUsage } from "./usage-store";
+import { computeCodexAccountUsage } from "./codex-usage-cache";
+import { listAnthropicCompatibleModels } from "./models";
 
 interface ProviderQuotaUsage {
   provider: string;
@@ -74,31 +83,6 @@ interface ProviderQuotaUsage {
   type7d?: 'rateLimit' | 'balance';
   /** Currency for balance display (e.g. "CNY", "USD") */
   currency?: string;
-}
-
-interface AnthropicModelInfo {
-  type: "model";
-  id: string;
-  display_name: string;
-  created_at: string;
-  context_window: number;
-  contextWindow: number;
-  max_input_tokens: number;
-  maxInputTokens: number;
-  max_tokens: number;
-  maxTokens: number;
-  max_output_tokens: number;
-  maxOutputTokens: number;
-  capabilities: {
-    context_window: number;
-    contextWindow: number;
-    max_input_tokens: number;
-    maxInputTokens: number;
-    max_tokens: number;
-    maxTokens: number;
-    max_output_tokens: number;
-    maxOutputTokens: number;
-  };
 }
 
 /**
@@ -156,302 +140,25 @@ function computeProviderQuota(providers: any[]): ProviderQuotaUsage[] {
   return result;
 }
 
-interface CodexUsageRateLimitWindow {
-  used_percent?: number;
-  limit_window_seconds?: number;
-  reset_after_seconds?: number;
-  reset_at?: number | null;
-}
-
-interface CodexOfficialUsage {
-  used5h?: number;
-  used7d?: number;
-  reset5h?: string;
-  reset7d?: string;
-  planType?: string;
-  rateLimitReachedType?: string | null;
-}
-
-type CodexUsageCacheEntry = CodexOfficialUsage & {
-  fetchedAt: string;
-};
-
-type CodexUsageCache = Record<string, CodexUsageCacheEntry>;
-
-interface StoredCodexAuth {
-  tokens?: {
-    access_token?: string;
-    account_id?: string;
-  };
-}
-
-const CODEX_USAGE_CACHE_DIR = join(HOME_DIR, "data");
-const CODEX_USAGE_CACHE_PATH = join(CODEX_USAGE_CACHE_DIR, "codex-usage-cache.json");
-const ACTIVE_CODEX_USAGE_CACHE_REFRESH_INTERVAL_MS = 60 * 1000;
-const INACTIVE_CODEX_USAGE_CACHE_REFRESH_INTERVAL_MS = 30 * 60 * 1000;
-const codexUsageRefreshes = new Map<string, Promise<void>>();
-
-function epochSecondsToIso(value: unknown): string | undefined {
-  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
-  return new Date(value * 1000).toISOString();
-}
-
-function readCodexUsageCache(): CodexUsageCache {
-  if (!existsSync(CODEX_USAGE_CACHE_PATH)) return {};
-  try {
-    const parsed = JSON.parse(readFileSync(CODEX_USAGE_CACHE_PATH, "utf8"));
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
-    return parsed as CodexUsageCache;
-  } catch {
-    return {};
-  }
-}
-
-function writeCodexUsageCache(cache: CodexUsageCache): void {
-  mkdirSync(CODEX_USAGE_CACHE_DIR, { recursive: true });
-  writeFileSync(CODEX_USAGE_CACHE_PATH, `${JSON.stringify(cache, null, 2)}\n`, "utf8");
-}
-
-function pruneCodexUsageCache(cache: CodexUsageCache, accountIds: Set<string>): CodexUsageCache {
-  let changed = false;
-  const next: CodexUsageCache = {};
-  for (const [accountId, entry] of Object.entries(cache)) {
-    if (accountIds.has(accountId)) {
-      next[accountId] = entry;
-    } else {
-      changed = true;
-    }
-  }
-  if (changed) writeCodexUsageCache(next);
-  return changed ? next : cache;
-}
-
-function isCodexUsageCacheFresh(entry: CodexUsageCacheEntry | undefined, active: boolean): boolean {
-  if (!entry?.fetchedAt) return false;
-  const fetchedAt = Date.parse(entry.fetchedAt);
-  const refreshInterval = active
-    ? ACTIVE_CODEX_USAGE_CACHE_REFRESH_INTERVAL_MS
-    : INACTIVE_CODEX_USAGE_CACHE_REFRESH_INTERVAL_MS;
-  return Number.isFinite(fetchedAt) && Date.now() - fetchedAt < refreshInterval;
-}
-
-function normalizeCodexUsageResponse(payload: any): CodexOfficialUsage | null {
-  const rateLimit = payload?.rate_limit;
-  if (!rateLimit) return null;
-
-  const primary = rateLimit.primary_window as CodexUsageRateLimitWindow | undefined;
-  const secondary = rateLimit.secondary_window as CodexUsageRateLimitWindow | undefined;
-  const usage: CodexOfficialUsage = {
-    planType: typeof payload.plan_type === "string" ? payload.plan_type : undefined,
-    rateLimitReachedType: typeof payload.rate_limit_reached_type?.type === "string"
-      ? payload.rate_limit_reached_type.type
-      : null,
-  };
-
-  if (typeof primary?.used_percent === "number") {
-    usage.used5h = primary.used_percent;
-    usage.reset5h = epochSecondsToIso(primary.reset_at);
-  }
-  if (typeof secondary?.used_percent === "number") {
-    usage.used7d = secondary.used_percent;
-    usage.reset7d = epochSecondsToIso(secondary.reset_at);
-  }
-
-  return usage.used5h !== undefined || usage.used7d !== undefined ? usage : null;
-}
-
-function readStoredCodexAuth(accountId: string): StoredCodexAuth | null {
-  const storedAuthPath = join(HOME_DIR, "codex-accounts", `${accountId}.auth.json`);
-  if (!existsSync(storedAuthPath)) return null;
-  try {
-    return JSON.parse(readFileSync(storedAuthPath, "utf8")) as StoredCodexAuth;
-  } catch {
-    return null;
-  }
-}
-
-async function readCodexOfficialUsage(accountId: string): Promise<CodexOfficialUsage | null> {
-  const auth = readStoredCodexAuth(accountId);
-  const accessToken = auth?.tokens?.access_token;
-  const chatGptAccountId = auth?.tokens?.account_id || accountId;
-  if (!accessToken) return null;
-
-  const headers: Record<string, string> = {
-    Authorization: `Bearer ${accessToken}`,
-    "ChatGPT-Account-Id": chatGptAccountId,
-    originator: "codex_cli_rs",
-    Accept: "application/json",
-    "Accept-Encoding": "gzip, deflate",
-    "User-Agent": "codex_cli_rs/0.0.0",
-  };
-
-  const urls = [
-    "https://chatgpt.com/backend-api/wham/usage",
-    "https://chatgpt.com/backend-api/codex/usage",
-  ];
-
-  for (const url of urls) {
-    try {
-      const response = await fetch(url, {
-        headers,
-        signal: AbortSignal.timeout(15000),
-      });
-      if (!response.ok) continue;
-
-      const payload = await response.json();
-      const usage = normalizeCodexUsageResponse(payload);
-      if (usage) return usage;
-    } catch {
-      // Fall through to the next compatible usage endpoint.
-    }
-  }
-
-  return null;
-}
-
-function applyCodexOfficialUsage(account: any, officialUsage?: CodexOfficialUsage | null): any {
-  if (!officialUsage) return account;
-  return {
-    ...account,
-    plan: officialUsage.planType || account.plan,
-    limitedWindow: officialUsage.rateLimitReachedType ? account.limitedWindow || "unknown" : account.limitedWindow,
-    usage: {
-      used5h: officialUsage.used5h ?? 0,
-      used7d: officialUsage.used7d ?? 0,
-      limit5h: officialUsage.used5h !== undefined ? 100 : undefined,
-      limit7d: officialUsage.used7d !== undefined ? 100 : undefined,
-      reset5h: officialUsage.reset5h,
-      reset7d: officialUsage.reset7d,
-    },
-  };
-}
-
-function refreshCodexUsageCache(accountIds: string[]): void {
-  for (const accountId of accountIds) {
-    if (codexUsageRefreshes.has(accountId)) continue;
-
-    const refresh = (async () => {
-      const officialUsage = await readCodexOfficialUsage(accountId);
-      if (!officialUsage) return;
-
-      const cache = readCodexUsageCache();
-      cache[accountId] = {
-        ...officialUsage,
-        fetchedAt: new Date().toISOString(),
-      };
-      writeCodexUsageCache(cache);
-    })().catch((error) => {
-      console.error(`Failed to refresh Codex usage for ${accountId}:`, error);
-    }).finally(() => {
-      codexUsageRefreshes.delete(accountId);
-    });
-
-    codexUsageRefreshes.set(accountId, refresh);
-  }
-}
-
-async function computeCodexAccountUsage(config: Record<string, any>): Promise<CodexAccountsResult> {
-  const accountsResult = listCodexAccounts(config);
-  const accountIds = new Set(accountsResult.accounts.map((account) => account.id));
-  const usageCache = pruneCodexUsageCache(readCodexUsageCache(), accountIds);
-  const staleAccountIds = accountsResult.accounts
-    .filter((account) => !isCodexUsageCacheFresh(usageCache[account.id], account.active))
-    .map((account) => account.id);
-
-  if (staleAccountIds.length > 0) {
-    refreshCodexUsageCache(staleAccountIds);
-  }
-
-  const accounts = accountsResult.accounts.map((account) => (
-    applyCodexOfficialUsage(account, usageCache[account.id])
-  ));
-
-  return {
-    ...accountsResult,
-    accounts,
-  };
-}
-
-function getModelContextWindow(modelId: string): number {
-  return /\[1m\]/i.test(modelId) ? 1_000_000 : 200_000;
-}
-
-function getModelMaxOutputTokens(modelId: string): number {
-  const normalized = modelId.toLowerCase();
-  if (normalized.includes("haiku") || normalized.includes("mini")) return 8_192;
-  return 32_000;
-}
-
-function createAnthropicModelInfo(id: string, displayName = id): AnthropicModelInfo {
-  const contextWindow = getModelContextWindow(id);
-  const maxOutputTokens = getModelMaxOutputTokens(id);
-  return {
-    type: "model",
-    id,
-    display_name: displayName,
-    created_at: "2024-01-01T00:00:00Z",
-    context_window: contextWindow,
-    contextWindow,
-    max_input_tokens: contextWindow,
-    maxInputTokens: contextWindow,
-    max_tokens: maxOutputTokens,
-    maxTokens: maxOutputTokens,
-    max_output_tokens: maxOutputTokens,
-    maxOutputTokens: maxOutputTokens,
-    capabilities: {
-      context_window: contextWindow,
-      contextWindow,
-      max_input_tokens: contextWindow,
-      maxInputTokens: contextWindow,
-      max_tokens: maxOutputTokens,
-      maxTokens: maxOutputTokens,
-      max_output_tokens: maxOutputTokens,
-      maxOutputTokens: maxOutputTokens,
-    },
-  };
-}
-
-function listAnthropicCompatibleModels(config: any): AnthropicModelInfo[] {
-  const models = new Map<string, AnthropicModelInfo>();
-  const addModel = (id: string, displayName = id) => {
-    if (!id || models.has(id)) return;
-    models.set(id, createAnthropicModelInfo(id, displayName));
-  };
-
-  addModel("ccr-opus", "CCR Opus");
-  addModel("ccr-sonnet", "CCR Sonnet");
-  addModel("ccr-haiku", "CCR Haiku");
-  addModel("ccr-opus[1m]", "CCR Opus 1M");
-  addModel("ccr-sonnet[1m]", "CCR Sonnet 1M");
-  addModel("ccr-haiku[1m]", "CCR Haiku 1M");
-
-  for (const provider of config.Providers || config.providers || []) {
-    if (!provider?.name || !Array.isArray(provider.models)) continue;
-    for (const model of provider.models) {
-      if (typeof model !== "string" || !model) continue;
-      addModel(model, model);
-      addModel(`${provider.name},${model}`, `${provider.name}/${model}`);
-    }
-  }
-
-  return Array.from(models.values());
-}
-
-export const createServer = async (config: any): Promise<any> => {
-  const server = new Server(config);
-  const app = server.app;
+/**
+ * Register all CCR admin/management routes on the given Fastify app.
+ * This is the core of createServer() from the legacy server, minus the
+ * request-pipeline hooks (which are now in createCcrServer).
+ */
+export async function registerAdminRoutes(server: any, config: any): Promise<any> {
+  const _app = server.app;
 
   // Restore persisted rate-limit and quota data from disk
   initRateLimitPersistence();
   initQuotaStorePersistence();
 
-  app.register(fastifyMultipart, {
+  _app.register(fastifyMultipart, {
     limits: {
       fileSize: 50 * 1024 * 1024, // 50MB
     },
   });
 
-  app.get("/v1/models", async () => {
+  _app.get("/v1/models", async () => {
     const data = listAnthropicCompatibleModels(config);
     return {
       object: "list",
@@ -462,7 +169,7 @@ export const createServer = async (config: any): Promise<any> => {
     };
   });
 
-  app.get("/v1/models/:modelId", async (req: any, reply: any) => {
+  _app.get("/v1/models/:modelId", async (req: any, reply: any) => {
     const modelId = decodeURIComponent(req.params.modelId);
     const model = listAnthropicCompatibleModels(config).find((item) => item.id === modelId);
     if (!model) {
@@ -478,9 +185,9 @@ export const createServer = async (config: any): Promise<any> => {
     return model;
   });
 
-  app.post("/v1/messages/count_tokens", async (req: any, reply: any) => {
+  _app.post("/v1/messages/count_tokens", async (req: any, reply: any) => {
     const {messages, tools, system, model} = req.body;
-    const tokenizerService = (app as any)._server!.tokenizerService as TokenizerService;
+    const tokenizerService = (_app as any)._server!.tokenizerService as TokenizerService;
 
     // If model is specified in "providerName,modelName" format, use the configured tokenizer
     if (model && model.includes(",") && tokenizerService) {
@@ -527,13 +234,13 @@ export const createServer = async (config: any): Promise<any> => {
 
   // Return raw (un-interpolated) config so that $VAR placeholders survive UI round-trips.
   // The runtime path (readConfigFile) still interpolates env vars for actual request processing.
-  app.get("/api/config", async (req: any, reply: any) => {
+  _app.get("/api/config", async (req: any, reply: any) => {
     return await readConfigFileRaw();
   });
 
-  app.get("/api/transformers", async (req: any, reply: any) => {
+  _app.get("/api/transformers", async (req: any, reply: any) => {
     const transformers =
-      (app as any)._server!.transformerService.getAllTransformers();
+      (_app as any)._server!.transformerService.getAllTransformers();
     const transformerList = Array.from(transformers.entries()).map(
       ([name, transformer]: any) => ({
         name,
@@ -544,7 +251,7 @@ export const createServer = async (config: any): Promise<any> => {
   });
 
   // Add endpoint to save config.json with access control
-  app.post("/api/config", async (req: any, reply: any) => {
+  _app.post("/api/config", async (req: any, reply: any) => {
     const newConfig = req.body;
 
     // Backup existing config file if it exists
@@ -558,16 +265,16 @@ export const createServer = async (config: any): Promise<any> => {
     try {
       projectTakeoverSync = await syncGlobalProjectTakeovers(newConfig);
       if (projectTakeoverSync.failed.length > 0) {
-        app.log?.warn?.(
+        _app.log?.warn?.(
           { projectTakeoverSync },
           "Config saved but some global project takeovers failed to sync"
         );
       }
     } catch (syncError: any) {
-      app.log?.warn?.(`Config saved but global project takeover sync failed: ${syncError?.message || syncError}`);
+      _app.log?.warn?.(`Config saved but global project takeover sync failed: ${syncError?.message || syncError}`);
     }
     try {
-      const coreServer = (app as any)._server;
+      const coreServer = (_app as any)._server;
       if (coreServer?.configService) {
         coreServer.configService.reload();
         const nextProviders = newConfig?.Providers || newConfig?.providers;
@@ -578,13 +285,13 @@ export const createServer = async (config: any): Promise<any> => {
           coreServer.providerService = new ProviderService(
             coreServer.configService,
             coreServer.transformerService,
-            app.log
+            _app.log
           );
         }
 
         // Prune health entries for models/providers removed by this save, so a
         // renamed model can't leave a stale "failed" state behind in the UI.
-        reconcileHealthStore(newConfig, app.log);
+        reconcileHealthStore(newConfig, _app.log);
 
         if (startActiveProbe && resetActiveProbeService) {
           try {
@@ -603,20 +310,20 @@ export const createServer = async (config: any): Promise<any> => {
             () => coreServer.providerService.getProviders(),
             probeConfig,
             () => coreServer.configService.getHttpsProxy(),
-            app.log,
+            _app.log,
             (key: string) => coreServer.configService.get(key)
           );
         }
       }
     } catch (reloadError: any) {
-      app.log?.warn?.(`Config saved but runtime reload failed: ${reloadError?.message || reloadError}`);
+      _app.log?.warn?.(`Config saved but runtime reload failed: ${reloadError?.message || reloadError}`);
     }
     return { success: true, message: "Config saved successfully", projectTakeoverSync };
   });
 
   // ========== Client Integrations API ==========
 
-  app.get("/api/clients", async (_req: any, reply: any) => {
+  _app.get("/api/clients", async (_req: any, reply: any) => {
     try {
       const config = await readConfigFile();
       return { clients: listClientStatuses(config) };
@@ -626,7 +333,7 @@ export const createServer = async (config: any): Promise<any> => {
     }
   });
 
-  app.post("/api/clients/apply", async (req: any, reply: any) => {
+  _app.post("/api/clients/apply", async (req: any, reply: any) => {
     try {
       const body = req.body as { enabled?: string[] };
       const enabled = Array.isArray(body?.enabled) ? body.enabled : [];
@@ -670,19 +377,19 @@ export const createServer = async (config: any): Promise<any> => {
     }
   }
 
-  app.post("/api/clients/:id/enable", async (req: any, reply: any) => {
+  _app.post("/api/clients/:id/enable", async (req: any, reply: any) => {
     return runClientAction(req, reply, "enable");
   });
 
-  app.post("/api/clients/:id/disable", async (req: any, reply: any) => {
+  _app.post("/api/clients/:id/disable", async (req: any, reply: any) => {
     return runClientAction(req, reply, "disable");
   });
 
-  app.post("/api/clients/:id/restore", async (req: any, reply: any) => {
+  _app.post("/api/clients/:id/restore", async (req: any, reply: any) => {
     return runClientAction(req, reply, "restore");
   });
 
-  app.get("/api/clients/codex/accounts", async (_req: any, reply: any) => {
+  _app.get("/api/clients/codex/accounts", async (_req: any, reply: any) => {
     try {
       const config = await readConfigFile();
       return await computeCodexAccountUsage(config);
@@ -692,7 +399,7 @@ export const createServer = async (config: any): Promise<any> => {
     }
   });
 
-  app.post("/api/clients/codex/accounts/import-current", async (req: any, reply: any) => {
+  _app.post("/api/clients/codex/accounts/import-current", async (req: any, reply: any) => {
     try {
       const body = req.body as { label?: string };
       const config = await readConfigFile();
@@ -706,7 +413,7 @@ export const createServer = async (config: any): Promise<any> => {
     }
   });
 
-  app.post("/api/clients/codex/accounts/import-rt", async (req: any, reply: any) => {
+  _app.post("/api/clients/codex/accounts/import-rt", async (req: any, reply: any) => {
     try {
       const body = req.body as { label?: string; refreshToken?: string };
       const config = await readConfigFile();
@@ -720,7 +427,7 @@ export const createServer = async (config: any): Promise<any> => {
     }
   });
 
-  app.post("/api/clients/codex/accounts/:accountId/activate", async (req: any, reply: any) => {
+  _app.post("/api/clients/codex/accounts/:accountId/activate", async (req: any, reply: any) => {
     try {
       const { accountId } = req.params as { accountId: string };
       const config = await readConfigFile();
@@ -734,7 +441,7 @@ export const createServer = async (config: any): Promise<any> => {
     }
   });
 
-  app.post("/api/clients/codex/accounts/:accountId/export-rt", async (req: any, reply: any) => {
+  _app.post("/api/clients/codex/accounts/:accountId/export-rt", async (req: any, reply: any) => {
     try {
       const { accountId } = req.params as { accountId: string };
       const config = await readConfigFile();
@@ -745,7 +452,7 @@ export const createServer = async (config: any): Promise<any> => {
     }
   });
 
-  app.post("/api/clients/codex/accounts/export-rt", async (_req: any, reply: any) => {
+  _app.post("/api/clients/codex/accounts/export-rt", async (_req: any, reply: any) => {
     try {
       const config = await readConfigFile();
       return exportCodexRefreshToken(config);
@@ -755,7 +462,7 @@ export const createServer = async (config: any): Promise<any> => {
     }
   });
 
-  app.delete("/api/clients/codex/accounts/:accountId", async (req: any, reply: any) => {
+  _app.delete("/api/clients/codex/accounts/:accountId", async (req: any, reply: any) => {
     try {
       const { accountId } = req.params as { accountId: string };
       const config = await readConfigFile();
@@ -771,7 +478,7 @@ export const createServer = async (config: any): Promise<any> => {
 
   // ========== Project-Level Configuration API ==========
 
-  app.get("/api/projects", async (_req: any, reply: any) => {
+  _app.get("/api/projects", async (_req: any, reply: any) => {
     try {
       const projects = await listProjectConfigs();
       const projectsWithTakeover = await Promise.all(
@@ -791,7 +498,7 @@ export const createServer = async (config: any): Promise<any> => {
     }
   });
 
-  app.post("/api/projects", async (req: any, reply: any) => {
+  _app.post("/api/projects", async (req: any, reply: any) => {
     try {
       const { path: rawPath } = req.body || {};
       if (!rawPath || typeof rawPath !== "string" || !isAbsolute(rawPath)) {
@@ -838,7 +545,7 @@ export const createServer = async (config: any): Promise<any> => {
     }
   });
 
-  app.put("/api/projects/:id", async (req: any, reply: any) => {
+  _app.put("/api/projects/:id", async (req: any, reply: any) => {
     try {
       const { id } = req.params as { id: string };
       const { Router } = req.body || {};
@@ -874,7 +581,7 @@ export const createServer = async (config: any): Promise<any> => {
     }
   });
 
-  app.put("/api/projects/:id/takeover", async (req: any, reply: any) => {
+  _app.put("/api/projects/:id/takeover", async (req: any, reply: any) => {
     try {
       const { id } = req.params as { id: string };
       const body = req.body || {};
@@ -915,7 +622,7 @@ export const createServer = async (config: any): Promise<any> => {
     }
   });
 
-  app.delete("/api/projects/:id", async (req: any, reply: any) => {
+  _app.delete("/api/projects/:id", async (req: any, reply: any) => {
     try {
       const { id } = req.params as { id: string };
       const existing = await readProjectConfigById(id);
@@ -944,20 +651,30 @@ export const createServer = async (config: any): Promise<any> => {
     }
   });
 
-  // Register static file serving with caching
-  app.register(fastifyStatic, {
-    root: join(__dirname, "..", "dist"),
+  // Register static file serving with caching. In a bundled CLI, moduleDir is
+  // the CLI dist directory containing index.html. In a standalone core build,
+  // the generated bundle lives under dist/{cjs,esm}, so the asset is in dist.
+  const moduleDir = typeof __dirname === "string"
+    ? __dirname
+    : dirname(fileURLToPath(import.meta.url));
+  const bundledUiRoot = existsSync(join(moduleDir, "index.html"))
+    ? moduleDir
+    : existsSync(join(moduleDir, "..", "index.html"))
+      ? join(moduleDir, "..")
+      : join(moduleDir, "..", "dist");
+  _app.register(fastifyStatic, {
+    root: bundledUiRoot,
     prefix: "/ui/",
     maxAge: "1h",
   });
 
   // Redirect /ui to /ui/ for proper static file serving
-  app.get("/ui", async (_: any, reply: any) => {
+  _app.get("/ui", async (_: any, reply: any) => {
     return reply.redirect("/ui/");
   });
 
   // Get log file list endpoint
-  app.get("/api/logs/files", async (req: any, reply: any) => {
+  _app.get("/api/logs/files", async (req: any, reply: any) => {
     try {
       const logDir = join(homedir(), ".claude-code-router", "logs");
       const logFiles: Array<{ name: string; path: string; size: number; lastModified: string }> = [];
@@ -991,7 +708,7 @@ export const createServer = async (config: any): Promise<any> => {
   });
 
   // Get log content endpoint
-  app.get("/api/logs", async (req: any, reply: any) => {
+  _app.get("/api/logs", async (req: any, reply: any) => {
     try {
       const filePath = (req.query as any).file as string;
       let logFilePath: string;
@@ -1019,7 +736,7 @@ export const createServer = async (config: any): Promise<any> => {
   });
 
   // Clear log content endpoint
-  app.delete("/api/logs", async (req: any, reply: any) => {
+  _app.delete("/api/logs", async (req: any, reply: any) => {
     try {
       const filePath = (req.query as any).file as string;
       let logFilePath: string;
@@ -1046,12 +763,12 @@ export const createServer = async (config: any): Promise<any> => {
   // ========== Debug Log Toggle ==========
 
   // Get debug log status
-  app.get("/api/debug-log", async () => {
+  _app.get("/api/debug-log", async () => {
     return { enabled: getRuntimeDebugLog() };
   });
 
   // Toggle debug log on/off
-  app.put("/api/debug-log", async (req: any) => {
+  _app.put("/api/debug-log", async (req: any) => {
     const { enabled } = req.body as { enabled: boolean };
     setRuntimeDebugLog(enabled);
     return { enabled: getRuntimeDebugLog() };
@@ -1060,7 +777,7 @@ export const createServer = async (config: any): Promise<any> => {
   // ========== Usage Statistics API ==========
 
   // Get usage records with summary
-  app.get("/api/usage", async (req: any, reply: any) => {
+  _app.get("/api/usage", async (req: any, reply: any) => {
     try {
       const q = req.query as any;
       const result = queryUsage({
@@ -1083,7 +800,7 @@ export const createServer = async (config: any): Promise<any> => {
   });
 
   // Get usage summary only
-  app.get("/api/usage/summary", async (req: any, reply: any) => {
+  _app.get("/api/usage/summary", async (req: any, reply: any) => {
     try {
       const q = req.query as any;
       return queryUsageSummary(q.startDate, q.endDate, q.status);
@@ -1094,7 +811,7 @@ export const createServer = async (config: any): Promise<any> => {
   });
 
   // Clear usage data
-  app.delete("/api/usage", async (req: any, reply: any) => {
+  _app.delete("/api/usage", async (req: any, reply: any) => {
     try {
       const q = req.query as any;
       clearUsage(q.beforeDate);
@@ -1108,7 +825,7 @@ export const createServer = async (config: any): Promise<any> => {
   // ========== Provider Quota & Health API ==========
 
   // Get provider health status
-  app.get("/api/providers/health", async (req: any, reply: any) => {
+  _app.get("/api/providers/health", async (req: any, reply: any) => {
     try {
       const healthStore = getHealthStore();
       const states = healthStore.getAllStates();
@@ -1131,7 +848,7 @@ export const createServer = async (config: any): Promise<any> => {
     }
   });
 
-  app.post("/api/providers/probe", async (req: any, reply: any) => {
+  _app.post("/api/providers/probe", async (req: any, reply: any) => {
     try {
       const { providerName } = req.body as { providerName?: string };
       if (!providerName) {
@@ -1139,7 +856,7 @@ export const createServer = async (config: any): Promise<any> => {
         return { error: "providerName is required" };
       }
 
-      const coreServer = (app as any)._server;
+      const coreServer = (_app as any)._server;
       const probeService = coreServer?.activeProbeService;
       if (!probeService?.probeProviderManually) {
         reply.status(503);
@@ -1165,9 +882,9 @@ export const createServer = async (config: any): Promise<any> => {
     }
   });
 
-  app.post("/api/providers/probe-all", async (_req: any, reply: any) => {
+  _app.post("/api/providers/probe-all", async (_req: any, reply: any) => {
     try {
-      const coreServer = (app as any)._server;
+      const coreServer = (_app as any)._server;
       const probeService = coreServer?.activeProbeService;
       if (!probeService?.probeProviderManually) {
         reply.status(503);
@@ -1199,7 +916,7 @@ export const createServer = async (config: any): Promise<any> => {
   });
 
   // Get provider quota usage (5h and 7d windows)
-  app.get("/api/providers/quota", async (req: any, reply: any) => {
+  _app.get("/api/providers/quota", async (req: any, reply: any) => {
     try {
       const config = await readConfigFile();
       const providers = config.Providers || [];
@@ -1293,7 +1010,7 @@ export const createServer = async (config: any): Promise<any> => {
   });
 
   // Get presets list
-  app.get("/api/presets", async (req: any, reply: any) => {
+  _app.get("/api/presets", async (req: any, reply: any) => {
     try {
       const presetsDir = join(HOME_DIR, "presets");
 
@@ -1345,7 +1062,7 @@ export const createServer = async (config: any): Promise<any> => {
   });
 
   // Get preset details
-  app.get("/api/presets/:name", async (req: any, reply: any) => {
+  _app.get("/api/presets/:name", async (req: any, reply: any) => {
     try {
       const { name } = req.params;
       const presetDir = getPresetDir(name);
@@ -1371,7 +1088,7 @@ export const createServer = async (config: any): Promise<any> => {
   });
 
   // Apply preset (configure sensitive information)
-  app.post("/api/presets/:name/apply", async (req: any, reply: any) => {
+  _app.post("/api/presets/:name/apply", async (req: any, reply: any) => {
     try {
       const { name } = req.params;
       const { secrets } = req.body;
@@ -1408,7 +1125,7 @@ export const createServer = async (config: any): Promise<any> => {
   });
 
   // Delete preset
-  app.delete("/api/presets/:name", async (req: any, reply: any) => {
+  _app.delete("/api/presets/:name", async (req: any, reply: any) => {
     try {
       const { name } = req.params;
       const presetDir = getPresetDir(name);
@@ -1429,7 +1146,7 @@ export const createServer = async (config: any): Promise<any> => {
   });
 
   // Get preset market list
-  app.get("/api/presets/market", async (req: any, reply: any) => {
+  _app.get("/api/presets/market", async (req: any, reply: any) => {
     try {
       // Use market presets function
       const marketPresets = await getMarketPresets();
@@ -1441,7 +1158,7 @@ export const createServer = async (config: any): Promise<any> => {
   });
 
   // Install preset from GitHub repository by preset name
-  app.post("/api/presets/install/github", async (req: any, reply: any) => {
+  _app.post("/api/presets/install/github", async (req: any, reply: any) => {
     try {
       const { presetName } = req.body;
 
@@ -1565,4 +1282,4 @@ export const createServer = async (config: any): Promise<any> => {
   }
 
   return server;
-};
+}

@@ -8,6 +8,10 @@ export const CLIENT_IDS = ["claudeCode", "codex", "pi", "qwenCode", "opencode"] 
 export type ClientId = (typeof CLIENT_IDS)[number];
 export type ClientAction = "enable" | "disable" | "restore";
 
+export interface ClientRoutingConfig {
+  extendedContextRatio?: number;
+}
+
 export interface ClientConfig {
   enabled?: boolean;
   managed?: boolean;
@@ -16,6 +20,7 @@ export interface ClientConfig {
   activeAccountId?: string;
   autoSwitchAccounts?: boolean;
   autoRefreshTokens?: boolean;
+  routing?: ClientRoutingConfig;
   quota?: {
     limit5h?: number;
     limit7d?: number;
@@ -104,10 +109,14 @@ export interface CodexTokenRefreshResult {
   error?: string;
 }
 
+interface ResolvedClientConfig extends Omit<Required<ClientConfig>, "routing"> {
+  routing?: ClientRoutingConfig;
+}
+
 interface ClientDefinition {
   id: ClientId;
   name: string;
-  defaultConfig: Required<ClientConfig>;
+  defaultConfig: ResolvedClientConfig;
 }
 
 interface ClientOperationOptions {
@@ -233,7 +242,7 @@ const CLAUDE_AUTO_COMPACT_ENV = {
 // Claude Code's CLAUDE_CODE_AUTO_COMPACT_WINDOW and Codex's model_context_window,
 // so compaction fires before the routed model overflows. A larger window is not
 // always better: it raises cost and can cause context drift.
-const DEFAULT_CONTEXT_WINDOW = 200000;
+export const DEFAULT_CONTEXT_WINDOW = 200000;
 
 function isObject(value: unknown): value is Record<string, any> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -243,7 +252,7 @@ function isObject(value: unknown): value is Record<string, any> {
  * Resolve the configured context window (in tokens) from the global config,
  * falling back to DEFAULT_CONTEXT_WINDOW. Accepts a number or a numeric string.
  */
-function getContextWindow(config: Record<string, any>): number {
+export function getContextWindow(config: Record<string, any>): number {
   const value = config?.ContextWindow;
   if (typeof value === "number" && Number.isFinite(value) && value > 0) {
     return Math.floor(value);
@@ -391,7 +400,7 @@ export function getDefaultClientsConfig(): ClientsConfig {
   };
 }
 
-export function getClientConfig(config: Record<string, any>, id: ClientId): Required<ClientConfig> {
+export function getClientConfig(config: Record<string, any>, id: ClientId): ResolvedClientConfig {
   const definition = getClientDefinition(id);
   const rawConfig = getRawClientConfig(config, id);
   const hasExplicitEnabled = typeof rawConfig.enabled === "boolean";
@@ -425,7 +434,7 @@ function setClientConfig(
   config: Record<string, any>,
   id: ClientId,
   patch: Partial<ClientConfig>
-): Required<ClientConfig> {
+): ResolvedClientConfig {
   const clients = isObject(config.Clients) ? { ...config.Clients } : {};
   const current = getClientConfig(config, id);
   const next = {
@@ -507,8 +516,16 @@ function readJsonObject(filePath: string): Record<string, any> {
 }
 
 function writeJsonObject(filePath: string, value: Record<string, any>): void {
+  const serialized = `${JSON.stringify(value, null, 2)}\n`;
+  if (fs.existsSync(filePath)) {
+    try {
+      if (fs.readFileSync(filePath, "utf-8") === serialized) return;
+    } catch {
+      // Fall through and replace unreadable content.
+    }
+  }
   ensureParentDir(filePath);
-  fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf-8");
+  fs.writeFileSync(filePath, serialized, "utf-8");
 }
 
 function getCcrBaseUrl(config: Record<string, any>, suffix = ""): string {
@@ -1952,8 +1969,9 @@ function getPiPaths(config: Record<string, any>): PiPaths {
  */
 function getPiModels(config: Record<string, any>): { models: any[]; defaultModel: string } {
   const contextWindow = getContextWindow(config);
+  const normalizePiAlias = (id: string) => id.replace(/\[1m\]$/i, "");
   const makeModel = (id: string, label: string) => ({
-    id,
+    id: normalizePiAlias(id),
     name: label,
     api: PI_ANTHROPIC_API,
     reasoning: true,
@@ -1965,16 +1983,15 @@ function getPiModels(config: Record<string, any>): { models: any[]; defaultModel
   if (hasFamiliesConfig(config)) {
     const families = config.Router.families;
     const order = ["opus", "sonnet", "haiku"].filter((f) => families[f]);
-    const models = order.map((family) => {
-      const extendedSuffix = hasExtendedContext(families[family]) ? "[1m]" : "";
-      return makeModel(`ccr-${family}${extendedSuffix}`, `CCR (${family})`);
-    });
+    const models = order.map((family) =>
+      makeModel(`ccr-${family}`, `CCR (${family})`)
+    );
     if (models.length > 0) {
       return { models, defaultModel: models[0].id };
     }
   }
 
-  const alias = getClientConfig(config, "pi").modelAlias || "ccr-opus";
+  const alias = normalizePiAlias(getClientConfig(config, "pi").modelAlias || "ccr-opus");
   return { models: [makeModel(alias, "CCR")], defaultModel: alias };
 }
 

@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync } from "fs";
 import { join } from "path";
 import { homedir, tmpdir } from "os";
-import Database = require("better-sqlite3");
+import Database from "better-sqlite3";
 
 const DATA_DIR = join(homedir(), ".claude-code-router", "data");
 const USAGE_DB_FILE = join(DATA_DIR, "usage.sqlite");

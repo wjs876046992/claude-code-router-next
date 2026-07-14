@@ -4,11 +4,11 @@
   "description": "A universal LLM API transformation server",
   "main": "dist/cjs/server.cjs",
   "module": "dist/esm/server.mjs",
-  "types": "./dist/index.d.ts",
+  "types": "./dist/server.d.ts",
   "type": "module",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
+      "types": "./dist/server.d.ts",
       "import": "./dist/esm/server.mjs",
       "require": "./dist/cjs/server.cjs"
     }
@@ -49,14 +49,21 @@
     "openai": "^5.6.0",
     "tiktoken": "^1.0.21",
     "undici": "^7.10.0",
-    "uuid": "^11.1.0"
+    "uuid": "^11.1.0",
+    "@fastify/multipart": "^9.0.0",
+    "@fastify/static": "^8.2.0",
+    "@wengine-ai/claude-code-router-shared": "workspace:*",
+    "adm-zip": "^0.5.16",
+    "better-sqlite3": "^12.10.0",
+    "rotating-file-stream": "^3.2.7"
   },
   "devDependencies": {
     "@types/node": "^24.0.15",
-    "@wengine-ai/claude-code-router-shared": "workspace:*",
     "esbuild": "^0.25.1",
     "tsx": "^4.20.3",
     "typescript": "^5.8.2",
-    "vitest": "^4.1.9"
+    "vitest": "^4.1.9",
+    "@types/adm-zip": "^0.5.7",
+    "@types/better-sqlite3": "^7.6.13"
   }
 }

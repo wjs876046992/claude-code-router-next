@@ -103,9 +103,6 @@ importers:
       '@types/node':
         specifier: ^24.0.15
         version: 24.7.0
-      '@wengine-ai/claude-code-router-server':
-        specifier: workspace:*
-        version: link:../server
       '@wengine-ai/claude-code-router-shared':
         specifier: workspace:*
         version: link:../shared
@@ -145,12 +142,27 @@ importers:
       '@fastify/cors':
         specifier: ^11.0.1
         version: 11.1.0
+      '@fastify/multipart':
+        specifier: ^9.0.0
+        version: 9.3.0
+      '@fastify/static':
+        specifier: ^8.2.0
+        version: 8.2.0
       '@google/genai':
         specifier: ^1.7.0
         version: 1.24.0
       '@huggingface/tokenizers':
         specifier: ^0.0.6
         version: 0.0.6
+      '@wengine-ai/claude-code-router-shared':
+        specifier: workspace:*
+        version: link:../shared
+      adm-zip:
+        specifier: ^0.5.16
+        version: 0.5.16
+      better-sqlite3:
+        specifier: ^12.10.0
+        version: 12.10.0
       dotenv:
         specifier: ^16.5.0
         version: 16.6.1
@@ -175,6 +187,9 @@ importers:
       openai:
         specifier: ^5.6.0
         version: 5.23.2(ws@8.18.3)
+      rotating-file-stream:
+        specifier: ^3.2.7
+        version: 3.2.7
       tiktoken:
         specifier: ^1.0.21
         version: 1.0.22
@@ -185,12 +200,15 @@ importers:
         specifier: ^11.1.0
         version: 11.1.0
     devDependencies:
+      '@types/adm-zip':
+        specifier: ^0.5.7
+        version: 0.5.7
+      '@types/better-sqlite3':
+        specifier: ^7.6.13
+        version: 7.6.13
       '@types/node':
         specifier: ^24.0.15
         version: 24.7.0
-      '@wengine-ai/claude-code-router-shared':
-        specifier: workspace:*
-        version: link:../shared
       esbuild:
         specifier: ^0.25.1
         version: 0.25.10
@@ -206,70 +224,22 @@ importers:
 
   packages/server:
     dependencies:
-      '@fastify/multipart':
-        specifier: ^9.0.0
-        version: 9.3.0
-      '@fastify/static':
-        specifier: ^8.2.0
-        version: 8.2.0
       '@wengine-ai/llms':
         specifier: workspace:*
         version: link:../core
-      adm-zip:
-        specifier: ^0.5.16
-        version: 0.5.16
-      better-sqlite3:
-        specifier: ^12.10.0
-        version: 12.10.0
-      dotenv:
-        specifier: ^16.4.7
-        version: 16.6.1
-      json5:
-        specifier: ^2.2.3
-        version: 2.2.3
-      lru-cache:
-        specifier: ^11.2.2
-        version: 11.2.2
-      rotating-file-stream:
-        specifier: ^3.2.7
-        version: 3.2.7
-      shell-quote:
-        specifier: ^1.8.3
-        version: 1.8.3
-      tiktoken:
-        specifier: ^1.0.21
-        version: 1.0.22
-      uuid:
-        specifier: ^11.1.0
-        version: 11.1.0
     devDependencies:
-      '@types/adm-zip':
-        specifier: ^0.5.7
-        version: 0.5.7
-      '@types/better-sqlite3':
-        specifier: ^7.6.13
-        version: 7.6.13
       '@types/node':
         specifier: ^24.0.15
         version: 24.7.0
-      '@wengine-ai/claude-code-router-shared':
-        specifier: workspace:*
-        version: link:../shared
       esbuild:
         specifier: ^0.25.1
         version: 0.25.10
       fastify:
         specifier: ^5.4.0
         version: 5.6.1
-      ts-node:
-        specifier: ^10.9.2
-        version: 10.9.2(@types/node@24.7.0)(typescript@5.8.3)
       typescript:
         specifier: ^5.8.2
         version: 5.8.3
-      vitest:
-        specifier: ^4.1.9
-        version: 4.1.9(@opentelemetry/api@1.9.0)(@types/node@24.7.0)(vite@7.3.0(@types/node@24.7.0)(jiti@2.6.1)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.21.0))
 
   packages/shared:
     dependencies:
@@ -298,6 +268,9 @@ importers:
       typescript:
         specifier: ^5.8.2
         version: 5.8.3
+      vitest:
+        specifier: ^4.1.9
+        version: 4.1.9(@opentelemetry/api@1.9.0)(@types/node@24.7.0)(vite@7.3.0(@types/node@24.7.0)(jiti@2.6.1)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.21.0))
 
   packages/ui:
     dependencies:
@@ -10300,7 +10273,7 @@ snapshots:
       '@lukeed/ms': 2.0.2
       escape-html: 1.0.3
       fast-decode-uri-component: 1.0.1
-      http-errors: 2.0.0
+      http-errors: 2.0.1
       mime: 3.0.0
 
   '@fastify/static@8.2.0':

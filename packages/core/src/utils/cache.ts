@@ -44,6 +44,10 @@ class LRUCache<K, V> {
   values(): V[] {
     return Array.from(this.cache.values());
   }
+
+  delete(key: K): boolean {
+    return this.cache.delete(key);
+  }
 }
 
 export const sessionUsageCache = new LRUCache<string, Usage>(100);

@@ -221,6 +221,8 @@
     "config_path": "配置路径",
     "active_model": "当前模型",
     "model_alias": "模型别名",
+    "pi_extended_context_ratio": "pi 扩展上下文触发比例",
+    "pi_extended_context_ratio_desc": "仅控制 pi 何时按模型 contextWindow 的比例切换到 extendedContext；longContext 仍使用路由中配置的绝对上下文阈值。默认 80%。",
     "restore_official": "恢复官方配置",
     "load_failed": "加载客户端配置失败",
     "apply_success": "客户端配置已更新",

@@ -1,4 +1,10 @@
-import { FastifyRequest, FastifyReply } from "fastify";
+/**
+ * API key authentication middleware for the CCR runtime.
+ *
+ * Migrated verbatim from packages/server/src/middleware/auth.ts.
+ * Local requests (127.0.0.1) are trusted and skip auth.
+ */
+import type { FastifyRequest, FastifyReply } from "fastify";
 
 /**
  * Determine if a request originates from the local machine.

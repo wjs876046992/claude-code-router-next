@@ -1,4 +1,4 @@
-import { getHealthStore } from "@wengine-ai/llms";
+import { getHealthStore } from "../services/provider-health";
 
 // Circuit-breaker health entries are keyed by provider + model. When a model is
 // renamed/removed in config (or a provider is deleted), the persisted entry in

@@ -41,7 +41,7 @@ export async function errorHandler(
 
   const response = {
     error: {
-      message: error.message + (error.stack || "Internal Server Error"),
+      message: error.message || "Internal Server Error",
       type: error.type || "api_error",
       code: error.code || "internal_error",
     },

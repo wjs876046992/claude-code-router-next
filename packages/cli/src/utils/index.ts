@@ -13,7 +13,7 @@ import {
   getDefaultClientsConfig,
   readPresetFile,
 } from "@wengine-ai/claude-code-router-shared";
-import { getServer } from "@wengine-ai/claude-code-router-server";
+import { getServer } from "@wengine-ai/llms";
 import { writeFileSync, existsSync, readFileSync, mkdirSync } from "fs";
 import { checkForUpdates, performUpdate } from "./update";
 import { version } from "../../package.json";
