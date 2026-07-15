@@ -506,6 +506,58 @@ describe("strict project routing — modelMapping target unavailable throws", ()
 });
 
 // ---------------------------------------------------------------------------
+// Strict project routing: non-"provider,model" target -> invalid_model_format (no escape)
+// ---------------------------------------------------------------------------
+
+describe("strict project routing — malformed (non-route) default target throws, no global escape", () => {
+  const sessionId = "strict-non-route-target";
+
+  beforeEach(() => {
+    setupProjectRouter(sessionId, {
+      // A configured default that is NOT a "provider,model" route. Previously
+      // resolveConfiguredModel passed bare names through unchanged, so this was
+      // treated as a successful route and the handler resolved it via global
+      // provider routes — escaping the project boundary. Strict mode must
+      // surface invalid_model_format instead.
+      default: "model-only",
+      enableFallback: false,
+      enableFamilyRouting: false,
+    });
+  });
+
+  it("rejects with invalid_model_format and never calls the upstream provider", async () => {
+    let fetchCalled = false;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn(async () => {
+      fetchCalled = true;
+      return new Response("{}", { status: 200 });
+    }) as any;
+    try {
+      const config = makeConfig([
+        // A global provider that resolveModelRoute could match against the bare
+        // name if the escape were still possible.
+        { name: "global-prov", api_base_url: "https://x/v1/messages", api_key: "k", models: ["model-only"] },
+      ]);
+      const req = makeRequest(sessionId, "ccr-opus");
+
+      await expect(router(req, undefined, { configService: config })).rejects.toThrow(
+        ProjectRoutingError
+      );
+      try {
+        await router(req, undefined, { configService: config });
+      } catch (e: any) {
+        expect(e.code).toBe("invalid_model_format");
+        expect(e.configuredTarget).toBe("model-only");
+      }
+      // The malformed project target must never reach an upstream call.
+      expect(fetchCalled).toBe(false);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Strict project routing: malformed project config -> throws (no silent global fallback)
 // ---------------------------------------------------------------------------
 
