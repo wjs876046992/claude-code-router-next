@@ -76,7 +76,11 @@ function getRequestModel(req: any): string {
   return req.model || "";
 }
 
-function extractUsageFromPayload(payload: any): any | undefined {
+// Parse a non-stream response payload once and return both the normalized
+// usage and the upstream model. Fastify hands onSend a serialized string or
+// Buffer, so callers must use this parsed body (not the raw payload) for any
+// field lookup — otherwise non-stream responses never populate req.upstreamModel.
+function extractNonStreamMeta(payload: any): { usage?: any; model?: string } | undefined {
   if (!payload) return undefined;
 
   let body = payload;
@@ -94,14 +98,17 @@ function extractUsageFromPayload(payload: any): any | undefined {
   if (typeof body !== "object") return undefined;
 
   // Anthropic /v1/messages non-stream response.
-  if (body.usage) return normalizeUsagePayload(body.usage);
+  const usage = body.usage
+    ? normalizeUsagePayload(body.usage)
+    : body.response?.usage
+      ? normalizeUsagePayload(body.response.usage)
+      : undefined;
 
-  // OpenAI Responses-style non-stream response.
-  if (body.response?.usage) {
-    return normalizeUsagePayload(body.response.usage);
-  }
+  // Upstream-reported model (Anthropic payload.model, Responses payload.response.model).
+  const model = body.model || body.response?.model;
 
-  return undefined;
+  if (!usage && !model) return undefined;
+  return { usage, model };
 }
 
 /**
@@ -453,15 +460,14 @@ export function registerRequestPipeline(serverInstance: any, config: any): void 
         req.usageCapturePromise = read(clonedStream);
         return done(null, originalStream)
       }
-      const nonStreamUsage = extractUsageFromPayload(payload);
-      if (nonStreamUsage) {
-        sessionUsageCache.put(usageCacheKey, nonStreamUsage);
+      const nonStreamMeta = extractNonStreamMeta(payload);
+      if (nonStreamMeta?.usage) {
+        sessionUsageCache.put(usageCacheKey, nonStreamMeta.usage);
       }
-      // Capture upstream model for non-stream responses (Anthropic payload.model,
-      // Responses API payload.response.model).
-      const upstreamModel = payload?.model || payload?.response?.model;
-      if (upstreamModel) {
-        req.upstreamModel = upstreamModel;
+      // Capture upstream model for non-stream responses from the parsed body
+      // (Anthropic payload.model, Responses API payload.response.model).
+      if (nonStreamMeta?.model) {
+        req.upstreamModel = nonStreamMeta.model;
       }
       if (typeof payload ==='object') {
         if (payload.error) {
@@ -508,7 +514,13 @@ export function registerRequestPipeline(serverInstance: any, config: any): void 
         await req.tokenSpeedCapturePromise;
       }
       const sessionId = getUsageSessionId(req);
-      const usage = sessionUsageCache.get(getUsageCacheKey(req));
+      // A hard HTTP failure never reached a successful upstream exchange, so the
+      // session slot still holds the PREVIOUS request's usage (we intentionally
+      // keep it as the next request's routing baseline). Reading it here would
+      // record this failure with the predecessor's input/cache tokens. Ignore the
+      // slot on hard failure and fall back to the router's own token estimate.
+      const hardFailed = reply.statusCode >= 400;
+      const usage = hardFailed ? undefined : sessionUsageCache.get(getUsageCacheKey(req));
       const speedStats = readTokenSpeedStats(sessionId);
       const healthStore = getHealthStore();
 
@@ -519,7 +531,7 @@ export function registerRequestPipeline(serverInstance: any, config: any): void 
       const sseError = req.sseError;
       const hasSseError = sseError && (sseError.type || sseError.code || sseError.message);
       const hasOutputTokens = usage?.output_tokens && usage.output_tokens > 0;
-      const isFailedRequest = reply.statusCode >= 400 || (hasSseError && !hasOutputTokens);
+      const isFailedRequest = hardFailed || (hasSseError && !hasOutputTokens);
       if (isFailedRequest) {
         errorMessage = req.errorMessage || reply.errorMessage || (req.error?.message || req.error?.toString?.() || undefined);
         if (hasSseError) {

@@ -76,6 +76,18 @@ describe("builtin client adapter registry", () => {
       url: "/v1/responses",
       body: { model: "gpt-5", input: [] },
     }))).toBe("codex");
+
+    // Codex strong signals must beat the generic metadata.user_id heuristic:
+    // a /v1/responses (or codex UA) request carrying an OpenAI-style
+    // metadata.user_id must still classify as codex so account selection runs.
+    expect(detectClientType(request({
+      url: "/v1/responses",
+      body: { model: "gpt-5", input: [], metadata: { user_id: "user_abc_session_xyz" } },
+    }))).toBe("codex");
+    expect(detectClientType(request({
+      headers: { "user-agent": "codex-cli/1.0" },
+      body: { model: "gpt-5", metadata: { user_id: "user_abc_session_xyz" } },
+    }))).toBe("codex");
   });
 });
 

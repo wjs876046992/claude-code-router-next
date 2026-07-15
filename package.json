@@ -14,7 +14,7 @@
     "release:npm": "pnpm build && bash scripts/release.sh npm",
     "release:docker": "bash scripts/release.sh docker",
     "dev:cli": "pnpm --filter @wengine-ai/claude-code-router-cli dev",
-    "dev:server": "pnpm --filter @wengine-ai/claude-code-router-server dev",
+    "dev:server": "pnpm --filter @wengine-ai/llms dev",
     "dev:ui": "pnpm --filter @wengine-ai/claude-code-router-ui dev",
     "dev:core": "pnpm --filter @wengine-ai/llms dev",
     "dev:docs": "pnpm --filter claude-code-router-docs start",

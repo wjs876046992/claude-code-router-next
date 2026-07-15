@@ -316,12 +316,16 @@ export function detectClientType(req: any): ClientType {
   if (typeof billingHeader === "string" && billingHeader.includes("cc_version=")) {
     return "claude-code";
   }
+  // Codex strong signals must precede the generic metadata.user_id heuristic:
+  // a /v1/responses request can carry an OpenAI-style metadata.user_id and
+  // would otherwise be misclassified as claude-code, skipping Codex account
+  // selection and mislabeling usage/client attribution.
+  if (userAgent.includes("codex") || userAgent.includes("Codex")) return "codex";
+  if (pathname.endsWith("/v1/responses")) return "codex";
+
   if (body.metadata && typeof body.metadata === "object" && typeof body.metadata.user_id === "string") {
     return "claude-code";
   }
-
-  if (userAgent.includes("codex") || userAgent.includes("Codex")) return "codex";
-  if (pathname.endsWith("/v1/responses")) return "codex";
 
   if (userAgent.includes("opencode")) return "opencode";
   if (userAgent.includes("pi-coding-agent")) return "pi";

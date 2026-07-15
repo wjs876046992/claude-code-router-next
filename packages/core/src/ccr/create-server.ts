@@ -67,7 +67,9 @@ export async function createCcrServer(options: CcrRunOptions = {}) {
     console.log("ℹ️  No providers configured. Listening on 0.0.0.0 without authentication.");
   }
 
-  const port = config.PORT || 3456;
+  // Honor an explicit options.port override (e.g. tests embedding the runtime
+  // with createCcrServer({ port: 0 })) before falling back to config/env.
+  const port = options.port ?? config.PORT ?? 3456;
 
   // Use port from environment variable if set (for background process)
   const servicePort = process.env.SERVICE_PORT
@@ -194,10 +196,18 @@ export async function createCcrServer(options: CcrRunOptions = {}) {
   // Install explicit pre-handler callbacks before any namespace is registered.
   serverInstance.ccrPreHandlerCallbacks = createCcrPreHandlerCallbacks(config);
 
-  // Register preset namespaces
-  await Promise.allSettled(
+  // Register preset namespaces. Surface registration failures instead of
+  // letting a malformed preset disappear silently while startup reports success.
+  const presetResults = await Promise.allSettled(
     presets.map(async preset => await serverInstance.registerNamespace(`/preset/${preset.name}`, preset.config))
   );
+  presetResults.forEach((result, i) => {
+    if (result.status === "rejected") {
+      const preset = presets[i];
+      const msg = result.reason instanceof Error ? result.reason.message : String(result.reason);
+      serverInstance.app?.log?.error?.(`Failed to register preset "${preset?.name}": ${msg}`);
+    }
+  });
 
   // Register and configure plugins from config
   await registerPluginsFromConfig(serverInstance, config);
