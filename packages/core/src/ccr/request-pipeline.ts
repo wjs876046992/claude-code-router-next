@@ -424,15 +424,18 @@ export function registerRequestPipeline(serverInstance: any, config: any): void 
                 sessionUsageCache.put(usageCacheKey, mergedUsage);
               }
 
-              // Capture usage from Responses API SSE (response.completed)
-              // The Responses API format has usage nested under response.usage
+              // Capture usage from Responses API SSE (response.usage)
               if (data?.response?.usage) {
                 const respUsage = normalizeUsagePayload(data.response.usage);
-                // Reset base on a fresh response.completed to prevent stale fields
-                // from a previous request leaking into the new one (same as the
-                // message_start sentinel used in the Anthropic path above).
+                // Responses usage is emitted on the trailing response.completed
+                // event, so it is NOT a "first event" sentinel like Anthropic's
+                // message_start. Resetting the base here would discard fields
+                // already captured for this request whenever the completed frame
+                // carries zeros. The slot is already cleared by the router before
+                // the handler runs, so a plain merge (with the all-zero guard in
+                // mergeUsageCapture) is correct.
                 const existingUsage = sessionUsageCache.get(usageCacheKey) || {};
-                const mergedUsage = mergeUsageCapture(existingUsage, respUsage, event === 'response.completed');
+                const mergedUsage = mergeUsageCapture(existingUsage, respUsage, false);
                 req.log?.info?.({
                   debug_log: true,
                   reqId: req.id,
