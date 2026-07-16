@@ -12,6 +12,7 @@ import { getAllRateLimitInfo, initRateLimitPersistence } from "../services/rate-
 import { getAllQuotaResults, initQuotaStorePersistence } from "../services/quota-store";
 import { ProviderService } from "../services/provider";
 import { startActiveProbe, resetActiveProbeService } from "../services/active-probe";
+import { resolveProviderProxyUrl, findInvalidProxyUrls } from "../services/proxy";
 import { setRuntimeDebugLog, getRuntimeDebugLog } from "../utils/debug-log";
 import { getHealthStore } from "../services/provider-health";
 import { reconcileHealthStore, clearProviderHealth } from "./health-reconcile";
@@ -205,7 +206,8 @@ export async function registerAdminRoutes(server: any, config: any): Promise<any
 
         const result = await tokenizerService.countTokens(
           { messages, system, tools },
-          tokenizerConfig
+          tokenizerConfig,
+          provider
         );
 
         return {
@@ -253,6 +255,19 @@ export async function registerAdminRoutes(server: any, config: any): Promise<any
   // Add endpoint to save config.json with access control
   _app.post("/api/config", async (req: any, reply: any) => {
     const newConfig = req.body;
+
+    // Validate proxy URL values before touching disk so an invalid value
+    // never overwrites a good config.json or creates a misleading backup.
+    const proxyErrors = findInvalidProxyUrls((newConfig || {}) as Record<string, unknown>);
+    if (proxyErrors.length > 0) {
+      reply.status(400);
+      return {
+        success: false,
+        error: "Invalid proxy URL",
+        message: proxyErrors.map((e) => `${e.key}: ${e.error}`).join("; "),
+        proxyErrors,
+      };
+    }
 
     // Backup existing config file if it exists
     const backupPath = await backupConfigFile();
@@ -309,7 +324,7 @@ export async function registerAdminRoutes(server: any, config: any): Promise<any
           coreServer.activeProbeService = startActiveProbe(
             () => coreServer.providerService.getProviders(),
             probeConfig,
-            () => coreServer.configService.getHttpsProxy(),
+            (provider: any) => resolveProviderProxyUrl(coreServer.configService, provider),
             _app.log,
             (key: string) => coreServer.configService.get(key)
           );
@@ -1031,7 +1046,7 @@ export async function registerAdminRoutes(server: any, config: any): Promise<any
           const manifest = JSON.parse(content);
 
           // Extract metadata fields
-          const { Providers, Router, PORT, HOST, API_TIMEOUT_MS, PROXY_URL, LOG, LOG_LEVEL, StatusLine, NON_INTERACTIVE_MODE, ...metadata } = manifest;
+          const { Providers, Router, PORT, HOST, API_TIMEOUT_MS, PROXY_URL, PROXY_GLOBAL_ENABLED, LOG, LOG_LEVEL, StatusLine, NON_INTERACTIVE_MODE, ...metadata } = manifest;
 
           presets.push({
             id: dirName,  // Use directory name as unique identifier

@@ -1,4 +1,5 @@
 import type { LLMProvider } from "../types/llm";
+import { getProxyDispatcher } from "./proxy";
 
 export interface ProviderQuotaResult {
   totalBalance?: number;
@@ -46,16 +47,10 @@ abstract class BaseQuotaAdapter implements QuotaAdapter {
       signal: AbortSignal.timeout(timeoutMs),
     };
 
-    if (proxyUrl) {
-      try {
-        const { ProxyAgent } = await import("undici");
-        fetchOptions.dispatcher = new ProxyAgent(new URL(proxyUrl).toString());
-      } catch {
-        // Continue without a proxy if the proxy agent cannot be initialized.
-      }
-    }
-
     try {
+      if (proxyUrl) {
+        fetchOptions.dispatcher = getProxyDispatcher(proxyUrl);
+      }
       const response = await fetch(endpoint, fetchOptions);
       if (!response.ok) return null;
       return await response.json();
@@ -187,16 +182,10 @@ class ZhipuQuotaAdapter extends BaseQuotaAdapter {
       signal: AbortSignal.timeout(timeoutMs),
     };
 
-    if (proxyUrl) {
-      try {
-        const { ProxyAgent } = await import("undici");
-        fetchOptions.dispatcher = new ProxyAgent(new URL(proxyUrl).toString());
-      } catch {
-        // Continue without proxy
-      }
-    }
-
     try {
+      if (proxyUrl) {
+        fetchOptions.dispatcher = getProxyDispatcher(proxyUrl);
+      }
       const response = await fetch(
         "https://api.z.ai/api/monitor/usage/quota/limit",
         fetchOptions
@@ -327,15 +316,6 @@ class AliyunCodingPlanQuotaAdapter extends BaseQuotaAdapter {
       signal: AbortSignal.timeout(timeoutMs),
     };
 
-    if (proxyUrl) {
-      try {
-        const { ProxyAgent } = await import("undici");
-        fetchOptions.dispatcher = new ProxyAgent(new URL(proxyUrl).toString());
-      } catch {
-        // Continue without proxy
-      }
-    }
-
     const params = JSON.stringify({
       Api: "zeldaEasy.broadscope-bailian.codingPlan.queryCodingPlanInstanceInfoV2",
       V: "1.0",
@@ -367,6 +347,9 @@ class AliyunCodingPlanQuotaAdapter extends BaseQuotaAdapter {
     }).toString();
 
     try {
+      if (proxyUrl) {
+        fetchOptions.dispatcher = getProxyDispatcher(proxyUrl);
+      }
       const response = await fetch(
         "https://bailian-cs.console.aliyun.com/data/api.json?action=BroadScopeAspnGateway&product=sfm_bailian&api=zeldaEasy.broadscope-bailian.codingPlan.queryCodingPlanInstanceInfoV2",
         {
@@ -432,16 +415,10 @@ class XfyunCodingPlanQuotaAdapter extends BaseQuotaAdapter {
       signal: AbortSignal.timeout(timeoutMs),
     };
 
-    if (proxyUrl) {
-      try {
-        const { ProxyAgent } = await import("undici");
-        fetchOptions.dispatcher = new ProxyAgent(new URL(proxyUrl).toString());
-      } catch {
-        // Continue without proxy
-      }
-    }
-
     try {
+      if (proxyUrl) {
+        fetchOptions.dispatcher = getProxyDispatcher(proxyUrl);
+      }
       const response = await fetch(
         "https://maas.xfyun.cn/api/v1/gpt-finetune/coding-plan/list?page=1&size=10",
         fetchOptions
@@ -496,16 +473,10 @@ class KimiCodingPlanQuotaAdapter extends BaseQuotaAdapter {
       signal: AbortSignal.timeout(timeoutMs),
     };
 
-    if (proxyUrl) {
-      try {
-        const { ProxyAgent } = await import("undici");
-        fetchOptions.dispatcher = new ProxyAgent(new URL(proxyUrl).toString());
-      } catch {
-        // Continue without proxy
-      }
-    }
-
     try {
+      if (proxyUrl) {
+        fetchOptions.dispatcher = getProxyDispatcher(proxyUrl);
+      }
       const response = await fetch(
         "https://api.kimi.com/coding/v1/usages",
         fetchOptions

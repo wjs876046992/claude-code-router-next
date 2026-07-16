@@ -28,6 +28,7 @@ import {
 import { Combobox } from "@/components/ui/combobox";
 import { ComboInput } from "@/components/ui/combo-input";
 import { api } from "@/lib/api";
+import { getConfiguredProxyUrl, isGlobalProxyEnabled } from "@/utils/proxy";
 import { Toast } from "@/components/ui/toast";
 import type { Provider, ProviderHealthState, ProviderQuotaUsage } from "@/types";
 
@@ -230,14 +231,17 @@ export function Providers() {
     setNameError(null);
   };
 
-  const handleToggleProvider = async (index: number, enabled: boolean) => {
-    const actualIndex = validProviders.indexOf(filteredProviders[index]);
+  // Shared helper: patch a single provider field and persist the full config.
+  // Used by enabled toggle and proxy toggle so both go through the same
+  // POST /api/config path and refreshConfig afterwards.
+  const persistProviderPatch = async (filteredIndex: number, patch: Partial<Provider>) => {
+    const actualIndex = validProviders.indexOf(filteredProviders[filteredIndex]);
     if (actualIndex === -1) return;
 
     const newProviders = [...config.Providers];
     newProviders[actualIndex] = {
       ...newProviders[actualIndex],
-      enabled,
+      ...patch,
     };
 
     const newConfig = { ...config, Providers: newProviders };
@@ -252,13 +256,21 @@ export function Providers() {
       // Re-fetch from server so UI reflects the exact persisted state
       await refreshConfig();
     } catch (e) {
-      console.error("Failed to toggle provider:", e);
+      console.error("Failed to persist provider patch:", e);
       setToast({ message: t('app.config_saved_failed') + ': ' + (e as Error).message, type: 'error' });
       // Revert to server state on failure
       await refreshConfig();
     } finally {
       setIsSaving(false);
     }
+  };
+
+  const handleToggleProvider = async (index: number, enabled: boolean) => {
+    await persistProviderPatch(index, { enabled });
+  };
+
+  const handleProxyToggle = async (index: number, proxyEnabled: boolean) => {
+    await persistProviderPatch(index, { proxy_enabled: proxyEnabled });
   };
 
   const handleEditProvider = (index: number) => {
@@ -401,7 +413,9 @@ export function Providers() {
       newConfig = cleanUpConfigModels(newConfig, deletedModels, deletedProviderName);
     }
     setDeletingProviderIndex(null);
-    // Persist to server immediately
+    // Persist to server immediately. Guard with isSaving so a concurrent
+    // toggle/edit cannot overwrite this removal with a stale snapshot.
+    setIsSaving(true);
     try {
       const response = await api.updateConfig(newConfig);
       if (response.success) {
@@ -416,6 +430,8 @@ export function Providers() {
       setToast({ message: t('app.config_saved_failed') + ': ' + (e as Error).message, type: 'error' });
       // Revert to server state on failure
       await refreshConfig();
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -823,6 +839,10 @@ export function Providers() {
           onToggle={handleToggleProvider}
           onProbe={handleProbeProvider}
           probingProviders={probingProviders}
+          proxyUrl={getConfiguredProxyUrl(config)}
+          proxyGlobalEnabled={isGlobalProxyEnabled(config.PROXY_GLOBAL_ENABLED)}
+          saving={isSaving}
+          onProxyToggle={handleProxyToggle}
         />
       </CardContent>
 

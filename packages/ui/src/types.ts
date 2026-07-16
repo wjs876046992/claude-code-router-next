@@ -12,6 +12,8 @@ export interface Provider {
   // Optional quota configuration for rate limiting display
   quota?: ProviderQuotaConfig;
   enabled?: boolean;
+  // Opt this provider into PROXY_URL when PROXY_GLOBAL_ENABLED is false.
+  proxy_enabled?: boolean;
   // Allow for additional custom fields
   [key: string]: any;
 }
@@ -225,6 +227,9 @@ export interface Config {
   APIKEY: string;
   API_TIMEOUT_MS: string;
   PROXY_URL: string;
+  // When true (or unset), PROXY_URL applies to all providers; when false,
+  // only providers with proxy_enabled=true use the proxy.
+  PROXY_GLOBAL_ENABLED?: boolean;
   CUSTOM_ROUTER_PATH?: string;
   // Default context window (tokens) for client takeover auto-compaction
   ContextWindow?: number;

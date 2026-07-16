@@ -117,7 +117,10 @@ npm install -g @wengine-ai/claude-code-router-next@latest && ccr restart
 > ```
 
 `config.json` 文件有几个关键部分：
-- **`PROXY_URL`** (可选): 您可以为 API 请求设置代理，例如：`"PROXY_URL": "http://127.0.0.1:7890"`。
+- **`PROXY_URL`** (可选): 您可以为 API 请求设置代理，例如：`"PROXY_URL": "http://127.0.0.1:7890"`。CCR 进程自身通过此地址连接代理端口，无需开启系统代理、TUN 或代理软件的全局模式。
+- **`PROXY_GLOBAL_ENABLED`** (可选): 控制代理的作用范围。未配置或设为 `true`（默认）时，所有 provider 的出站请求均走代理，保持与旧配置的兼容性。设为 `false` 时，仅标记了 `proxy_enabled: true` 的 provider 走代理，其余 provider 直连。所有 provider 共用顶层 `PROXY_URL`，不支持为每个 provider 单独设置代理地址。如果 `PROXY_URL` 未设置（空地址），则所有代理开关均不生效，全部直连。provider 专属的出站请求（推理、fallback、健康探测、额度查询、wakeup 唤醒、provider API tokenizer 等）均遵循同一 provider 代理策略。
+  > [!WARNING]
+  > 代理可看到 API key 和请求内容，请仅配置可信代理。
 - **`LOG`** (可选): 您可以通过将其设置为 `true` 来启用日志记录。当设置为 `false` 时，将不会创建日志文件。默认值为 `true`。
 - **`LOG_LEVEL`** (可选): 设置日志级别。可用选项包括：`"fatal"`、`"error"`、`"warn"`、`"info"`、`"debug"`、`"trace"`。默认值为 `"error"`；仅在显式配置为 `"info"`、`"debug"` 或 `"trace"` 时输出详细日志。
 - **日志系统**: Claude Code Router 使用两个独立的日志系统：
@@ -136,6 +139,7 @@ npm install -g @wengine-ai/claude-code-router-next@latest && ccr restart
 {
   "APIKEY": "your-secret-key",
   "PROXY_URL": "http://127.0.0.1:7890",
+  "PROXY_GLOBAL_ENABLED": false,
   "LOG": true,
   "LOG_LEVEL": "error",
   "API_TIMEOUT_MS": 600000,
@@ -153,7 +157,8 @@ npm install -g @wengine-ai/claude-code-router-next@latest && ccr restart
       ],
       "transformer": {
         "use": ["openrouter"]
-      }
+      },
+      "proxy_enabled": true
     },
     {
       "name": "deepseek",

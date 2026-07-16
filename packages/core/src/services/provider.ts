@@ -92,6 +92,7 @@ export class ProviderService {
           transformer: providerConfig.transformer ? transformer : undefined,
           cacheMode: providerConfig.cache_mode || 'exclusive',
           enabled: providerConfig.enabled !== false,
+          proxyEnabled: providerConfig.proxy_enabled === true,
           wakeupEnabled: providerConfig.wakeup_enabled === true,
           wakeupTime: providerConfig.wakeup_time || "06:00",
           wakeupModel: providerConfig.wakeup_model || "",
@@ -108,6 +109,7 @@ export class ProviderService {
     const provider: LLMProvider = {
       ...request,
       enabled: request.enabled !== false,
+      proxyEnabled: request.proxyEnabled === true,
       wakeupEnabled: request.wakeupEnabled === true,
       wakeupTime: request.wakeupTime || "06:00",
       wakeupModel: request.wakeupModel || "",

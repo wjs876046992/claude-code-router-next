@@ -1080,7 +1080,8 @@ export const router = async (req: any, _res: any, context: RouterContext) => {
           system,
           tools: tools as Tool[],
         },
-        tokenizerConfig
+        tokenizerConfig,
+        providerName
       );
       tokenCount = result.tokenCount;
     } else {

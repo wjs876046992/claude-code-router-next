@@ -143,7 +143,12 @@
     "probe_all_complete": "Provider refresh complete: {{success}}/{{total}} succeeded",
     "probe_all_failed": "Failed to refresh all providers",
     "enabled": "Active",
-    "disabled": "Disabled"
+    "disabled": "Disabled",
+    "proxy": "Proxy",
+    "proxy_tooltip_global": "Global proxy is on; turn it off to configure per-provider",
+    "proxy_tooltip_no_url": "Configure a proxy URL in General settings first",
+    "proxy_tooltip_on": "Proxy enabled",
+    "proxy_tooltip_off": "Direct (proxy disabled)"
   },
   "router": {
     "title": "Router",
@@ -194,6 +199,16 @@
     "wakeup_time_global": "Global Default Wake-up Time",
     "fallback_title": "Fallback Configuration",
     "fallback_description": "When the primary model fails, try these fallback models in order.",
+    "proxy_global_enabled": "Apply Globally",
+    "proxy_global_hint_on": "All providers use this proxy address",
+    "proxy_global_hint_off": "Only providers with proxy enabled use this address",
+    "proxy_global_hint_empty": "No proxy address configured; all providers connect directly",
+    "proxy_alias_hint": "The active proxy comes from a compatibility key (e.g. HTTPS_PROXY), not the field above.",
+    "proxy_security_hint": "The proxy can see API keys and request payloads — only configure a trusted proxy.",
+    "proxy_invalid_title": "Invalid proxy URL",
+    "proxy_invalid_confirm": "Save anyway",
+    "proxy_invalid_cancel": "Cancel",
+    "proxy_invalid_message": "The proxy URL is invalid. Only http://, https://, empty values, or $VAR placeholders are allowed. The server will reject this config (HTTP 400) if saved now.",
     "tools": {
       "json_editor": "JSON Editor",
       "json_editor_desc": "Edit raw configuration JSON",

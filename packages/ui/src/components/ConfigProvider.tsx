@@ -100,6 +100,7 @@ export function ConfigProvider({ children }: ConfigProviderProps) {
             APIKEY: '',
             API_TIMEOUT_MS: '600000',
             PROXY_URL: '',
+            PROXY_GLOBAL_ENABLED: true,
             transformers: [],
             Providers: [],
             StatusLine: undefined,

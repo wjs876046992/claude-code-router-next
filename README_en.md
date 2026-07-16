@@ -117,7 +117,10 @@ Create and configure your `~/.claude-code-router/config.json` file. For more det
 
 The `config.json` file has several key sections:
 
-- **`PROXY_URL`** (optional): You can set a proxy for API requests, for example: `"PROXY_URL": "http://127.0.0.1:7890"`.
+- **`PROXY_URL`** (optional): You can set a proxy for API requests, for example: `"PROXY_URL": "http://127.0.0.1:7890"`. The CCR process itself connects to the proxy port via this address — no system-wide proxy, TUN mode, or proxy-app global mode is required.
+- **`PROXY_GLOBAL_ENABLED`** (optional): Controls the scope of the proxy. When unconfigured or set to `true` (default), all providers' outbound traffic goes through the proxy, preserving backward compatibility with existing configs. When set to `false`, only providers marked with `proxy_enabled: true` use the proxy; all other providers connect directly. All providers share the single top-level `PROXY_URL` — per-provider proxy URLs are not supported. If `PROXY_URL` is not set (empty), all proxy switches are ineffective and every connection is direct. Provider-specific outbound requests (inference, fallback, health probes, quota queries, wakeup, provider API tokenizer, etc.) all follow the same per-provider proxy policy.
+  > [!WARNING]
+  > The proxy can see your API keys and request payloads — only configure a trusted proxy.
 - **`LOG`** (optional): You can enable logging by setting it to `true`. When set to `false`, no log files will be created. Default is `true`.
 - **`LOG_LEVEL`** (optional): Set the logging level. Available options are: `"fatal"`, `"error"`, `"warn"`, `"info"`, `"debug"`, `"trace"`. Default is `"error"`; detailed logs are emitted only when explicitly set to `"info"`, `"debug"`, or `"trace"`.
 - **Logging Systems**: The Claude Code Router uses two separate logging systems:
@@ -158,6 +161,7 @@ Here is a comprehensive example:
 {
   "APIKEY": "your-secret-key",
   "PROXY_URL": "http://127.0.0.1:7890",
+  "PROXY_GLOBAL_ENABLED": false,
   "LOG": true,
   "LOG_LEVEL": "error",
   "API_TIMEOUT_MS": 600000,
@@ -175,7 +179,8 @@ Here is a comprehensive example:
       ],
       "transformer": {
         "use": ["openrouter"]
-      }
+      },
+      "proxy_enabled": true
     },
     {
       "name": "deepseek",

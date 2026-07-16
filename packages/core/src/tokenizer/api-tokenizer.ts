@@ -4,12 +4,14 @@ import {
   TokenizerConfig,
   ApiRequestFormat,
 } from "../types/tokenizer";
+import { getProxyDispatcher } from "../services/proxy";
 
 /**
  * Options for API tokenizer
  */
 interface ApiTokenizerOptions {
   timeout?: number;
+  resolveProxyUrl?: () => string | undefined;
 }
 
 /**
@@ -82,12 +84,18 @@ export class ApiTokenizer implements ITokenizer {
         this.options.timeout || 30000
       );
 
-      const response = await fetch(this.config.url, {
+      const fetchOptions: RequestInit & { dispatcher?: unknown } = {
         method: "POST",
         headers,
         body: JSON.stringify(requestBody),
         signal: controller.signal,
-      });
+      };
+      const proxyUrl = this.options.resolveProxyUrl?.();
+      if (proxyUrl) {
+        fetchOptions.dispatcher = getProxyDispatcher(proxyUrl);
+      }
+
+      const response = await fetch(this.config.url, fetchOptions);
 
       clearTimeout(timeoutId);
 
