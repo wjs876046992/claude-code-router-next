@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { collectReachableModelKeys } from "../utils/health-reconcile";
+import { collectReachableModelKeys } from "../ccr/health-reconcile";
 
 // Must match the NUL separator used internally by health-reconcile.
 const SEP = String.fromCharCode(0);

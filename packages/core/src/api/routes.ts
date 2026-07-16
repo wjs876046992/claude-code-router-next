@@ -23,12 +23,12 @@ import { getHealthStore } from "@/services/provider-health";
 import { captureRateLimitHeaders } from "@/services/rate-limit";
 import { getFallbackPromotionStore } from "@/utils/fallback-promotion";
 import { OpenAIResponsesTransformer } from "../transformer/openai.responses.transformer";
-import { router, findProviderModel } from "@/utils/router";
+import { router, findProviderModel, ProjectRoutingError } from "@/utils/router";
 
 // Matches the CCR model-family aliases that CCR injects into managed clients
 // (e.g. "ccr-opus", "ccr-sonnet[1m]"). Codex sends one of these as a bare model
 // name to /v1/responses.
-const CCR_FAMILY_ALIAS = /^ccr-(opus|sonnet|haiku)(\[1m\])?$/i;
+export const CCR_FAMILY_ALIAS = /^ccr-(opus|sonnet|haiku)(\[1m\])?$/i;
 
 /**
  * Normalize a Responses API (Codex) request body into a unified chat request so
@@ -36,7 +36,7 @@ const CCR_FAMILY_ALIAS = /^ccr-(opus|sonnet|haiku)(\[1m\])?$/i;
  * Codex sends: { model, input: [...], instructions, tools, stream, ... }
  * We convert to: { model, messages: [...], system, tools, stream, ... }
  */
-function normalizeResponsesBody(body: any): void {
+export function normalizeResponsesBody(body: any): void {
   const messages: any[] = [];
   const input = Array.isArray(body.input) ? body.input : [body.input];
   for (const item of input) {
@@ -172,6 +172,7 @@ async function handleTransformerEndpoint(
   transformer: any
 ) {
   const body = req.body as any;
+  ((req as any).ccrHookOrder ||= []).push("handler");
 
   // Normalize Responses API (Codex) format into a unified chat request BEFORE
   // provider resolution. This must happen first so that a CCR family alias can be
@@ -372,6 +373,11 @@ async function handleTransformerEndpoint(
 
     return result;
   } catch (error: any) {
+    // ProjectRoutingError must propagate directly — it is a configuration
+    // error, not a transient upstream failure. No retry, no fallback.
+    if (error instanceof ProjectRoutingError) {
+      throw error;
+    }
     // Double-check: retry the same model once before falling back.
     // Transient provider errors (network jitter, momentary overload, empty SSE)
     // often resolve on a second attempt, avoiding unnecessary model switches.
@@ -494,7 +500,13 @@ async function handleFallback(
   // Prefer the project-aware fallback config resolved by router() so that
   // per-project Router.fallback overrides (and the enableFallback gate below)
   // are honored instead of always falling back to the global config.
-  const globalFallback = (req as any).fallbackConfig ?? fastify.configService.get<any>('fallback');
+  // In strict project mode, fallback must come ONLY from the project Router
+  // (req.fallbackConfig). If the project has no fallback, req.fallbackConfig
+  // is undefined and no fallback is available — global fallback must NOT be
+  // inherited.
+  const globalFallback = (req as any).strictProjectRouting
+    ? (req as any).fallbackConfig
+    : (req as any).fallbackConfig ?? fastify.configService.get<any>('fallback');
   const healthStore = getHealthStore();
 
   const originalProvider = req.provider || "";
@@ -570,7 +582,13 @@ async function handleFallback(
         models: familyScenarioFallback,
       });
     } else {
-      req.log.warn(`No ${modelFamily} fallback configured for ${scenarioType}; will try global ${scenarioType} fallback`);
+      // In strict project mode there is no global fallback to try.
+      const strictProject = (req as any).strictProjectRouting;
+      req.log.warn(
+        `No ${modelFamily} fallback configured for ${scenarioType}; ${
+          strictProject ? 'no project fallback available' : 'will try global fallback'
+        }`
+      );
     }
   }
 
@@ -728,8 +746,10 @@ async function handleFallback(
           healthStore.recordSuccess(fbProviderName, fbModel);
 
           // Promote the fallback model globally for this primary + scenario
-          // This ensures all clients skip the failing primary until TTL expires
-          if (originalProvider && originalModel) {
+          // This ensures all clients skip the failing primary until TTL expires.
+          // In strict project mode, skip global promotion so project requests
+          // don't pollute the global promotion store and vice versa.
+          if (originalProvider && originalModel && !(req as any).strictProjectRouting) {
             const fallbackPromotion = getFallbackPromotionStore();
             fallbackPromotion.promote(
               originalProvider,
@@ -933,6 +953,10 @@ function shouldBypassTransformers(
  * so we need to detect it regardless of which endpoint it hits.
  */
 function isCodexClient(req: any): boolean {
+  if (req.clientType) {
+    return req.clientType === "codex";
+  }
+
   const headers = req.headers || {};
   const billingHeader = headers["x-anthropic-billing-header"] || "";
   if (typeof billingHeader === "string" && billingHeader.includes("cc_version=")) {

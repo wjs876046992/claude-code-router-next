@@ -97,6 +97,9 @@ export interface ClientConfig {
   modelAlias?: string;
   activeAccountId?: string;
   autoSwitchAccounts?: boolean;
+  routing?: {
+    extendedContextRatio?: number;
+  };
   quota?: {
     limit5h?: number;
     limit7d?: number;

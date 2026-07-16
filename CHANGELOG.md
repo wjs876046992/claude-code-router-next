@@ -4,6 +4,27 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [2.3.232] - 2026-07-16
+
+### Added
+
+- **严格项目级路由边界**: 命中非空项目级 `Router` 后，该 Router 现在是请求的权威路由边界；目标 provider/model 不存在、格式错误、被禁用、不健康或额度耗尽时，不再静默逃逸到全局路由，而是返回稳定的 `ProjectRoutingError` 错误码与对应 HTTP 状态。项目自己显式配置的 fallback 仍可用，同时关闭全局 Router、`CUSTOM_ROUTER_PATH`、全局 fallback 继承与 promotion、客户端 `provider,model` override、subagent model override 和运行时二次 fallback 等项目外逃逸路径。
+- **Provider 级代理策略**: 新增顶层 `PROXY_GLOBAL_ENABLED` 与 provider 级 `proxy_enabled`。未配置或设为 `true` 时所有 provider 继续使用共享的 `PROXY_URL`，保持旧配置兼容；设为 `false` 时仅显式启用的 provider 走代理，其余直连。推理、fallback、健康探测、额度查询、wakeup、provider API tokenizer 等出站请求统一遵循同一 provider 代理策略。
+- **代理 URL 保存前校验与 UI 配置入口**: 配置 API、设置页和 JSON 编辑器现在只接受 `http://`、`https://`、空值或环境变量占位符形式的代理地址；`socks5://`、`ftp://` 或畸形 URL 会逐项报错且不会覆盖已有配置。设置页新增「全局生效」开关，provider 卡片新增独立代理开关，并提示代理可读取 API key 与请求内容、应仅使用可信代理。
+- **pi 扩展上下文触发比例**: 新增 `Clients.pi.routing.extendedContextRatio`（默认 80%）及设置页配置，用模型 `contextWindow` 的比例控制 pi 何时进入 `extendedContext`；`longContext` 仍使用 family → 全局 → 60000 的绝对阈值链。
+
+### Changed
+
+- **CCR runtime 下沉到 core**: 将请求管线、路由、认证、用量、provider 服务与客户端识别等运行时能力集中到 `@wengine-ai/llms` core，`@wengine-ai/claude-code-router-server` 收敛为兼容 facade，并通过 per-client adapters 统一 Claude Code、Codex、pi、qwen-code 与 opencode 的差异化路由上下文。
+- **pi 上下文路由语义修正**: pi 不再生成或消费 `[1m]` 模型后缀；旧接管配置中的 `ccr-*[1m]` 别名会被规范化剥离，`longContext` 不再按 `contextWindow` 比例计算。
+- **代理连接池化与脱敏**: provider 出站请求统一复用按 URL 缓存的 `ProxyAgent`，服务关闭时集中释放；含凭据的代理 URL 与请求头在日志中脱敏，API tokenizer 缓存也按 provider 隔离。
+
+### Fixed
+
+- **修复 Codex Responses 请求被误识别为 Claude Code**: `/v1/responses` 端点与 Codex User-Agent 现在先于 `metadata.user_id` 启发式判断，避免跳过 Codex 账号选择并标错客户端和用量。
+- **修复用量与上游模型记录回归**: 非流式响应从已解析 body 提取 `upstreamModel`；HTTP 失败请求不再复用上一成功请求的 input/cache tokens；Responses 的 `response.completed` 尾帧不再以零值重置 merge base；项目路由失败也不再清除下一请求所需的会话用量基线。
+- **修复 runtime 生命周期与错误处理**: `createCcrServer({ port })` 现在正确采用传入端口，401/403 认证路径不再留下挂起 Promise，provider/transformer/tokenizer 初始化完成后才开始监听，preset 注册失败会被明确记录而不再静默吞掉，畸形项目路由目标会返回 `invalid_model_format` 而非逃逸到全局模型。
+
 ## [2.3.231] - 2026-07-04
 
 ### Added

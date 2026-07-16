@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   normalizeUsagePayload,
   mergeUsageCapture,
-} from "../utils/usage-merge";
+} from "../ccr/usage-merge";
 
 describe("normalizeUsagePayload", () => {
   it("maps Anthropic-style usage fields verbatim", () => {

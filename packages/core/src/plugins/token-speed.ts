@@ -177,20 +177,19 @@ export const tokenSpeedPlugin: CCRPlugin = {
       if (!startTime) return;
       const requestId = (request as any).id || Date.now().toString();
 
-      // Extract session ID from request body metadata. Claude Code provides
-      // metadata.user_id, while Codex /v1/responses usually does not; fall back
-      // to the same request id used by usage tracking so TTFT can be joined.
-      let sessionId: string | undefined;
-      try {
-        sessionId = extractSessionIdFromUserId((request.body as any)?.metadata?.user_id);
-      } catch (error) {
+      // Prefer the adapter-owned usage session id so token-speed output joins
+      // usage records without accidentally sharing request-scoped clients.
+      let sessionId: string | undefined = (request as any).usageSessionId;
+      if (!sessionId) {
+        try {
+          sessionId = extractSessionIdFromUserId((request.body as any)?.metadata?.user_id);
+        } catch (error) {
+        }
       }
       if (!sessionId) {
         const requestIdHeader = request.headers?.["x-request-id"];
         const requestIdFromHeader = Array.isArray(requestIdHeader) ? requestIdHeader[0] : requestIdHeader;
-        sessionId = (request as any).sessionId ||
-          (typeof requestIdFromHeader === 'string' ? requestIdFromHeader : undefined) ||
-          requestId;
+        sessionId = (typeof requestIdFromHeader === 'string' ? requestIdFromHeader : undefined) || requestId;
       }
 
       // Get tokenizer for this specific request
@@ -346,8 +345,9 @@ export const tokenSpeedPlugin: CCRPlugin = {
           }
         };
 
-        // Start background processing without blocking
-        processStats().catch((error) => {
+        // Keep the capture promise on the request so the final usage hook can
+        // wait for the TTFT/speed file without delaying stream delivery.
+        (request as any).tokenSpeedCapturePromise = processStats().catch((error) => {
           console.log(error);
           fastify.log?.warn(`Background stats processing failed: ${error.message}`);
         });

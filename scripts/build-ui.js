@@ -10,6 +10,7 @@ try {
   const rootDir = path.join(__dirname, '..');
   const uiDir = path.join(rootDir, 'packages/ui');
   const cliDistDir = path.join(rootDir, 'packages/cli/dist');
+  const coreDistDir = path.join(rootDir, 'packages/core/dist');
   const rootDistDir = path.join(rootDir, 'dist');
 
   // Step 1: Build the UI (vite single-file bundle -> packages/ui/dist/index.html)
@@ -28,7 +29,7 @@ try {
   // never create partial dist trees here.
   const uiSource = path.join(uiDir, 'dist/index.html');
   if (fs.existsSync(uiSource)) {
-    for (const distDir of [cliDistDir, rootDistDir]) {
+    for (const distDir of [cliDistDir, coreDistDir, rootDistDir]) {
       if (!fs.existsSync(distDir)) {
         continue;
       }

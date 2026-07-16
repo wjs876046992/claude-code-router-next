@@ -1,6 +1,6 @@
 {
   "name": "@wengine-ai/claude-code-router-next",
-  "version": "2.3.231",
+  "version": "2.3.232",
   "description": "CLI for Claude Code Router",
   "bin": {
     "ccr": "dist/cli.js"
@@ -22,7 +22,6 @@
     "lru-cache": "^11.2.2"
   },
   "devDependencies": {
-    "@wengine-ai/claude-code-router-server": "workspace:*",
     "@wengine-ai/claude-code-router-shared": "workspace:*",
     "@inquirer/prompts": "^5.0.0",
     "@types/archiver": "^7.0.0",

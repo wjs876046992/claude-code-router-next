@@ -221,6 +221,8 @@
     "config_path": "Config Path",
     "active_model": "Active Model",
     "model_alias": "Model Alias",
+    "pi_extended_context_ratio": "pi Extended Context Trigger",
+    "pi_extended_context_ratio_desc": "Controls only when pi switches to extendedContext as a percentage of the model contextWindow. longContext continues to use the configured absolute routing threshold. Default: 80%.",
     "restore_official": "Restore Official",
     "load_failed": "Failed to load client integrations",
     "apply_success": "Client integrations updated",

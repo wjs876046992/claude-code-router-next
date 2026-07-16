@@ -1,11 +1,13 @@
 {
   "name": "@wengine-ai/claude-code-router-shared",
-  "version": "2.3.231",
+  "version": "2.3.232",
   "description": "Shared utilities and constants for Claude Code Router",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "build": "node ../../scripts/build-shared.js"
+    "build": "node ../../scripts/build-shared.js",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "keywords": [
     "claude",
@@ -25,6 +27,7 @@
     "@types/archiver": "^7.0.0",
     "@types/node": "^24.0.15",
     "esbuild": "^0.25.1",
-    "typescript": "^5.8.2"
+    "typescript": "^5.8.2",
+    "vitest": "^4.1.9"
   }
 }

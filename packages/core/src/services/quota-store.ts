@@ -79,5 +79,6 @@ export function initQuotaStorePersistence(): void {
   persistenceInitialized = true;
   loadFromDisk();
   saveTimer = setInterval(saveToDisk, 60_000);
+  saveTimer.unref?.();
   process.on("exit", saveToDisk);
 }

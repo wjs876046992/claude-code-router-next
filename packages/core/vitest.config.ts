@@ -8,6 +8,7 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "src"),
+      "@wengine-ai/claude-code-router-shared": path.resolve(__dirname, "../shared/src/index.ts"),
     },
   },
 });
