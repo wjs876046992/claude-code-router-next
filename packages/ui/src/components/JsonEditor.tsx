@@ -5,6 +5,16 @@ import { useConfig } from '@/components/ConfigProvider';
 import { api } from '@/lib/api';
 import { useTranslation } from 'react-i18next';
 import { Save, X, RefreshCw, ArrowLeft } from 'lucide-react';
+import { findInvalidProxyUrls } from '@/utils/proxy';
+import type { Config } from '@/types';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from '@/components/ui/dialog';
 
 interface JsonEditorProps {
   open: boolean;
@@ -20,6 +30,24 @@ export function JsonEditor({ open, onOpenChange, showToast }: JsonEditorProps) {
   const [isVisible, setIsVisible] = useState(false);
   const [isAnimating, setIsAnimating] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const [proxyValidationErrors, setProxyValidationErrors] = useState<Array<{ key: string; error: string }>>([]);
+  const [pendingAction, setPendingAction] = useState<"save" | "saveAndRestart" | null>(null);
+
+  // Shared pre-save gate: if any proxy URL in the parsed config is invalid,
+  // surface a confirmation dialog. Server will still reject with 400.
+  const runWithProxyCheck = (
+    parsedConfig: Record<string, unknown>,
+    action: "save" | "saveAndRestart",
+    proceed: () => void | Promise<void>,
+  ) => {
+    const errors = findInvalidProxyUrls(parsedConfig);
+    if (errors.length > 0) {
+      setProxyValidationErrors(errors);
+      setPendingAction(action);
+      return;
+    }
+    void proceed();
+  };
 
   useEffect(() => {
     if (config && open) {
@@ -69,20 +97,17 @@ export function JsonEditor({ open, onOpenChange, showToast }: JsonEditorProps) {
     }
   };
 
-  const handleSave = async () => {
-    if (!jsonValue) return;
-    
+  const performSave = async (parsedConfig: Config) => {
     try {
       setIsSaving(true);
-      const parsedConfig = JSON.parse(jsonValue);
       const response = await api.updateConfig(parsedConfig);
-      
+
       const success = handleSaveResponse(
         response,
         t('app.config_saved_success'),
         t('app.config_saved_failed')
       );
-      
+
       if (success) {
         onOpenChange(false);
       }
@@ -96,13 +121,9 @@ export function JsonEditor({ open, onOpenChange, showToast }: JsonEditorProps) {
     }
   };
 
-  const handleSaveAndRestart = async () => {
-    if (!jsonValue) return;
-    
+  const performSaveAndRestart = async (parsedConfig: Config) => {
     try {
       setIsSaving(true);
-      const parsedConfig = JSON.parse(jsonValue);
-      
       // Save config first
       const saveResponse = await api.updateConfig(parsedConfig);
       const saveSuccessful = handleSaveResponse(
@@ -110,18 +131,18 @@ export function JsonEditor({ open, onOpenChange, showToast }: JsonEditorProps) {
         t('app.config_saved_success'),
         t('app.config_saved_failed')
       );
-      
+
       // Only restart if save was successful
       if (saveSuccessful) {
         // Restart service
         const restartResponse = await api.restartService();
-        
+
         handleSaveResponse(
           restartResponse,
           t('app.config_saved_restart_success'),
           t('app.config_saved_restart_failed')
         );
-        
+
         onOpenChange(false);
       }
     } catch (error) {
@@ -132,6 +153,68 @@ export function JsonEditor({ open, onOpenChange, showToast }: JsonEditorProps) {
     } finally {
       setIsSaving(false);
     }
+  };
+
+  const handleSave = async () => {
+    if (!jsonValue) return;
+
+    let parsedConfig: Config;
+    try {
+      parsedConfig = JSON.parse(jsonValue) as Config;
+    } catch (error) {
+      if (showToast) {
+        showToast(t('app.config_saved_failed') + ': ' + (error as Error).message, 'error');
+      }
+      return;
+    }
+
+    runWithProxyCheck(parsedConfig as Record<string, unknown>, "save", async () => performSave(parsedConfig));
+  };
+
+  const handleSaveAndRestart = async () => {
+    if (!jsonValue) return;
+
+    let parsedConfig: Config;
+    try {
+      parsedConfig = JSON.parse(jsonValue) as Config;
+    } catch (error) {
+      if (showToast) {
+        showToast(t('app.config_saved_restart_failed') + ': ' + (error as Error).message, 'error');
+      }
+      return;
+    }
+
+    runWithProxyCheck(parsedConfig as Record<string, unknown>, "saveAndRestart", async () => performSaveAndRestart(parsedConfig));
+  };
+
+  const confirmProxyInvalidSave = async () => {
+    // Snapshot the JSON before clearing the dialog so the user's edits are
+    // preserved; re-parse and execute the inner save (bypassing the check).
+    const snapshot = jsonValue;
+    const action = pendingAction;
+    setProxyValidationErrors([]);
+    setPendingAction(null);
+
+    let parsedConfig: Config;
+    try {
+      parsedConfig = JSON.parse(snapshot) as Config;
+    } catch (error) {
+      if (showToast) {
+        showToast(t('app.config_saved_failed') + ': ' + (error as Error).message, 'error');
+      }
+      return;
+    }
+
+    if (action === "save") {
+      await performSave(parsedConfig);
+    } else if (action === "saveAndRestart") {
+      await performSaveAndRestart(parsedConfig);
+    }
+  };
+
+  const cancelProxyInvalidSave = () => {
+    setProxyValidationErrors([]);
+    setPendingAction(null);
   };
 
   if (!isVisible && !open) {
@@ -217,6 +300,32 @@ export function JsonEditor({ open, onOpenChange, showToast }: JsonEditorProps) {
           />
         </div>
       </div>
+
+      <Dialog open={proxyValidationErrors.length > 0} onOpenChange={(open) => { if (!open) cancelProxyInvalidSave(); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t("settings.proxy_invalid_title")}</DialogTitle>
+            <DialogDescription>
+              {t("settings.proxy_invalid_message")}
+            </DialogDescription>
+          </DialogHeader>
+          <ul className="text-xs text-red-600 dark:text-red-400 space-y-1 max-h-[40vh] overflow-auto">
+            {proxyValidationErrors.map((entry) => (
+              <li key={entry.key}>
+                <span className="font-medium">{entry.key}</span>: {entry.error}
+              </li>
+            ))}
+          </ul>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={cancelProxyInvalidSave}>
+              {t("settings.proxy_invalid_cancel")}
+            </Button>
+            <Button variant="destructive" size="sm" onClick={confirmProxyInvalidSave}>
+              {t("settings.proxy_invalid_confirm")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

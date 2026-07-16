@@ -2,6 +2,7 @@ import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { config } from "dotenv";
 import JSON5 from 'json5';
+import { getConfiguredProxyUrl } from "./proxy";
 
 export interface ConfigOptions {
   envPath?: string;
@@ -134,12 +135,7 @@ export class ConfigService {
   }
 
   public getHttpsProxy(): string | undefined {
-    return (
-      this.get("HTTPS_PROXY") ||
-      this.get("https_proxy") ||
-      this.get("httpsProxy") ||
-      this.get("PROXY_URL")
-    );
+    return getConfiguredProxyUrl(this);
   }
 
   public has(key: keyof AppConfig): boolean {

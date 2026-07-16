@@ -218,6 +218,7 @@ export interface LLMProvider {
    */
   cacheMode?: 'exclusive' | 'inclusive';
   enabled?: boolean;
+  proxyEnabled?: boolean;
   wakeupEnabled?: boolean;
   wakeupTime?: string;
   wakeupModel?: string;
@@ -259,6 +260,7 @@ export interface ConfigProvider {
    */
   cache_mode?: 'exclusive' | 'inclusive';
   enabled?: boolean;
+  proxy_enabled?: boolean;
   wakeup_enabled?: boolean;
   wakeup_time?: string;
   wakeup_model?: string;

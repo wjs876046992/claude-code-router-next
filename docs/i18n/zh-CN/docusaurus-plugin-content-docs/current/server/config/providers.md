@@ -139,6 +139,7 @@ sidebar_position: 2
 | `api_key` | string | 是 | API 认证密钥 |
 | `models` | string[] | 否 | 可用模型列表 |
 | `transformer` | object | 否 | 应用的转换器配置 |
+| `proxy_enabled` | boolean | 否 | 当 `PROXY_GLOBAL_ENABLED` 为 `false` 时，仅 `proxy_enabled: true` 的 provider 走 `PROXY_URL` 代理。当 `PROXY_GLOBAL_ENABLED` 为 `true` 或未配置时此字段被忽略（所有 provider 均走代理）。详见[基础配置 > 代理](./basic#代理)。 |
 
 ## 模型选择
 
@@ -208,5 +209,5 @@ deepseek,deepseek-chat
 
 ## 下一步
 
-- [路由配置](/zh/docs/config/routing) - 配置请求如何路由
-- [转换器](/zh/docs/config/transformers) - 对请求应用转换
+- [路由配置](./routing) - 配置请求如何路由
+- [转换器](./transformers) - 对请求应用转换

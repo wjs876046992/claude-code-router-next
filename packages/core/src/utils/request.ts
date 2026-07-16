@@ -1,5 +1,6 @@
-import { ProxyAgent } from "undici";
 import { UnifiedChatRequest } from "../types/llm";
+import { getProxyDispatcher } from "../services/proxy";
+import { maskHeaders } from "./debug-log";
 
 export function sendUnifiedRequest(
   url: URL | string,
@@ -39,19 +40,34 @@ export function sendUnifiedRequest(
   };
 
   if (config.httpsProxy) {
-    (fetchOptions as any).dispatcher = new ProxyAgent(
-      new URL(config.httpsProxy).toString()
-    );
+    (fetchOptions as any).dispatcher = getProxyDispatcher(config.httpsProxy);
   }
   logger?.debug(
     {
       reqId: context.req.id,
-      request: fetchOptions,
-      headers: Object.fromEntries(headers.entries()),
+      method: "POST",
+      headers: maskHeaders(Object.fromEntries(headers.entries())),
       requestUrl: typeof url === "string" ? url : url.toString(),
-      useProxy: config.httpsProxy,
+      useProxy: redactProxyUrl(config.httpsProxy),
     },
     "final request"
   );
   return fetch(typeof url === "string" ? url : url.toString(), fetchOptions);
+}
+
+// Strip credentials from a proxy URL before it lands in logs. Returns undefined
+// when no proxy is configured so the log field stays honest about direct mode.
+function redactProxyUrl(proxyUrl: unknown): string | undefined {
+  if (typeof proxyUrl !== "string" || !proxyUrl.trim()) return undefined;
+  try {
+    const parsed = new URL(proxyUrl);
+    if (parsed.username || parsed.password) {
+      parsed.username = "";
+      parsed.password = "";
+      return `${parsed.toString()} (credentials redacted)`;
+    }
+    return parsed.toString();
+  } catch {
+    return "[invalid proxy URL]";
+  }
 }

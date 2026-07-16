@@ -17,6 +17,15 @@ import type { ClientApplyResponse, ClientId, ClientStatus, CodexAccount, CodexAc
 import { FileJson, FileText, CircleArrowUp, FileCog, ArrowLeft, Save, RefreshCw, Trash2, UserRound, CheckCircle2, Download, ClipboardCopy } from "lucide-react";
 import { Toast } from "@/components/ui/toast";
 import { api } from "@/lib/api";
+import { getConfiguredProxyUrl, isGlobalProxyEnabled, findInvalidProxyUrls } from "@/utils/proxy";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import { MODEL_FAMILIES } from "@/types";
 import type { ModelFamilyConfig } from "@/types";
 
@@ -658,6 +667,43 @@ export function SettingsPage() {
     }
   }, [t]);
 
+  const [proxyValidationErrors, setProxyValidationErrors] = useState<Array<{ key: string; error: string }>>([]);
+  const [pendingSaveAction, setPendingSaveAction] = useState<"save" | "saveAndRestart" | null>(null);
+
+  // Pre-flight check: returns the list of invalid proxy URL entries in the
+  // current config. When non-empty, a confirmation dialog is shown before the
+  // request is sent. The server will reject the save with HTTP 400 regardless,
+  // so the dialog is purely a UX affordance to avoid a round-trip.
+  const runSaveWithProxyCheck = (action: "save" | "saveAndRestart") => {
+    const errors = findInvalidProxyUrls((config || {}) as Record<string, unknown>);
+    if (errors.length > 0) {
+      setProxyValidationErrors(errors);
+      setPendingSaveAction(action);
+      return;
+    }
+    if (action === "save") {
+      void saveConfig();
+    } else {
+      void saveAndRestart();
+    }
+  };
+
+  const confirmProxyInvalidSave = () => {
+    const action = pendingSaveAction;
+    setProxyValidationErrors([]);
+    setPendingSaveAction(null);
+    if (action === "save") {
+      void saveConfig();
+    } else if (action === "saveAndRestart") {
+      void saveAndRestart();
+    }
+  };
+
+  const cancelProxyInvalidSave = () => {
+    setProxyValidationErrors([]);
+    setPendingSaveAction(null);
+  };
+
   const saveConfig = async () => {
     setIsSaving(true);
     try {
@@ -712,11 +758,11 @@ export function SettingsPage() {
           <h1 className="text-2xl font-bold tracking-tight text-foreground">{t('toplevel.title')}</h1>
         </div>
         <div className="flex items-center gap-3">
-          <Button variant="outline" onClick={saveConfig} disabled={isSaving || isRestarting} className="rounded-xl border-white/10 bg-white/5 hover:bg-white/10 h-10 px-6">
+          <Button variant="outline" onClick={() => runSaveWithProxyCheck("save")} disabled={isSaving || isRestarting} className="rounded-xl border-white/10 bg-white/5 hover:bg-white/10 h-10 px-6">
             <Save className="mr-2 h-4 w-4" />
             {t('app.save')}
           </Button>
-          <Button onClick={saveAndRestart} disabled={isSaving || isRestarting} className="rounded-xl h-10 px-6 shadow-lg shadow-primary/20">
+          <Button onClick={() => runSaveWithProxyCheck("saveAndRestart")} disabled={isSaving || isRestarting} className="rounded-xl h-10 px-6 shadow-lg shadow-primary/20">
             <RefreshCw className="mr-2 h-4 w-4" />
             {t('app.save_and_restart')}
           </Button>
@@ -872,7 +918,21 @@ export function SettingsPage() {
                   )}
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="ccr-proxy-config">{t("toplevel.proxy_url")}</Label>
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="ccr-proxy-config">{t("toplevel.proxy_url")}</Label>
+                    <div className="flex items-center gap-2">
+                      <Switch
+                        id="proxy-global-enabled"
+                        checked={isGlobalProxyEnabled(config.PROXY_GLOBAL_ENABLED)}
+                        onCheckedChange={(checked) =>
+                          setConfig({ ...config, PROXY_GLOBAL_ENABLED: checked })
+                        }
+                      />
+                      <Label htmlFor="proxy-global-enabled" className="text-xs cursor-pointer">
+                        {t("settings.proxy_global_enabled")}
+                      </Label>
+                    </div>
+                  </div>
                   <Input
                     id="ccr-proxy-config"
                     value={config.PROXY_URL || ""}
@@ -880,6 +940,21 @@ export function SettingsPage() {
                     placeholder="http://127.0.0.1:7890"
                     disableAutofill
                   />
+                  <p className="text-xs text-gray-500">
+                    {getConfiguredProxyUrl(config)
+                      ? isGlobalProxyEnabled(config.PROXY_GLOBAL_ENABLED)
+                        ? t("settings.proxy_global_hint_on")
+                        : t("settings.proxy_global_hint_off")
+                      : t("settings.proxy_global_hint_empty")}
+                  </p>
+                  {(config.PROXY_URL || "").trim() !== getConfiguredProxyUrl(config) && (
+                    <p className="text-xs text-amber-500 dark:text-amber-400">
+                      {t("settings.proxy_alias_hint")}
+                    </p>
+                  )}
+                  <p className="text-xs text-gray-500">
+                    {t("settings.proxy_security_hint")}
+                  </p>
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="log-level">{t("toplevel.log_level")}</Label>
@@ -1438,6 +1513,32 @@ export function SettingsPage() {
           onClose={() => setToast(null)}
         />
       )}
+
+      <Dialog open={proxyValidationErrors.length > 0} onOpenChange={(open) => { if (!open) cancelProxyInvalidSave(); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t("settings.proxy_invalid_title")}</DialogTitle>
+            <DialogDescription>
+              {t("settings.proxy_invalid_message")}
+            </DialogDescription>
+          </DialogHeader>
+          <ul className="text-xs text-red-600 dark:text-red-400 space-y-1 max-h-[40vh] overflow-auto">
+            {proxyValidationErrors.map((entry) => (
+              <li key={entry.key}>
+                <span className="font-medium">{entry.key}</span>: {entry.error}
+              </li>
+            ))}
+          </ul>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={cancelProxyInvalidSave}>
+              {t("settings.proxy_invalid_cancel")}
+            </Button>
+            <Button variant="destructive" size="sm" onClick={confirmProxyInvalidSave}>
+              {t("settings.proxy_invalid_confirm")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     <LogViewer
       open={isLogViewerOpen}
       onOpenChange={setIsLogViewerOpen}

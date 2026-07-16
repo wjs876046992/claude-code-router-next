@@ -9,6 +9,7 @@ import { getQuotaAdapter } from './quota-adapters';
 import { storeQuotaResult } from './quota-store';
 import type { LLMProvider } from '../types/llm';
 import { version as CCR_VERSION } from '../../package.json';
+import { getProxyDispatcher } from './proxy';
 
 /** Custom request headers used to identify CCR-generated traffic. */
 const CCR_SOURCE_HEADER = 'x-claude-code-router-source';
@@ -128,14 +129,8 @@ async function probeProvider(
       signal: AbortSignal.timeout(timeoutMs),
     };
 
-    // Add proxy if configured
     if (proxyUrl) {
-      try {
-        const { ProxyAgent } = await import('undici');
-        (fetchOptions as any).dispatcher = new ProxyAgent(new URL(proxyUrl).toString());
-      } catch {
-        // Proxy agent not available, continue without proxy
-      }
+      (fetchOptions as any).dispatcher = getProxyDispatcher(proxyUrl);
     }
 
     const response = await fetch(modelsUrl, fetchOptions);
@@ -220,14 +215,8 @@ async function wakeupProvider(
       signal: AbortSignal.timeout(timeoutMs),
     };
 
-    // Add proxy if configured
     if (proxyUrl) {
-      try {
-        const { ProxyAgent } = await import('undici');
-        (fetchOptions as any).dispatcher = new ProxyAgent(new URL(proxyUrl).toString());
-      } catch {
-        // Proxy agent not available, continue without proxy
-      }
+      (fetchOptions as any).dispatcher = getProxyDispatcher(proxyUrl);
     }
 
     logger?.info(`Sending scheduled wake-up call to provider ${provider.name} using model ${modelToWakeup}...`);
@@ -288,14 +277,8 @@ async function pingProviderModel(
       signal: AbortSignal.timeout(timeoutMs),
     };
 
-    // Add proxy if configured
     if (proxyUrl) {
-      try {
-        const { ProxyAgent } = await import('undici');
-        (fetchOptions as any).dispatcher = new ProxyAgent(new URL(proxyUrl).toString());
-      } catch {
-        // Proxy agent not available, continue without proxy
-      }
+      (fetchOptions as any).dispatcher = getProxyDispatcher(proxyUrl);
     }
 
     logger?.debug?.(`Sending independent ping to rate-limited model ${provider.name} (${modelName})...`);
@@ -327,7 +310,7 @@ export class ActiveProbeService {
   private rateLimitProbeTimer?: NodeJS.Timeout;
   private lastWakeupDate: Map<string, string> = new Map(); // key: providerName, value: YYYY-MM-DD
   private getProviders: () => LLMProvider[];
-  private getHttpsProxy?: () => string | undefined;
+  private resolveProxyUrl?: (provider: LLMProvider) => string | undefined;
   private logger?: any;
   private getConfig?: (key: string) => any;
   private running = false;
@@ -335,13 +318,13 @@ export class ActiveProbeService {
   constructor(
     getProviders: () => LLMProvider[],
     config?: ActiveProbeConfig,
-    getHttpsProxy?: () => string | undefined,
+    resolveProxyUrl?: (provider: LLMProvider) => string | undefined,
     logger?: any,
     getConfig?: (key: string) => any
   ) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.getProviders = getProviders;
-    this.getHttpsProxy = getHttpsProxy;
+    this.resolveProxyUrl = resolveProxyUrl;
     this.logger = logger;
     this.getConfig = getConfig;
   }
@@ -438,7 +421,6 @@ export class ActiveProbeService {
     const providers = this.getProviders().filter(
       p => p?.name && p.enabled !== false && !this.config.excludeProviders.includes(p.name)
     );
-    const proxy = this.getHttpsProxy?.();
     const healthStore = getHealthStore();
 
     if (providers.length === 0) return;
@@ -448,6 +430,7 @@ export class ActiveProbeService {
     for (const provider of providers) {
       const adapter = getQuotaAdapter(provider.baseUrl);
       const models = Array.isArray(provider.models) ? provider.models : [];
+      const proxyUrl = this.resolveProxyUrl?.(provider);
 
       if (adapter) {
         tasks.push({
@@ -455,7 +438,7 @@ export class ActiveProbeService {
           models,
           type: 'quota-adapter',
           promise: adapter
-            .queryQuota(provider, this.config.probeTimeoutMs, proxy)
+            .queryQuota(provider, this.config.probeTimeoutMs, proxyUrl)
             .then(result => {
               if (result) {
                 storeQuotaResult(provider.name, result);
@@ -503,7 +486,7 @@ export class ActiveProbeService {
           provider: provider.name,
           models,
           type: 'rate-limit-headers',
-          promise: probeProvider(provider, this.config.probeTimeoutMs, proxy).then(() => undefined),
+          promise: probeProvider(provider, this.config.probeTimeoutMs, proxyUrl).then(() => undefined),
         });
       }
     }
@@ -537,7 +520,6 @@ export class ActiveProbeService {
     const providers = this.getProviders().filter(
       p => p?.name && p.enabled !== false && !this.config.excludeProviders.includes(p.name)
     );
-    const proxy = this.getHttpsProxy?.();
 
     if (providers.length === 0) return;
 
@@ -546,7 +528,11 @@ export class ActiveProbeService {
     // Probe all providers concurrently
     const results = await Promise.allSettled(
       providers.map(provider =>
-        probeProvider(provider, this.config.probeTimeoutMs, proxy)
+        probeProvider(
+          provider,
+          this.config.probeTimeoutMs,
+          this.resolveProxyUrl?.(provider)
+        )
       )
     );
 
@@ -619,7 +605,6 @@ export class ActiveProbeService {
     if (rateLimitedKeys.length === 0) return;
 
     const providers = this.getProviders();
-    const proxy = this.getHttpsProxy?.();
     const pingTimeoutMs = this.config.probeTimeoutMs;
 
     this.logger?.debug?.(`Running rate-limit recovery probe for ${rateLimitedKeys.length} model(s)`);
@@ -648,7 +633,13 @@ export class ActiveProbeService {
       }
 
       try {
-        const result = await pingProviderModel(provider, modelName, pingTimeoutMs, proxy, this.logger);
+        const result = await pingProviderModel(
+          provider,
+          modelName,
+          pingTimeoutMs,
+          this.resolveProxyUrl?.(provider),
+          this.logger
+        );
 
         if (result.success) {
           this.logger?.info?.(`Rate-limit probe succeeded for ${key}, recovering model`);
@@ -697,7 +688,6 @@ export class ActiveProbeService {
     const currentHour = now.getHours();
     const currentMinute = now.getMinutes();
     const currentDateStr = getLocalDateString(now);
-    const proxy = this.getHttpsProxy?.();
     const globalWakeupTime = this.getConfig ? this.getConfig('WAKEUP_TIME') || '06:00' : '06:00';
 
     for (const provider of providers) {
@@ -724,7 +714,12 @@ export class ActiveProbeService {
       if ((isPastTarget || isWithinWindow) && !this.hasWakeupFiredToday(provider.name, currentDateStr)) {
           this.logger?.info?.(`Scheduled wake-up triggered for provider ${provider.name} at ${wakeupTime}`);
 
-          wakeupProvider(provider, 30000, proxy, this.logger).then(res => {
+          wakeupProvider(
+            provider,
+            30000,
+            this.resolveProxyUrl?.(provider),
+            this.logger
+          ).then(res => {
             if (res.success) {
               this.logger?.info?.(`Successfully woke up provider ${provider.name}`);
             } else {
@@ -771,8 +766,11 @@ export class ActiveProbeService {
       return false;
     }
 
-    const proxy = this.getHttpsProxy?.();
-    const result = await probeProvider(provider, this.config.probeTimeoutMs, proxy);
+    const result = await probeProvider(
+      provider,
+      this.config.probeTimeoutMs,
+      this.resolveProxyUrl?.(provider)
+    );
 
     const models = Array.isArray(provider.models) ? provider.models : [];
 
@@ -799,12 +797,12 @@ let activeProbeService: ActiveProbeService | null = null;
 export function getActiveProbeService(
   getProviders: () => LLMProvider[],
   config?: ActiveProbeConfig,
-  getHttpsProxy?: () => string | undefined,
+  resolveProxyUrl?: (provider: LLMProvider) => string | undefined,
   logger?: any,
   getConfig?: (key: string) => any
 ): ActiveProbeService {
   if (!activeProbeService) {
-    activeProbeService = new ActiveProbeService(getProviders, config, getHttpsProxy, logger, getConfig);
+    activeProbeService = new ActiveProbeService(getProviders, config, resolveProxyUrl, logger, getConfig);
   }
   return activeProbeService;
 }
@@ -815,11 +813,11 @@ export function getActiveProbeService(
 export function startActiveProbe(
   getProviders: () => LLMProvider[],
   config?: ActiveProbeConfig,
-  getHttpsProxy?: () => string | undefined,
+  resolveProxyUrl?: (provider: LLMProvider) => string | undefined,
   logger?: any,
   getConfig?: (key: string) => any
 ): ActiveProbeService {
-  const service = getActiveProbeService(getProviders, config, getHttpsProxy, logger, getConfig);
+  const service = getActiveProbeService(getProviders, config, resolveProxyUrl, logger, getConfig);
   service.start();
   return service;
 }

@@ -150,7 +150,7 @@ export const tokenSpeedPlugin: CCRPlugin = {
 
       try {
         // Create and cache tokenizer
-        const tokenizer = await tokenizerService.getTokenizer(tokenizerConfig);
+        const tokenizer = await tokenizerService.getTokenizer(tokenizerConfig, providerName);
         tokenizerCache.set(cacheKey, tokenizer);
         fastify.log?.info(`Created tokenizer for ${providerName}:${modelName} - ${tokenizer.name}`);
         return tokenizer;

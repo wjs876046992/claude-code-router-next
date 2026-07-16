@@ -24,6 +24,7 @@ import { captureRateLimitHeaders } from "@/services/rate-limit";
 import { getFallbackPromotionStore } from "@/utils/fallback-promotion";
 import { OpenAIResponsesTransformer } from "../transformer/openai.responses.transformer";
 import { router, findProviderModel, ProjectRoutingError } from "@/utils/router";
+import { resolveProviderProxyUrl } from "@/services/proxy";
 
 // Matches the CCR model-family aliases that CCR injects into managed clients
 // (e.g. "ccr-opus", "ccr-sonnet[1m]"). Codex sends one of these as a bare model
@@ -1056,9 +1057,9 @@ async function sendRequestToProvider(
     url,
     requestBody,
     {
-      httpsProxy: fastify.configService.getHttpsProxy(),
       ...config,
       headers: JSON.parse(JSON.stringify(requestHeaders)),
+      httpsProxy: resolveProviderProxyUrl(fastify.configService, provider),
     },
     context,
     fastify.log
@@ -1331,6 +1332,7 @@ export const registerApiRoutes = async (
             baseUrl: { type: "string" },
             apiKey: { type: "string" },
             models: { type: "array", items: { type: "string" } },
+            proxyEnabled: { type: "boolean" },
           },
           required: ["id", "name", "type", "baseUrl", "apiKey", "models"],
         },
@@ -1427,6 +1429,7 @@ export const registerApiRoutes = async (
             baseUrl: { type: "string" },
             apiKey: { type: "string" },
             models: { type: "array", items: { type: "string" } },
+            proxyEnabled: { type: "boolean" },
             enabled: { type: "boolean" },
           },
         },

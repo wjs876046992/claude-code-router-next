@@ -1,8 +1,9 @@
 import { useTranslation } from "react-i18next";
-import { Pencil, RefreshCw, Trash2 } from "lucide-react";
+import { Pencil, RefreshCw, Trash2, Network } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import type { Provider, ProviderHealthState, ProviderQuotaUsage } from "@/types";
 
 interface ProviderListProps {
@@ -14,6 +15,14 @@ interface ProviderListProps {
   onToggle?: (index: number, enabled: boolean) => void;
   onProbe?: (providerName: string) => void;
   probingProviders?: Set<string>;
+  // Global proxy URL from config (PROXY_URL)
+  proxyUrl?: string;
+  // Whether the global proxy switch is on (PROXY_GLOBAL_ENABLED)
+  proxyGlobalEnabled?: boolean;
+  // When true, enabled/proxy controls are disabled to prevent concurrent saves
+  saving?: boolean;
+  // Toggle per-provider proxy_enabled
+  onProxyToggle?: (index: number, enabled: boolean) => void;
 }
 
 // Get health status for a provider
@@ -219,8 +228,13 @@ function QuotaProgressBar({
   );
 }
 
-export function ProviderList({ providers, healthStates, quotaUsages, onEdit, onRemove, onToggle, onProbe, probingProviders }: ProviderListProps) {
+export function ProviderList({ providers, healthStates, quotaUsages, onEdit, onRemove, onToggle, onProbe, probingProviders, proxyUrl, proxyGlobalEnabled, saving, onProxyToggle }: ProviderListProps) {
   const { t } = useTranslation();
+
+  // Derive proxy state once for all cards
+  const hasProxyUrl = (proxyUrl || "").trim() !== "";
+  const globalEnabled = proxyGlobalEnabled !== false;
+  const proxyEffective = globalEnabled && hasProxyUrl;
 
   if (!providers || !Array.isArray(providers)) {
     return (
@@ -291,8 +305,55 @@ export function ProviderList({ providers, healthStates, quotaUsages, onEdit, onR
               </div>
             </div>
             
-            <div className="ml-4 flex w-[124px] shrink-0 flex-col items-end gap-3">
-              <div className="flex items-center justify-end gap-1.5">
+            <div className="ml-4 flex w-[200px] shrink-0 flex-col items-end gap-3">
+              <div className="flex items-center justify-end gap-1.5 flex-wrap">
+                {/* Proxy toggle button */}
+                {(() => {
+                  const proxySelected = provider.proxy_enabled === true;
+                  const proxyDisabled = !hasProxyUrl || proxyEffective || saving;
+                  // Determine tooltip text based on state
+                  let proxyTooltip: string;
+                  if (!hasProxyUrl) {
+                    proxyTooltip = t("providers.proxy_tooltip_no_url");
+                  } else if (proxyEffective) {
+                    proxyTooltip = t("providers.proxy_tooltip_global");
+                  } else if (proxySelected) {
+                    proxyTooltip = t("providers.proxy_tooltip_on");
+                  } else {
+                    proxyTooltip = t("providers.proxy_tooltip_off");
+                  }
+                  // Variant: highlighted when effective or selected; ghost otherwise
+                  const proxyVariant = proxyEffective || proxySelected ? "secondary" : "ghost";
+                  const proxyActiveClass = proxyEffective
+                    ? "bg-blue-500/20 text-blue-600 border-blue-500/30"
+                    : proxySelected
+                      ? "bg-emerald-500/20 text-emerald-600 border-emerald-500/30"
+                      : "";
+                  return (
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span className="inline-flex" tabIndex={proxyDisabled ? 0 : undefined}>
+                            <Button
+                              variant={proxyVariant}
+                              size="sm"
+                              className={`h-8 px-2 text-xs gap-1 rounded-lg ${proxyActiveClass}`}
+                              disabled={proxyDisabled}
+                              aria-pressed={proxyEffective || proxySelected}
+                              onClick={() => onProxyToggle?.(index, !proxySelected)}
+                            >
+                              <Network className="h-3.5 w-3.5" />
+                              {t("providers.proxy")}
+                            </Button>
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent side="top" className="max-w-xs text-xs">
+                          {proxyTooltip}
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  );
+                })()}
                 <Button
                   variant="ghost"
                   size="icon"
@@ -309,6 +370,7 @@ export function ProviderList({ providers, healthStates, quotaUsages, onEdit, onR
                 <Switch
                   checked={isEnabled}
                   onCheckedChange={(checked) => onToggle?.(index, checked)}
+                  disabled={saving}
                 />
               </div>
               <HealthIndicator status={isEnabled ? health.status : 'unknown'} />
@@ -326,6 +388,7 @@ export function ProviderList({ providers, healthStates, quotaUsages, onEdit, onR
                   variant="destructive"
                   size="icon"
                   onClick={() => onRemove(index)}
+                  disabled={saving}
                   className="h-8 w-8 rounded-lg opacity-80 hover:opacity-100"
                   title={t("common.delete", { defaultValue: "Delete" })}
                 >

@@ -37,6 +37,7 @@ import { getActiveProbeService, startActiveProbe, stopActiveProbe, resetActivePr
 import { initProviderHealthPersistence } from "./services/provider-health";
 import { initRateLimitPersistence } from "./services/rate-limit";
 import { initQuotaStorePersistence } from "./services/quota-store";
+import { closeProxyDispatchers, resolveProviderProxyUrl } from "./services/proxy";
 import { applyClientAdapter } from "./clients/adapters";
 import { normalizeResponsesBody } from "./api/routes";
 import type { CcrPreHandlerCallbacks } from "./ccr/request-pipeline";
@@ -199,9 +200,8 @@ class Server {
       if (!options) throw new Error("options is required");
       configService = new ConfigService({
         initialConfig: {
-          providers: options.Providers,
-          Router: options.Router,
-          Clients: options.Clients,
+          ...options,
+          providers: options.Providers || options.providers,
         }
       });
       transformerService = new TransformerService(configService, this.app.log);
@@ -338,6 +338,10 @@ class Server {
           process.off("SIGINT", handleSigint);
           process.off("SIGTERM", handleSigterm);
           this.signalHandlersRegistered = false;
+          try {
+            this.tokenizerService.dispose();
+          } catch {}
+          await closeProxyDispatchers();
         });
       }
 
@@ -374,7 +378,7 @@ class Server {
         this.activeProbeService = startActiveProbe(
           () => this.providerService.getProviders(),
           probeConfig,
-          () => this.configService.getHttpsProxy(),
+          (provider) => resolveProviderProxyUrl(this.configService, provider),
           this.app.log,
           (key: string) => this.configService.get(key)
         );
@@ -430,6 +434,7 @@ export type { StoredQuotaResult } from "./services/quota-store";
 export { getActiveProbeService, startActiveProbe, stopActiveProbe, resetActiveProbeService, ActiveProbeService } from "./services/active-probe";
 export type { ActiveProbeConfig } from "./services/active-probe";
 export { setRuntimeDebugLog, getRuntimeDebugLog } from "./utils/debug-log";
+export { closeProxyDispatchers, getConfiguredProxyUrl, getProxyDispatcher, isGlobalProxyEnabled, resolveProviderProxyUrl } from "./services/proxy";
 
 /**
  * Create the full CCR runtime. Loaded lazily to avoid a module cycle between

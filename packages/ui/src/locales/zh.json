@@ -143,7 +143,12 @@
     "probe_all_complete": "供应商刷新完成：{{success}}/{{total}} 成功",
     "probe_all_failed": "刷新全部供应商失败",
     "enabled": "已启用",
-    "disabled": "已关闭"
+    "disabled": "已关闭",
+    "proxy": "代理",
+    "proxy_tooltip_global": "全局代理已开启，关闭全局后可单独设置",
+    "proxy_tooltip_no_url": "请先在通用设置中配置代理地址",
+    "proxy_tooltip_on": "代理已开启",
+    "proxy_tooltip_off": "直连（未启用代理）"
   },
   "router": {
     "title": "路由",
@@ -194,6 +199,16 @@
     "wakeup_time_global": "全局默认唤醒时间",
     "fallback_title": "备用配置",
     "fallback_description": "当主模型请求失败时，按顺序尝试以下备用模型。",
+    "proxy_global_enabled": "全局生效",
+    "proxy_global_hint_on": "所有供应商将使用此代理地址",
+    "proxy_global_hint_off": "仅卡片上开启代理的供应商使用此地址",
+    "proxy_global_hint_empty": "未配置代理地址，所有供应商直连",
+    "proxy_alias_hint": "生效的代理地址来自 HTTPS_PROXY 等兼容配置键，而非上方输入框。",
+    "proxy_security_hint": "代理可看到 API key 与请求内容，请仅配置可信代理。",
+    "proxy_invalid_title": "代理地址不合法",
+    "proxy_invalid_confirm": "仍然保存",
+    "proxy_invalid_cancel": "取消",
+    "proxy_invalid_message": "代理地址不合法。仅允许 http://、https://、空值或 $VAR 占位符。若现在保存，服务端将拒绝该配置（HTTP 400）。",
     "tools": {
       "json_editor": "JSON 编辑器",
       "json_editor_desc": "编辑原始配置 JSON",

@@ -9,6 +9,7 @@ import {
 import { TiktokenTokenizer } from "../tokenizer/tiktoken-tokenizer";
 import { HuggingFaceTokenizer } from "../tokenizer/huggingface-tokenizer";
 import { ApiTokenizer } from "../tokenizer/api-tokenizer";
+import { resolveProviderProxyUrl } from "./proxy";
 
 /**
  * TokenizerService - Manages tokenization for different model types
@@ -64,8 +65,11 @@ export class TokenizerService {
   /**
    * Get or create a tokenizer for specific configuration
    */
-  async getTokenizer(config: TokenizerConfig): Promise<ITokenizer> {
-    const cacheKey = this.getCacheKey(config);
+  async getTokenizer(
+    config: TokenizerConfig,
+    providerName?: string
+  ): Promise<ITokenizer> {
+    const cacheKey = this.getCacheKey(config, providerName);
 
     // Check cache first
     if (this.tokenizers.has(cacheKey)) {
@@ -95,7 +99,15 @@ export class TokenizerService {
           tokenizer = new ApiTokenizer(
             config,
             this.logger,
-            { timeout: this.options.timeout }
+            {
+              timeout: this.options.timeout,
+              resolveProxyUrl: () => {
+                const provider = providerName
+                  ? this.getRawProvider(providerName)
+                  : undefined;
+                return resolveProviderProxyUrl(this.configService, provider);
+              },
+            }
           );
           break;
 
@@ -131,11 +143,12 @@ export class TokenizerService {
    */
   async countTokens(
     request: TokenizeRequest,
-    config?: TokenizerConfig
+    config?: TokenizerConfig,
+    providerName?: string
   ): Promise<TokenizerResult> {
     // Get appropriate tokenizer
     const tokenizer = config
-      ? await this.getTokenizer(config)
+      ? await this.getTokenizer(config, providerName)
       : this.fallbackTokenizer!;
 
     // Count tokens
@@ -188,16 +201,24 @@ export class TokenizerService {
   /**
    * Generate cache key from tokenizer config
    */
-  private getCacheKey(config: TokenizerConfig): string {
+  private getCacheKey(
+    config: TokenizerConfig,
+    providerName?: string
+  ): string {
     switch (config.type) {
       case "tiktoken":
         return `tiktoken:${config.encoding || "cl100k_base"}`;
       case "huggingface":
         return `hf:${config.model}`;
       case "api":
-        return `api:${config.url}`;
+        return `api:${providerName || "unscoped"}:${config.url}`;
       default:
         return `unknown:${JSON.stringify(config)}`;
     }
+  }
+
+  private getRawProvider(providerName: string): any | undefined {
+    const providers = this.configService.get<any[]>("providers") || [];
+    return providers.find((provider) => provider?.name === providerName);
   }
 }
