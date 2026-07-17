@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [2.3.234] - 2026-07-17
+
+### Fixed
+
+- **修复全局 ContextWindow 变更不传递到已接管项目（auto-compact 窗口冻结）**: 项目在 v2.3.22（state 机制引入）之前被接管、或经历过 disable→enable 循环导致 `ccr-state.json` 缺失时，`.claude/settings.local.json` 里的 `CLAUDE_CODE_AUTO_COMPACT_WINDOW` 会停留在旧值（如 200000）。旧版守门在「state 缺失且当前值 ≠ 当前全局 ContextWindow」时把该旧值误判为用户手写值并永久保留，导致之后任何全局 `ContextWindow` 变更都不再生效，UI 重开关 takeover 也无法刷新。现在 `applyClaudeAutoCompactSettings` 在 state 缺失时重新将该字段视为 CCR-managed，写入当前全局值并重建 state；被覆盖的旧值记入 `previousAutoCompactWindow` 字段留痕，便于追溯。state 存在时仍保留原 v2.3.22 保证：与记录不符的值视为用户手写值、保持不变。新增 `auto-compact-state` 单元测试覆盖各边界。
+
 ## [2.3.233] - 2026-07-16
 
 ### Fixed
