@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [2.3.233] - 2026-07-16
+
+### Fixed
+
+- **修复「立即更新」点击失败（404）**: UI `ApiClient` 的 `baseUrl` 已是 `/api`，但更新方法 `performUpdate()` 又传入 `/api/update/perform`，实际请求变成 `/api/api/update/perform`，服务端找不到路由而返回 404；现改为 `/update/perform`，与 `checkForUpdates`、`restartService` 等同文件正确写法一致，请求重新落到 `/api/update/perform`。
+- **修复更新弹窗永远显示「暂无更新日志」**: `checkForUpdates` 此前只返回 npm latest 版本号、`changelog` 恒为空字符串。现在当检测到新版本时，优先从已发布 npm 包对应版本的 README changelog 表提取该版本摘要并转为可读文本；README 取不到时再 fallback 到 GitHub `CHANGELOG.md` 的对应版本段，两级来源都失败才回退到原有「暂无更新日志」兜底文案。网络错误不会中断版本检查。
+
+### Docs
+
+- **更新系统约定写入 CLAUDE.md**: 记录 UI `ApiClient` 的 `/api` baseUrl 约定（endpoint 不得重复 `/api`，否则产生 `/api/api/...` 404）、更新检查必须返回非空 changelog 的数据来源与 fallback、发布后端到端验证清单，以及 `packages/cli|core/README.md` 是发布时生成的副本、不应纳入发布提交。
+
 ## [2.3.232] - 2026-07-16
 
 ### Added
