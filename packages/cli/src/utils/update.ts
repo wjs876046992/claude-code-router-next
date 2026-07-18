@@ -1,5 +1,8 @@
+import { copyFileSync, mkdirSync } from "fs";
+import { join } from "path";
 import { exec } from "child_process";
 import { promisify } from "util";
+import { CONFIG_FILE, HOME_DIR } from "@wengine-ai/claude-code-router-shared";
 import { name as packageName } from "../../package.json";
 
 const execPromise = promisify(exec);
@@ -160,6 +163,18 @@ function decodeHtmlEntities(value: string): string {
  */
 export async function performUpdate() {
   try {
+    // Take a durable pre-upgrade backup of config.json before the npm install.
+    // Standard rolling backups can be overwritten by the new version's first save;
+    // this separate non-rotating snapshot survives the upgrade.
+    try {
+      const backupDir = join(HOME_DIR, "pre-upgrade-backups");
+      mkdirSync(backupDir, { recursive: true });
+      const backupName = `config-pre-upgrade-${Date.now()}.json`;
+      copyFileSync(CONFIG_FILE, join(backupDir, backupName));
+    } catch (backupError) {
+      console.warn("Failed to create pre-upgrade config backup:", backupError);
+    }
+
     // Execute npm update command
     const { stdout, stderr } = await execPromise(`npm install -g ${packageName}@latest`);
 

@@ -112,7 +112,17 @@ export const readConfigFile = async () => {
   }
 };
 
+function assertNotTestEnv() {
+  if (process.env.VITEST || process.env.CI) {
+    throw new Error(
+      "Config write attempted during test/CI. " +
+      "Set CCR_CONFIG_DIR to a temp dir to isolate."
+    );
+  }
+}
+
 export const backupConfigFile = async () => {
+  assertNotTestEnv();
   try {
     if (await fs.access(CONFIG_FILE).then(() => true).catch(() => false)) {
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -151,9 +161,55 @@ export const backupConfigFile = async () => {
 };
 
 export const writeConfigFile = async (config: any) => {
+  assertNotTestEnv();
   await ensureDir(HOME_DIR);
+
+  // Before overwriting the live config, take a durable snapshot of the current
+  // file into a non-rotating archive. Unlike the rolling .bak pool (which is
+  // pruned to 3 and can be overwritten by the next save), this archive keeps
+  // every pre-write state so a bad save can always be rolled back. A write
+  // MUST NOT proceed without a backup — if the snapshot fails we refuse to
+  // overwrite rather than risk losing the existing config.
+  await snapshotConfigBeforeWrite();
+
   const configWithComment = `${JSON.stringify(config, null, 2)}`;
   await fs.writeFile(CONFIG_FILE, configWithComment);
+};
+
+/**
+ * Copy the current config.json into ~/.claude-code-router/config-history/ with
+ * a timestamped name before every write. Failures here throw so the caller
+ * cannot overwrite the live config without a recoverable backup existing.
+ */
+export const snapshotConfigBeforeWrite = async () => {
+  const exists = await fs.access(CONFIG_FILE).then(() => true).catch(() => false);
+  if (!exists) {
+    return; // nothing to snapshot on first write
+  }
+
+  const historyDir = path.join(HOME_DIR, "config-history");
+  await ensureDir(historyDir);
+
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const snapshotPath = path.join(historyDir, `config-${timestamp}.json`);
+  await fs.copyFile(CONFIG_FILE, snapshotPath);
+
+  // Keep the history bounded but generous: retain the last 50 snapshots so a
+  // regression that spans many saves is still recoverable.
+  try {
+    const files = await fs.readdir(historyDir);
+    const snapshots = files
+      .filter((f) => f.startsWith("config-") && f.endsWith(".json"))
+      .sort()
+      .reverse();
+    if (snapshots.length > 50) {
+      for (const old of snapshots.slice(50)) {
+        await fs.unlink(path.join(historyDir, old));
+      }
+    }
+  } catch (cleanupError) {
+    console.warn("Failed to prune config-history:", cleanupError);
+  }
 };
 
 export const initConfig = async () => {
