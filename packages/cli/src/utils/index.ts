@@ -175,6 +175,36 @@ export const backupConfigFile = async () => {
 
 export const writeConfigFile = async (config: any) => {
   await ensureDir(HOME_DIR);
+
+  // Before overwriting the live config, snapshot the current file into a
+  // non-rotating archive (config-history/). A write MUST NOT proceed without a
+  // backup — if the snapshot fails we refuse to overwrite rather than risk
+  // losing the existing config. Mirrors packages/core/src/ccr/config.ts.
+  const exists = await fs.access(CONFIG_FILE).then(() => true).catch(() => false);
+  if (exists) {
+    const historyDir = path.join(HOME_DIR, "config-history");
+    await ensureDir(historyDir);
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    await fs.copyFile(CONFIG_FILE, path.join(historyDir, `config-${timestamp}.json`));
+
+    // Retain the last 50 snapshots so a regression spanning many saves is
+    // still recoverable.
+    try {
+      const files = await fs.readdir(historyDir);
+      const snapshots = files
+        .filter((f) => f.startsWith("config-") && f.endsWith(".json"))
+        .sort()
+        .reverse();
+      if (snapshots.length > 50) {
+        for (const old of snapshots.slice(50)) {
+          await fs.unlink(path.join(historyDir, old));
+        }
+      }
+    } catch (cleanupError) {
+      console.warn("Failed to prune config-history:", cleanupError);
+    }
+  }
+
   const configWithComment = `${JSON.stringify(config, null, 2)}`;
   await fs.writeFile(CONFIG_FILE, configWithComment);
 };
@@ -220,6 +250,19 @@ export const run = async (args: string[] = []) => {
 }
 
 export const restartService = async () => {
+  // Take a durable pre-restart backup of the current config before stopping
+  // the old service. The standard 3-backup rolling pool can be overwritten
+  // by the new version's first save, so this separate non-rotating snapshot
+  // stays available for rollback even after the rolling backups are gone.
+  try {
+    const backupDir = path.join(HOME_DIR, "pre-upgrade-backups");
+    mkdirSync(backupDir, { recursive: true });
+    const backupName = `config-pre-restart-${Date.now()}.json`;
+    await fs.copyFile(CONFIG_FILE, path.join(backupDir, backupName));
+  } catch (backupError) {
+    console.warn("Failed to create pre-restart config backup:", backupError);
+  }
+
   // Stop the service if it's running
   try {
     const pid = parseInt(readFileSync(PID_FILE, "utf-8"));

@@ -1,15 +1,26 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import Server from "../server";
 import { registerAdminRoutes } from "../ccr/admin-routes";
 import { sessionUsageCache } from "../utils/cache";
 import { closeProxyDispatchers } from "../services/proxy";
 
+// POST /api/config normally persists to ~/.claude-code-router/config.json.
+// Keep this route test hermetic so accepted payloads can never overwrite a
+// developer's real configuration or rotate its backups.
+vi.mock("../ccr/config", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../ccr/config")>();
+  return {
+    ...actual,
+    backupConfigFile: vi.fn().mockResolvedValue(null),
+    writeConfigFile: vi.fn().mockResolvedValue(undefined),
+  };
+});
+
 // Verifies the POST /api/config proxy-URL validation gate: an invalid proxy
 // URL must yield HTTP 400 *before* any backup/write is attempted, regardless
 // of which compatibility key (PROXY_URL, HTTPS_PROXY, https_proxy, httpsProxy)
-// carries the bad value. We do not mock the filesystem here because the
-// validation short-circuits before disk I/O; the 400 response alone is the
-// contract under test.
+// carries the bad value. Config persistence is mocked because this suite also
+// verifies accepted values, which proceed through the save path.
 async function buildAdminRuntime() {
   const config = {
     PORT: 0,
