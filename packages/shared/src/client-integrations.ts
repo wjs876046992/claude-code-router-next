@@ -273,6 +273,11 @@ export function getContextWindow(config: Record<string, any>): number {
 
 interface ManagedState {
   autoCompactWindow?: string;
+  // The window value CCR replaced when it re-adopted a managed value while the
+  // state was missing. Recorded so a genuine user hand-written value that got
+  // overwritten (e.g. after a disable->enable cycle or a pre-state-migration
+  // install) stays recoverable/auditable. Not used by the apply/remove logic.
+  previousAutoCompactWindow?: string;
 }
 
 /** State file path for a global client takeover (e.g. ~/.claude/settings.json). */
@@ -620,28 +625,41 @@ function applyClaudeAutoCompactSettings(
     delete settings.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE;
   }
 
-  // Auto-compact window: preserve a value the user hand-edited. CCR only writes
-  // (and updates) when the field is absent or still holds the value CCR last
-  // wrote. A divergent value means the user customized it — keep it and leave
-  // the recorded state untouched so the divergence stays detectable next time.
+  // Auto-compact window: preserve a value the user hand-edited. CCR only
+  // overwrites when the field is absent, still holds the value CCR last wrote,
+  // or there is no recorded state for this target.
   //
-  // State can be missing after a disable->enable cycle (disable clears it, and
-  // a stale managed window restored from the backup used to be mistaken for a
-  // user value, so the state was never rebuilt — freezing the window). When the
-  // state is empty but the current value matches what CCR would write for the
-  // current config, treat it as CCR-managed and re-establish the state so the
-  // window stays manageable. A genuinely divergent value with no state is still
-  // treated as a user customization and left untouched.
+  // The no-state case matters: ccr-state.json can be missing after a
+  // disable->enable cycle, or simply because the target was taken over before
+  // the state mechanism existed (pre-2.3.22). In both situations the on-disk
+  // window may hold an old CCR-written value that no longer matches the current
+  // global ContextWindow. Previously such a value was treated as a user
+  // customization and frozen, so global ContextWindow changes never reached the
+  // target again. Now, when there is no recorded state, CCR re-adopts the
+  // window as managed: it writes the current global value and rebuilds the
+  // state. To avoid silently losing a genuine hand-written value in this path,
+  // the displaced old value is recorded into `previousAutoCompactWindow` for
+  // audit/recovery. With a present state, a divergent value is still treated as
+  // a user customization and left untouched (the original v2.3.22 guarantee).
   const managedWindow = String(getContextWindow(config));
   const currentWindow = settings.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
   const lastWrittenWindow = state?.read().autoCompactWindow;
   const isManaged =
     currentWindow === undefined ||
     currentWindow === lastWrittenWindow ||
-    (lastWrittenWindow === undefined && currentWindow === managedWindow);
+    lastWrittenWindow === undefined;
   if (isManaged) {
+    const displaced =
+      lastWrittenWindow === undefined &&
+      currentWindow !== undefined &&
+      currentWindow !== managedWindow
+        ? currentWindow
+        : state?.read().previousAutoCompactWindow;
     settings.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = managedWindow;
-    state?.write({ autoCompactWindow: managedWindow });
+    state?.write({
+      autoCompactWindow: managedWindow,
+      ...(displaced !== undefined ? { previousAutoCompactWindow: displaced } : {}),
+    });
   }
 
   // PCT has a fixed CCR default, so a plain value comparison is enough to tell
