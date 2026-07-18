@@ -171,7 +171,7 @@ class ApiClient {
 
   // Perform update
   async performUpdate(): Promise<{ success: boolean; message: string }> {
-    return this.post<{ success: boolean; message: string }>('/api/update/perform', {});
+    return this.post<{ success: boolean; message: string }>('/update/perform', {});
   }
 
   // Get log files list
