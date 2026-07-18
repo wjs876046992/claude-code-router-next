@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [2.3.235] - 2026-07-18
+
+### Fixed
+
+- **修复 npm 全局安装因已发布 core 包残留 `workspace:*` 而静默失败**: `scripts/release.sh` 此前直接用 `npm publish` 发布 `@wengine-ai/llms`，导致其运行时依赖 `@wengine-ai/claude-code-router-shared` 仍以 pnpm workspace 协议 `workspace:*` 出现在 npm manifest；npm 无法解析该协议，安装 `@wengine-ai/claude-code-router-next` 时会在依赖树解析阶段 exit 1，通常只留下 debug log 而没有明确错误码。现在 npm 发布顺序调整为 shared → core → CLI：先独立发布同版本 `@wengine-ai/claude-code-router-shared`，再为 core 构造临时发布 manifest，将所有 `workspace:` 范围转换为真实 npm version range（如 `workspace:*` → `^2.3.235`），发布后自动恢复源文件；shared/core/CLI 三个发布 manifest 均新增 `workspace:` 拦截校验，CLI 发布 manifest 同时移除仅用于 monorepo 构建的 `devDependencies`，避免再次发布 npm 无法安装的包。
+
 ## [2.3.234] - 2026-07-17
 
 ### Fixed
