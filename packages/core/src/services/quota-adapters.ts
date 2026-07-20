@@ -674,10 +674,16 @@ export function getQuotaAdapter(baseUrl: string): QuotaAdapter | null {
     return zhipuQuotaAdapter;
   }
 
-  // Aliyun Coding Plan quota adapter - matches dashscope.aliyuncs.com or coding.dashscope.aliyuncs.com
+  // Aliyun Coding Plan / Token Plan quota adapter — queries the Bailian console
+  // (queryCodingPlanInstanceInfoV2) with a console cookie. Matches the DashScope
+  // inference host and the newer maas.aliyuncs.com token-plan gateway
+  // (e.g. token-plan.cn-beijing.maas.aliyuncs.com), which serves the same coding
+  // plan subscription over an Anthropic-compatible endpoint.
   if (
     hostname === "dashscope.aliyuncs.com" ||
-    hostname.endsWith(".dashscope.aliyuncs.com")
+    hostname.endsWith(".dashscope.aliyuncs.com") ||
+    hostname === "maas.aliyuncs.com" ||
+    hostname.endsWith(".maas.aliyuncs.com")
   ) {
     return aliyunCodingPlanQuotaAdapter;
   }
