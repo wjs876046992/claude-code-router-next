@@ -81,7 +81,7 @@ describe("parseAliyunTokenPlanUsage", () => {
     });
   });
 
-  it("parses a response wrapped in a data envelope", () => {
+  it("parses a response wrapped in a single data envelope", () => {
     const result = parseAliyunTokenPlanUsage({
       data: {
         used_5h: 100,
@@ -95,6 +95,70 @@ describe("parseAliyunTokenPlanUsage", () => {
       limitDaily: 500,
       usedBalance: 1000,
       totalBalance: 5000,
+    });
+  });
+
+  it("parses a response wrapped in the confirmed BroadScope data.DataV2.data.data envelope", () => {
+    // The sibling coding-plan adapter confirms the gateway wraps real data at
+    // payload.data.DataV2.data.data.<result>. The token-plan usage payload is
+    // served by the same gateway, so the parser must reach that depth.
+    const result = parseAliyunTokenPlanUsage({
+      code: "200",
+      data: {
+        DataV2: {
+          data: {
+            data: {
+              used5h: 10,
+              total5h: 100,
+              used7d: 200,
+              total7d: 2000,
+            },
+          },
+        },
+      },
+    });
+    expect(result).toEqual({
+      usedDailyBalance: 10,
+      limitDaily: 100,
+      usedBalance: 200,
+      totalBalance: 2000,
+    });
+  });
+
+  it("returns null when the gateway reports a login/business error", () => {
+    // Confirmed shape of an unauthenticated token-plan gateway response.
+    const result = parseAliyunTokenPlanUsage({
+      code: "200",
+      data: {
+        success: false,
+        httpStatus: 200,
+        errorCode: "BailianGateway.Login.NotLogined",
+        api: "zeldaHttp.apikeyMgr./tokenplan/personal/api/v2/usage",
+        errorMsg: "BailianGateway.Login.NotLogined",
+      },
+      successResponse: true,
+    });
+    expect(result).toBeNull();
+  });
+
+  it("parses the confirmed coding-plan field names as a fallback", () => {
+    // If the token-plan payload reuses the coding-plan field spelling, the
+    // parser must still recognise it.
+    const result = parseAliyunTokenPlanUsage({
+      data: {
+        data: {
+          per5HourUsedQuota: 30,
+          per5HourTotalQuota: 300,
+          perWeekUsedQuota: 400,
+          perWeekTotalQuota: 4000,
+        },
+      },
+    });
+    expect(result).toEqual({
+      usedDailyBalance: 30,
+      limitDaily: 300,
+      usedBalance: 400,
+      totalBalance: 4000,
     });
   });
 
@@ -149,7 +213,7 @@ describe("parseAliyunTokenPlanUsage", () => {
 });
 
 describe("AliyunTokenPlanQuotaAdapter request behaviour", () => {
-  it("sends Cookie auth and no Authorization Bearer header", async () => {
+  it("POSTs to the gateway with Cookie auth, a params body, and no Bearer header", async () => {
     let capturedInit: RequestInit | undefined;
     let capturedUrl: string | undefined;
 
@@ -157,7 +221,7 @@ describe("AliyunTokenPlanQuotaAdapter request behaviour", () => {
       capturedUrl = url;
       capturedInit = init;
       return new Response(JSON.stringify({
-        data: { used5h: 10, total5h: 100 },
+        data: { DataV2: { data: { data: { used5h: 10, total5h: 100 } } } },
       }), {
         status: 200,
         headers: { "content-type": "application/json" },
@@ -174,18 +238,63 @@ describe("AliyunTokenPlanQuotaAdapter request behaviour", () => {
     expect(result!.usedDailyBalance).toBe(10);
     expect(result!.limitDaily).toBe(100);
 
-    // Verify the request used the exact cs-data.qianwenai.com endpoint.
-    expect(capturedUrl).toBe(
-      "https://cs-data.qianwenai.com/data/api.json?product=sfm_bailian&action=BroadScopeAspnGateway&api=zeldaHttp.apikeyMgr.%2Ftokenplan%2Fpersonal%2Fapi%2Fv2%2Fusage"
-    );
+    // The gateway rejects GET — the adapter must POST.
+    expect(capturedInit!.method).toBe("POST");
 
-    // Verify Cookie header is set from quotaToken.
+    // The URL targets the confirmed token-plan usage endpoint on
+    // cs-data.qianwenai.com, with the token-plan api path.
+    expect(capturedUrl).toContain("https://cs-data.qianwenai.com/data/api.json");
+    expect(capturedUrl).toContain("action=BroadScopeAspnGateway");
+    expect(capturedUrl).toContain("api=zeldaHttp.apikeyMgr.");
+    expect(capturedUrl).toContain("tokenplan");
+
     const headers = capturedInit!.headers as Record<string, string>;
+    // Cookie auth is set from quotaToken (trimmed) and is the ONLY auth.
     expect(headers.Cookie).toBe("dummy_cookie=abc123");
-
-    // Verify no Authorization header is sent.
     expect(headers.Authorization).toBeUndefined();
     expect(headers.authorization).toBeUndefined();
+    // The BroadScope gateway requires the form-encoded params envelope.
+    expect(headers["Content-Type"]).toBe("application/x-www-form-urlencoded");
+    const body = String(capturedInit!.body);
+    expect(body).toContain("params=");
+    expect(body).toContain("region=cn-beijing");
+    expect(body).toContain(encodeURIComponent("zeldaHttp.apikeyMgr./tokenplan/personal/api/v2/usage"));
+  });
+
+  it("sets the proxy dispatcher when a proxyUrl is provided", async () => {
+    let capturedInit: RequestInit & { dispatcher?: unknown } | undefined;
+    const fakeDispatcher = { __fake: true };
+
+    globalThis.fetch = vi.fn(async (_url: any, init: any) => {
+      capturedInit = init;
+      return new Response(JSON.stringify({ data: { used5h: 1 } }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as any;
+
+    const adapter = getQuotaAdapter(
+      "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic/v1/messages"
+    );
+    await adapter!.queryQuota(makeProvider(), 5000, "http://127.0.0.1:7897");
+    // getProxyDispatcher returns an undici ProxyAgent; just assert a dispatcher
+    // was attached (proves the proxy branch ran rather than being skipped).
+    expect(capturedInit?.dispatcher).toBeDefined();
+  });
+
+  it("trims a whitespace-padded cookie before sending", async () => {
+    let capturedInit: RequestInit | undefined;
+    globalThis.fetch = vi.fn(async (_url: any, init: any) => {
+      capturedInit = init;
+      return new Response(JSON.stringify({ data: { used5h: 1 } }), { status: 200 });
+    }) as any;
+
+    const adapter = getQuotaAdapter(
+      "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic/v1/messages"
+    );
+    await adapter!.queryQuota(makeProvider({ quotaToken: "  dummy_cookie=abc123  " }), 5000);
+    const headers = capturedInit!.headers as Record<string, string>;
+    expect(headers.Cookie).toBe("dummy_cookie=abc123");
   });
 
   it("returns null when quotaToken is missing", async () => {

@@ -394,40 +394,56 @@ class AliyunCodingPlanQuotaAdapter extends BaseQuotaAdapter {
  * endpoint into a ProviderQuotaResult.
  *
  * The endpoint is a BroadScope Aspn Gateway call
- * (api=zeldaHttp.apikeyMgr./tokenplan/personal/api/v2/usage) and may wrap the
- * real usage data inside nested `data` / `Data` / `DataV2` envelopes. We drill
- * into the innermost object and only map fields whose names can be
- * unambiguously inferred as quota values — unknown fields are never treated as
- * limits.
+ * (api=zeldaHttp.apikeyMgr./tokenplan/personal/api/v2/usage). Confirmed gateway
+ * responses (see the sibling AliyunCodingPlanQuotaAdapter) wrap the real data
+ * as `payload.data.DataV2.data.data.<result>`, but the exact depth and the
+ * inner field names for the token-plan usage payload are not yet confirmed by
+ * a real authenticated sample. To stay robust against envelope depth, we walk
+ * every nested object candidate and return the first that yields recognised
+ * quota fields. Field-name recognition covers the coding-plan field names
+ * (`per5Hour*` / `perWeek*`) as well as common token-plan spellings, so the
+ * parser keeps working once the real shape is known. Unknown fields are never
+ * treated as limits.
  *
- * Recognised field names (camelCase or snake_case):
- *   5-hour window: used5h / used_5h, total5h / total_5h, remaining5h / remaining_5h
- *   7-day window:  used7d / used_7d, total7d / total_7d, remaining7d / remaining_7d
- *   reset times:   resetTime5h / reset_time_5h, resetTime7d / reset_time_7d
- *
- * Returns null when no recognised quota fields are present. The parser is
- * intentionally conservative so the caller can extend it once the real
- * response shape is confirmed.
+ * NOTE: the 5h/7d field-name set is intentionally permissive but bounded; it
+ * must be tightened to the real names once an authenticated response sample
+ * is captured.
  */
 export function parseAliyunTokenPlanUsage(payload: any): ProviderQuotaResult | null {
   if (!payload || typeof payload !== "object") return null;
 
-  // Drill into common BroadScope gateway envelopes to reach the usage object.
-  const data = unwrapBroadScopeEnvelope(payload);
-  if (!data) return null;
+  // Reject gateway-level errors early (e.g. BailianGateway.Login.NotLogined).
+  // These carry success:false inside `data` and must not be mined for quota.
+  const gatewayError = readGatewayError(payload);
+  if (gatewayError) return null;
+
+  // Try every nested object candidate — envelope depth is not confirmed.
+  for (const candidate of collectObjectCandidates(payload)) {
+    const result = extractTokenPlanQuota(candidate);
+    if (result) return result;
+  }
+  return null;
+}
+
+// Candidate field names per slot. Includes the confirmed coding-plan names
+// (`per5Hour*` / `perWeek*`) plus likely token-plan spellings.
+const FIELD_USED_5H = ["used5h", "used_5h", "usedQuota5h", "used_quota_5h", "per5HourUsedQuota", "fiveHourUsed", "five_hour_used", "used5Hour"];
+const FIELD_TOTAL_5H = ["total5h", "total_5h", "totalQuota5h", "total_quota_5h", "per5HourTotalQuota", "fiveHourTotal", "five_hour_total", "limit5h", "limit_5h", "total5Hour"];
+const FIELD_REMAINING_5H = ["remaining5h", "remaining_5h", "remainingQuota5h", "remaining_quota_5h", "per5HourRemainingQuota", "fiveHourRemaining"];
+const FIELD_USED_7D = ["used7d", "used_7d", "usedQuota7d", "used_quota_7d", "perWeekUsedQuota", "weekUsed", "week_used", "usedWeek", "used_week"];
+const FIELD_TOTAL_7D = ["total7d", "total_7d", "totalQuota7d", "total_quota_7d", "perWeekTotalQuota", "weekTotal", "week_total", "totalWeek", "total_week", "limit7d", "limit_7d"];
+const FIELD_REMAINING_7D = ["remaining7d", "remaining_7d", "remainingQuota7d", "remaining_quota_7d", "perWeekRemainingQuota", "weekRemaining"];
+const FIELD_RESET_5H = ["resetTime5h", "reset_time_5h", "reset5h", "reset_5h", "nextResetTime5h"];
+const FIELD_RESET_7D = ["resetTime7d", "reset_time_7d", "reset7d", "reset_7d", "nextResetTime7d"];
+
+function extractTokenPlanQuota(data: any): ProviderQuotaResult | null {
+  if (!data || typeof data !== "object") return null;
 
   const result: ProviderQuotaResult = {};
 
-  // 5-hour window.
-  const used5h = parseOptionalNumber(
-    data.used5h ?? data.used_5h ?? data.usedQuota5h ?? data.used_quota_5h
-  );
-  const total5h = parseOptionalNumber(
-    data.total5h ?? data.total_5h ?? data.totalQuota5h ?? data.total_quota_5h
-  );
-  const remaining5h = parseOptionalNumber(
-    data.remaining5h ?? data.remaining_5h ?? data.remainingQuota5h ?? data.remaining_quota_5h
-  );
+  const used5h = pickNumber(data, FIELD_USED_5H);
+  const total5h = pickNumber(data, FIELD_TOTAL_5H);
+  const remaining5h = pickNumber(data, FIELD_REMAINING_5H);
 
   if (used5h !== undefined) result.usedDailyBalance = used5h;
   if (total5h !== undefined) result.limitDaily = total5h;
@@ -435,16 +451,9 @@ export function parseAliyunTokenPlanUsage(payload: any): ProviderQuotaResult | n
     result.usedDailyBalance = Math.max(0, total5h - remaining5h);
   }
 
-  // 7-day window.
-  const used7d = parseOptionalNumber(
-    data.used7d ?? data.used_7d ?? data.usedQuota7d ?? data.used_quota_7d
-  );
-  const total7d = parseOptionalNumber(
-    data.total7d ?? data.total_7d ?? data.totalQuota7d ?? data.total_quota_7d
-  );
-  const remaining7d = parseOptionalNumber(
-    data.remaining7d ?? data.remaining_7d ?? data.remainingQuota7d ?? data.remaining_quota_7d
-  );
+  const used7d = pickNumber(data, FIELD_USED_7D);
+  const total7d = pickNumber(data, FIELD_TOTAL_7D);
+  const remaining7d = pickNumber(data, FIELD_REMAINING_7D);
 
   if (used7d !== undefined) result.usedBalance = used7d;
   if (total7d !== undefined) result.totalBalance = total7d;
@@ -453,14 +462,13 @@ export function parseAliyunTokenPlanUsage(payload: any): ProviderQuotaResult | n
     result.usedBalance = Math.max(0, total7d - remaining7d);
   }
 
-  // Reset times — only map when the value parses as a valid date.
-  const reset5h = data.resetTime5h ?? data.reset_time_5h ?? data.resetTime ?? data.reset_time;
+  const reset5h = pickString(data, FIELD_RESET_5H);
   if (reset5h) {
     const iso = tryParseDate(reset5h);
     if (iso) result.resetTime = iso;
   }
 
-  const reset7d = data.resetTime7d ?? data.reset_time_7d;
+  const reset7d = pickString(data, FIELD_RESET_7D);
   if (reset7d) {
     const iso = tryParseDate(reset7d);
     if (iso) {
@@ -469,7 +477,6 @@ export function parseAliyunTokenPlanUsage(payload: any): ProviderQuotaResult | n
     }
   }
 
-  // Return null if no quota fields were recognised.
   if (
     result.usedDailyBalance === undefined &&
     result.limitDaily === undefined &&
@@ -484,28 +491,74 @@ export function parseAliyunTokenPlanUsage(payload: any): ProviderQuotaResult | n
   return result;
 }
 
+function pickNumber(data: any, names: string[]): number | undefined {
+  for (const name of names) {
+    const value = parseOptionalNumber(data?.[name]);
+    if (value !== undefined) return value;
+  }
+  return undefined;
+}
+
+function pickString(data: any, names: string[]): string | undefined {
+  for (const name of names) {
+    const value = data?.[name];
+    if (typeof value === "string" || typeof value === "number") return String(value);
+  }
+  return undefined;
+}
+
 /**
- * Drill into common BroadScope Aspn Gateway response envelopes to reach the
- * innermost data object. Returns null if no usable object is found.
+ * Collect the payload itself plus every nested plain object reachable through
+ * the BroadScope gateway envelope keys (`data`, `Data`, `DataV2`). Each
+ * candidate is tried by the parser, so the confirmed
+ * `data.DataV2.data.data.<result>` depth and shallower wraps are both covered.
  */
-function unwrapBroadScopeEnvelope(payload: any): any | null {
-  let current: any = payload;
-  for (const key of ["data", "Data", "DataV2"]) {
-    if (current && typeof current === "object" && current[key] && typeof current[key] === "object") {
-      current = current[key];
+function collectObjectCandidates(payload: any): any[] {
+  const candidates: any[] = [];
+  const seen = new WeakSet();
+  const ENVELOPE_KEYS = ["data", "Data", "DataV2"];
+
+  const visit = (node: any) => {
+    if (!node || typeof node !== "object") return;
+    if (seen.has(node)) return;
+    seen.add(node);
+    candidates.push(node);
+    for (const key of ENVELOPE_KEYS) {
+      if (node[key] && typeof node[key] === "object") {
+        visit(node[key]);
+      }
+    }
+  };
+
+  visit(payload);
+  return candidates;
+}
+
+function readGatewayError(payload: any): string | null {
+  const data = payload?.data;
+  if (data && typeof data === "object") {
+    if (data.success === false || data.errorCode || data.errorMsg) {
+      return String(data.errorCode || data.errorMsg || "gateway-error");
     }
   }
-  // After unwrapping, if the innermost object still has a nested `data`
-  // property (some gateways double-wrap), drill one more level.
-  if (current && typeof current === "object" && current.data && typeof current.data === "object") {
-    current = current.data;
-  }
-  return current && typeof current === "object" ? current : null;
+  return null;
 }
 
 function tryParseDate(value: unknown): string | undefined {
   if (typeof value !== "string" && typeof value !== "number") return undefined;
-  const date = new Date(value);
+  // Numeric timestamps may be seconds (Aliyun gateways sometimes use s) —
+  // anything below 1e12 is treated as seconds and scaled to ms.
+  let coerced = value;
+  if (typeof value === "number" && value < 1e12) {
+    coerced = value * 1000;
+  }
+  if (typeof value === "string") {
+    const asNum = Number(value.trim());
+    if (Number.isFinite(asNum) && asNum < 1e12) {
+      coerced = asNum * 1000;
+    }
+  }
+  const date = new Date(coerced);
   return isNaN(date.getTime()) ? undefined : date.toISOString();
 }
 
@@ -515,19 +568,48 @@ class AliyunTokenPlanQuotaAdapter extends BaseQuotaAdapter {
     timeoutMs: number,
     proxyUrl?: string
   ): Promise<ProviderQuotaResult | null> {
-    // quotaToken carries the console cookie string for cs-data.qianwenai.com.
-    if (!provider.quotaToken) return null;
+    // quotaToken carries the console cookie string. Trim defensively so an
+    // accidental whitespace/newline in the config cannot corrupt the header.
+    const cookie = provider.quotaToken?.trim();
+    if (!cookie) return null;
+
+    // The token-plan usage endpoint is a BroadScope Aspn Gateway call, the
+    // same gateway pattern as the coding-plan adapter. The gateway expects a
+    // POST with a form-encoded body carrying `params` (JSON envelope with
+    // Api/V/Data) and `region`. GET requests are rejected by the gateway, so
+    // we must build the body explicitly instead of reusing fetchJson (which
+    // would force a Bearer Authorization header).
+    const apiName = "zeldaHttp.apikeyMgr./tokenplan/personal/api/v2/usage";
+    const params = JSON.stringify({
+      Api: apiName,
+      V: "1.0",
+      Data: {
+        cornerstoneParam: {
+          feTraceId: `ccr-${Date.now()}`,
+          feURL: "https://bailian.console.aliyun.com/",
+          protocol: "V2",
+          console: "ONE_CONSOLE",
+          productCode: "p_efm",
+          domain: "bailian.console.aliyun.com",
+          consoleSite: "BAILIAN_ALIYUN",
+          xsp_lang: "zh-CN",
+        },
+      },
+    });
+    const body = new URLSearchParams({ params, region: "cn-beijing" }).toString();
 
     const fetchOptions: RequestInit & { dispatcher?: unknown } = {
-      method: "GET",
+      method: "POST",
       headers: {
         Accept: "application/json",
+        "Content-Type": "application/x-www-form-urlencoded",
         // Cookie-based auth — do NOT send Authorization Bearer.
-        Cookie: provider.quotaToken,
+        Cookie: cookie,
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
-        Origin: "https://cs-data.qianwenai.com",
-        Referer: "https://cs-data.qianwenai.com/",
+        Origin: "https://bailian.console.aliyun.com",
+        Referer: "https://bailian.console.aliyun.com/",
       },
+      body,
       signal: AbortSignal.timeout(timeoutMs),
     };
 
@@ -536,7 +618,7 @@ class AliyunTokenPlanQuotaAdapter extends BaseQuotaAdapter {
         fetchOptions.dispatcher = getProxyDispatcher(proxyUrl);
       }
       const response = await fetch(
-        "https://cs-data.qianwenai.com/data/api.json?product=sfm_bailian&action=BroadScopeAspnGateway&api=zeldaHttp.apikeyMgr.%2Ftokenplan%2Fpersonal%2Fapi%2Fv2%2Fusage",
+        `https://cs-data.qianwenai.com/data/api.json?product=sfm_bailian&action=BroadScopeAspnGateway&api=${encodeURIComponent(apiName)}`,
         fetchOptions
       );
       if (!response.ok) return null;
