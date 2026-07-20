@@ -389,6 +389,166 @@ class AliyunCodingPlanQuotaAdapter extends BaseQuotaAdapter {
   }
 }
 
+/**
+ * Parse the response payload from the cs-data.qianwenai.com tokenplan usage
+ * endpoint into a ProviderQuotaResult.
+ *
+ * The endpoint is a BroadScope Aspn Gateway call
+ * (api=zeldaHttp.apikeyMgr./tokenplan/personal/api/v2/usage) and may wrap the
+ * real usage data inside nested `data` / `Data` / `DataV2` envelopes. We drill
+ * into the innermost object and only map fields whose names can be
+ * unambiguously inferred as quota values — unknown fields are never treated as
+ * limits.
+ *
+ * Recognised field names (camelCase or snake_case):
+ *   5-hour window: used5h / used_5h, total5h / total_5h, remaining5h / remaining_5h
+ *   7-day window:  used7d / used_7d, total7d / total_7d, remaining7d / remaining_7d
+ *   reset times:   resetTime5h / reset_time_5h, resetTime7d / reset_time_7d
+ *
+ * Returns null when no recognised quota fields are present. The parser is
+ * intentionally conservative so the caller can extend it once the real
+ * response shape is confirmed.
+ */
+export function parseAliyunTokenPlanUsage(payload: any): ProviderQuotaResult | null {
+  if (!payload || typeof payload !== "object") return null;
+
+  // Drill into common BroadScope gateway envelopes to reach the usage object.
+  const data = unwrapBroadScopeEnvelope(payload);
+  if (!data) return null;
+
+  const result: ProviderQuotaResult = {};
+
+  // 5-hour window.
+  const used5h = parseOptionalNumber(
+    data.used5h ?? data.used_5h ?? data.usedQuota5h ?? data.used_quota_5h
+  );
+  const total5h = parseOptionalNumber(
+    data.total5h ?? data.total_5h ?? data.totalQuota5h ?? data.total_quota_5h
+  );
+  const remaining5h = parseOptionalNumber(
+    data.remaining5h ?? data.remaining_5h ?? data.remainingQuota5h ?? data.remaining_quota_5h
+  );
+
+  if (used5h !== undefined) result.usedDailyBalance = used5h;
+  if (total5h !== undefined) result.limitDaily = total5h;
+  if (used5h === undefined && total5h !== undefined && remaining5h !== undefined) {
+    result.usedDailyBalance = Math.max(0, total5h - remaining5h);
+  }
+
+  // 7-day window.
+  const used7d = parseOptionalNumber(
+    data.used7d ?? data.used_7d ?? data.usedQuota7d ?? data.used_quota_7d
+  );
+  const total7d = parseOptionalNumber(
+    data.total7d ?? data.total_7d ?? data.totalQuota7d ?? data.total_quota_7d
+  );
+  const remaining7d = parseOptionalNumber(
+    data.remaining7d ?? data.remaining_7d ?? data.remainingQuota7d ?? data.remaining_quota_7d
+  );
+
+  if (used7d !== undefined) result.usedBalance = used7d;
+  if (total7d !== undefined) result.totalBalance = total7d;
+  if (remaining7d !== undefined) result.remainingBalance = remaining7d;
+  if (used7d === undefined && total7d !== undefined && remaining7d !== undefined) {
+    result.usedBalance = Math.max(0, total7d - remaining7d);
+  }
+
+  // Reset times — only map when the value parses as a valid date.
+  const reset5h = data.resetTime5h ?? data.reset_time_5h ?? data.resetTime ?? data.reset_time;
+  if (reset5h) {
+    const iso = tryParseDate(reset5h);
+    if (iso) result.resetTime = iso;
+  }
+
+  const reset7d = data.resetTime7d ?? data.reset_time_7d;
+  if (reset7d) {
+    const iso = tryParseDate(reset7d);
+    if (iso) {
+      result.resetTime7d = iso;
+      if (!result.resetTime) result.resetTime = iso;
+    }
+  }
+
+  // Return null if no quota fields were recognised.
+  if (
+    result.usedDailyBalance === undefined &&
+    result.limitDaily === undefined &&
+    result.usedBalance === undefined &&
+    result.totalBalance === undefined &&
+    result.remainingBalance === undefined &&
+    result.resetTime === undefined
+  ) {
+    return null;
+  }
+
+  return result;
+}
+
+/**
+ * Drill into common BroadScope Aspn Gateway response envelopes to reach the
+ * innermost data object. Returns null if no usable object is found.
+ */
+function unwrapBroadScopeEnvelope(payload: any): any | null {
+  let current: any = payload;
+  for (const key of ["data", "Data", "DataV2"]) {
+    if (current && typeof current === "object" && current[key] && typeof current[key] === "object") {
+      current = current[key];
+    }
+  }
+  // After unwrapping, if the innermost object still has a nested `data`
+  // property (some gateways double-wrap), drill one more level.
+  if (current && typeof current === "object" && current.data && typeof current.data === "object") {
+    current = current.data;
+  }
+  return current && typeof current === "object" ? current : null;
+}
+
+function tryParseDate(value: unknown): string | undefined {
+  if (typeof value !== "string" && typeof value !== "number") return undefined;
+  const date = new Date(value);
+  return isNaN(date.getTime()) ? undefined : date.toISOString();
+}
+
+class AliyunTokenPlanQuotaAdapter extends BaseQuotaAdapter {
+  async queryQuota(
+    provider: LLMProvider,
+    timeoutMs: number,
+    proxyUrl?: string
+  ): Promise<ProviderQuotaResult | null> {
+    // quotaToken carries the console cookie string for cs-data.qianwenai.com.
+    if (!provider.quotaToken) return null;
+
+    const fetchOptions: RequestInit & { dispatcher?: unknown } = {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+        // Cookie-based auth — do NOT send Authorization Bearer.
+        Cookie: provider.quotaToken,
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
+        Origin: "https://cs-data.qianwenai.com",
+        Referer: "https://cs-data.qianwenai.com/",
+      },
+      signal: AbortSignal.timeout(timeoutMs),
+    };
+
+    try {
+      if (proxyUrl) {
+        fetchOptions.dispatcher = getProxyDispatcher(proxyUrl);
+      }
+      const response = await fetch(
+        "https://cs-data.qianwenai.com/data/api.json?product=sfm_bailian&action=BroadScopeAspnGateway&api=zeldaHttp.apikeyMgr.%2Ftokenplan%2Fpersonal%2Fapi%2Fv2%2Fusage",
+        fetchOptions
+      );
+      if (!response.ok) return null;
+
+      const payload = await response.json();
+      return parseAliyunTokenPlanUsage(payload);
+    } catch {
+      return null;
+    }
+  }
+}
+
 class XfyunCodingPlanQuotaAdapter extends BaseQuotaAdapter {
   async queryQuota(
     provider: LLMProvider,
@@ -624,6 +784,7 @@ const openRouterQuotaAdapter = new OpenRouterQuotaAdapter();
 const siliconFlowQuotaAdapter = new SiliconFlowQuotaAdapter();
 const zhipuQuotaAdapter = new ZhipuQuotaAdapter();
 const aliyunCodingPlanQuotaAdapter = new AliyunCodingPlanQuotaAdapter();
+const aliyunTokenPlanQuotaAdapter = new AliyunTokenPlanQuotaAdapter();
 const xfyunCodingPlanQuotaAdapter = new XfyunCodingPlanQuotaAdapter();
 const kimiCodingPlanQuotaAdapter = new KimiCodingPlanQuotaAdapter();
 const miniMaxCodingPlanQuotaAdapter = new MiniMaxCodingPlanQuotaAdapter();
@@ -674,18 +835,26 @@ export function getQuotaAdapter(baseUrl: string): QuotaAdapter | null {
     return zhipuQuotaAdapter;
   }
 
-  // Aliyun Coding Plan / Token Plan quota adapter — queries the Bailian console
-  // (queryCodingPlanInstanceInfoV2) with a console cookie. Matches the DashScope
-  // inference host and the newer maas.aliyuncs.com token-plan gateway
-  // (e.g. token-plan.cn-beijing.maas.aliyuncs.com), which serves the same coding
-  // plan subscription over an Anthropic-compatible endpoint.
+  // Aliyun Coding Plan quota adapter — queries the Bailian console
+  // (queryCodingPlanInstanceInfoV2) with a console cookie. Matches the
+  // DashScope inference host (dashscope.aliyuncs.com).
   if (
     hostname === "dashscope.aliyuncs.com" ||
-    hostname.endsWith(".dashscope.aliyuncs.com") ||
+    hostname.endsWith(".dashscope.aliyuncs.com")
+  ) {
+    return aliyunCodingPlanQuotaAdapter;
+  }
+
+  // Aliyun Token Plan quota adapter — dedicated adapter for the
+  // maas.aliyuncs.com token-plan gateway (e.g.
+  // token-plan.cn-beijing.maas.aliyuncs.com). Queries the
+  // cs-data.qianwenai.com tokenplan usage endpoint with a console cookie,
+  // separate from the DashScope coding-plan adapter.
+  if (
     hostname === "maas.aliyuncs.com" ||
     hostname.endsWith(".maas.aliyuncs.com")
   ) {
-    return aliyunCodingPlanQuotaAdapter;
+    return aliyunTokenPlanQuotaAdapter;
   }
 
   // iFlytek Coding Plan quota adapter - model API hosts use xf-yun.com,
