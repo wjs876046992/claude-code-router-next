@@ -393,31 +393,29 @@ class AliyunCodingPlanQuotaAdapter extends BaseQuotaAdapter {
  * Parse the response payload from the cs-data.qianwenai.com tokenplan usage
  * endpoint into a ProviderQuotaResult.
  *
- * The endpoint is a BroadScope Aspn Gateway call
- * (api=zeldaHttp.apikeyMgr./tokenplan/personal/api/v2/usage). Confirmed gateway
- * responses (see the sibling AliyunCodingPlanQuotaAdapter) wrap the real data
- * as `payload.data.DataV2.data.data.<result>`, but the exact depth and the
- * inner field names for the token-plan usage payload are not yet confirmed by
- * a real authenticated sample. To stay robust against envelope depth, we walk
- * every nested object candidate and return the first that yields recognised
- * quota fields. Field-name recognition covers the coding-plan field names
- * (`per5Hour*` / `perWeek*`) as well as common token-plan spellings, so the
- * parser keeps working once the real shape is known. Unknown fields are never
- * treated as limits.
+ * Confirmed response shape (authenticated sample):
+ *   payload.data.DataV2.data.data = {
+ *     per5HourPercentage: 0.0663,        // fraction in [0,1] used this 5h window
+ *     per1WeekPercentage: 0.3743,       // fraction in [0,1] used this 7d window
+ *     per5HourResetTime:  1784546640000, // ms epoch, 5h window reset
+ *     per1WeekResetTime:  1785058140000  // ms epoch, 7d window reset
+ *   }
  *
- * NOTE: the 5h/7d field-name set is intentionally permissive but bounded; it
- * must be tightened to the real names once an authenticated response sample
- * is captured.
+ * The endpoint returns USAGE FRACTIONS, not absolute token counts. We map each
+ * fraction to a percentage display: used = fraction*100, limit = 100, which the
+ * UI renders as "6.6%" (matching the Zhipu TOKENS_LIMIT percentage path). The
+ * gateway error envelope (success:false / errorCode) is rejected up front so
+ * an unauthenticated NotLogined response is never mined for quota.
  */
 export function parseAliyunTokenPlanUsage(payload: any): ProviderQuotaResult | null {
   if (!payload || typeof payload !== "object") return null;
 
   // Reject gateway-level errors early (e.g. BailianGateway.Login.NotLogined).
-  // These carry success:false inside `data` and must not be mined for quota.
   const gatewayError = readGatewayError(payload);
   if (gatewayError) return null;
 
-  // Try every nested object candidate — envelope depth is not confirmed.
+  // The usage object lives at payload.data.DataV2.data.data. Walk every nested
+  // object candidate so shallower wraps are still tolerated.
   for (const candidate of collectObjectCandidates(payload)) {
     const result = extractTokenPlanQuota(candidate);
     if (result) return result;
@@ -425,51 +423,43 @@ export function parseAliyunTokenPlanUsage(payload: any): ProviderQuotaResult | n
   return null;
 }
 
-// Candidate field names per slot. Includes the confirmed coding-plan names
-// (`per5Hour*` / `perWeek*`) plus likely token-plan spellings.
-const FIELD_USED_5H = ["used5h", "used_5h", "usedQuota5h", "used_quota_5h", "per5HourUsedQuota", "fiveHourUsed", "five_hour_used", "used5Hour"];
-const FIELD_TOTAL_5H = ["total5h", "total_5h", "totalQuota5h", "total_quota_5h", "per5HourTotalQuota", "fiveHourTotal", "five_hour_total", "limit5h", "limit_5h", "total5Hour"];
-const FIELD_REMAINING_5H = ["remaining5h", "remaining_5h", "remainingQuota5h", "remaining_quota_5h", "per5HourRemainingQuota", "fiveHourRemaining"];
-const FIELD_USED_7D = ["used7d", "used_7d", "usedQuota7d", "used_quota_7d", "perWeekUsedQuota", "weekUsed", "week_used", "usedWeek", "used_week"];
-const FIELD_TOTAL_7D = ["total7d", "total_7d", "totalQuota7d", "total_quota_7d", "perWeekTotalQuota", "weekTotal", "week_total", "totalWeek", "total_week", "limit7d", "limit_7d"];
-const FIELD_REMAINING_7D = ["remaining7d", "remaining_7d", "remainingQuota7d", "remaining_quota_7d", "perWeekRemainingQuota", "weekRemaining"];
-const FIELD_RESET_5H = ["resetTime5h", "reset_time_5h", "reset5h", "reset_5h", "nextResetTime5h"];
-const FIELD_RESET_7D = ["resetTime7d", "reset_time_7d", "reset7d", "reset_7d", "nextResetTime7d"];
+// Confirmed token-plan field names. The percentage fields are fractions in
+// [0,1]; the reset fields are ms-epoch timestamps.
+const FIELD_5H_PERCENTAGE = ["per5HourPercentage", "per5HourUsedPercentage", "fiveHourPercentage"];
+const FIELD_7D_PERCENTAGE = ["per1WeekPercentage", "perWeekPercentage", "per1WeekUsedPercentage"];
+const FIELD_5H_RESET = ["per5HourResetTime", "per5HourNextResetTime", "fiveHourResetTime"];
+const FIELD_7D_RESET = ["per1WeekResetTime", "per1WeekNextResetTime", "perWeekResetTime"];
 
 function extractTokenPlanQuota(data: any): ProviderQuotaResult | null {
   if (!data || typeof data !== "object") return null;
 
   const result: ProviderQuotaResult = {};
 
-  const used5h = pickNumber(data, FIELD_USED_5H);
-  const total5h = pickNumber(data, FIELD_TOTAL_5H);
-  const remaining5h = pickNumber(data, FIELD_REMAINING_5H);
-
-  if (used5h !== undefined) result.usedDailyBalance = used5h;
-  if (total5h !== undefined) result.limitDaily = total5h;
-  if (used5h === undefined && total5h !== undefined && remaining5h !== undefined) {
-    result.usedDailyBalance = Math.max(0, total5h - remaining5h);
+  // 5-hour window: fraction -> percentage display (used = pct, limit = 100).
+  const pct5h = pickNumber(data, FIELD_5H_PERCENTAGE);
+  if (pct5h !== undefined) {
+    const pct = fractionToPercent(pct5h);
+    result.usedDailyBalance = pct;
+    result.limitDaily = 100;
   }
 
-  const used7d = pickNumber(data, FIELD_USED_7D);
-  const total7d = pickNumber(data, FIELD_TOTAL_7D);
-  const remaining7d = pickNumber(data, FIELD_REMAINING_7D);
-
-  if (used7d !== undefined) result.usedBalance = used7d;
-  if (total7d !== undefined) result.totalBalance = total7d;
-  if (remaining7d !== undefined) result.remainingBalance = remaining7d;
-  if (used7d === undefined && total7d !== undefined && remaining7d !== undefined) {
-    result.usedBalance = Math.max(0, total7d - remaining7d);
+  // 7-day window: fraction -> percentage display (stored in the 7d/balance
+  // slots: usedBalance/totalBalance, no currency so UI treats it as rateLimit).
+  const pct7d = pickNumber(data, FIELD_7D_PERCENTAGE);
+  if (pct7d !== undefined) {
+    const pct = fractionToPercent(pct7d);
+    result.usedBalance = pct;
+    result.totalBalance = 100;
   }
 
-  const reset5h = pickString(data, FIELD_RESET_5H);
-  if (reset5h) {
+  const reset5h = pickNumber(data, FIELD_5H_RESET);
+  if (reset5h !== undefined) {
     const iso = tryParseDate(reset5h);
     if (iso) result.resetTime = iso;
   }
 
-  const reset7d = pickString(data, FIELD_RESET_7D);
-  if (reset7d) {
+  const reset7d = pickNumber(data, FIELD_7D_RESET);
+  if (reset7d !== undefined) {
     const iso = tryParseDate(reset7d);
     if (iso) {
       result.resetTime7d = iso;
@@ -482,7 +472,6 @@ function extractTokenPlanQuota(data: any): ProviderQuotaResult | null {
     result.limitDaily === undefined &&
     result.usedBalance === undefined &&
     result.totalBalance === undefined &&
-    result.remainingBalance === undefined &&
     result.resetTime === undefined
   ) {
     return null;
@@ -491,18 +480,20 @@ function extractTokenPlanQuota(data: any): ProviderQuotaResult | null {
   return result;
 }
 
+/**
+ * Convert a usage fraction in [0,1] to a percentage value in [0,100].
+ * Accepts values >1 (e.g. 1.5 meaning 150% over) and clamps negatives to 0.
+ */
+function fractionToPercent(fraction: number): number {
+  if (!Number.isFinite(fraction)) return 0;
+  if (fraction <= 0) return 0;
+  return Math.round(fraction * 10000) / 100; // 2dp, e.g. 0.0663618 -> 6.64
+}
+
 function pickNumber(data: any, names: string[]): number | undefined {
   for (const name of names) {
     const value = parseOptionalNumber(data?.[name]);
     if (value !== undefined) return value;
-  }
-  return undefined;
-}
-
-function pickString(data: any, names: string[]): string | undefined {
-  for (const name of names) {
-    const value = data?.[name];
-    if (typeof value === "string" || typeof value === "number") return String(value);
   }
   return undefined;
 }

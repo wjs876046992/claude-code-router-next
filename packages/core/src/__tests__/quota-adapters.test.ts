@@ -63,65 +63,83 @@ describe("getQuotaAdapter hostname dispatch", () => {
 });
 
 describe("parseAliyunTokenPlanUsage", () => {
-  it("parses a flat response with camelCase fields", () => {
-    const result = parseAliyunTokenPlanUsage({
-      used5h: 1200,
-      total5h: 5000,
-      remaining5h: 3800,
-      used7d: 8000,
-      total7d: 50000,
-      remaining7d: 42000,
-    });
-    expect(result).toEqual({
-      usedDailyBalance: 1200,
-      limitDaily: 5000,
-      usedBalance: 8000,
-      totalBalance: 50000,
-      remainingBalance: 42000,
-    });
-  });
-
-  it("parses a response wrapped in a single data envelope", () => {
-    const result = parseAliyunTokenPlanUsage({
-      data: {
-        used_5h: 100,
-        total_5h: 500,
-        used_7d: 1000,
-        total_7d: 5000,
-      },
-    });
-    expect(result).toEqual({
-      usedDailyBalance: 100,
-      limitDaily: 500,
-      usedBalance: 1000,
-      totalBalance: 5000,
-    });
-  });
-
-  it("parses a response wrapped in the confirmed BroadScope data.DataV2.data.data envelope", () => {
-    // The sibling coding-plan adapter confirms the gateway wraps real data at
-    // payload.data.DataV2.data.data.<result>. The token-plan usage payload is
-    // served by the same gateway, so the parser must reach that depth.
+  it("parses the confirmed authenticated token-plan response", () => {
+    // Real sample from cs-data.qianwenai.com tokenplan usage endpoint.
     const result = parseAliyunTokenPlanUsage({
       code: "200",
       data: {
         DataV2: {
+          ret: ["SUCCESS::接口调用成功"],
           data: {
+            msg: "Success.",
+            code: "SUCCESS",
             data: {
-              used5h: 10,
-              total5h: 100,
-              used7d: 200,
-              total7d: 2000,
+              per5HourPercentage: 0.06636184285714286,
+              per1WeekResetTime: 1785058140000,
+              per5HourResetTime: 1784546640000,
+              per1WeekPercentage: 0.3743061456,
             },
+            requestId: "b4a46a31",
+            success: true,
           },
         },
+        success: true,
+        httpStatus: 200,
+        errorCode: "",
+        api: "zeldaHttp.apikeyMgr./tokenplan/personal/api/v2/usage",
+        errorMsg: "",
       },
+      httpStatusCode: "200",
+      requestId: "b4a46a31",
+      successResponse: true,
+    });
+    // 5h: 0.0663 -> 6.64%, limit 100
+    expect(result).not.toBeNull();
+    expect(result!.usedDailyBalance).toBeCloseTo(6.64, 2);
+    expect(result!.limitDaily).toBe(100);
+    // 7d: 0.3743 -> 37.43%, total 100
+    expect(result!.usedBalance).toBeCloseTo(37.43, 2);
+    expect(result!.totalBalance).toBe(100);
+    // Reset times are ms-epoch -> ISO strings.
+    expect(result!.resetTime).toBe(new Date(1784546640000).toISOString());
+    expect(result!.resetTime7d).toBe(new Date(1785058140000).toISOString());
+  });
+
+  it("parses a flat (un-enveloped) percentage payload", () => {
+    const result = parseAliyunTokenPlanUsage({
+      per5HourPercentage: 0.5,
+      per1WeekPercentage: 0.25,
+    });
+    expect(result).toEqual({
+      usedDailyBalance: 50,
+      limitDaily: 100,
+      usedBalance: 25,
+      totalBalance: 100,
+    });
+  });
+
+  it("parses only the 5h window when 7d is absent", () => {
+    const result = parseAliyunTokenPlanUsage({
+      per5HourPercentage: 0.1,
+      per5HourResetTime: 1784546640000,
     });
     expect(result).toEqual({
       usedDailyBalance: 10,
       limitDaily: 100,
-      usedBalance: 200,
-      totalBalance: 2000,
+      resetTime: new Date(1784546640000).toISOString(),
+    });
+  });
+
+  it("parses only the 7d window when 5h is absent", () => {
+    const result = parseAliyunTokenPlanUsage({
+      per1WeekPercentage: 0.8,
+      per1WeekResetTime: 1785058140000,
+    });
+    expect(result).toEqual({
+      usedBalance: 80,
+      totalBalance: 100,
+      resetTime7d: new Date(1785058140000).toISOString(),
+      resetTime: new Date(1785058140000).toISOString(),
     });
   });
 
@@ -141,58 +159,6 @@ describe("parseAliyunTokenPlanUsage", () => {
     expect(result).toBeNull();
   });
 
-  it("parses the confirmed coding-plan field names as a fallback", () => {
-    // If the token-plan payload reuses the coding-plan field spelling, the
-    // parser must still recognise it.
-    const result = parseAliyunTokenPlanUsage({
-      data: {
-        data: {
-          per5HourUsedQuota: 30,
-          per5HourTotalQuota: 300,
-          perWeekUsedQuota: 400,
-          perWeekTotalQuota: 4000,
-        },
-      },
-    });
-    expect(result).toEqual({
-      usedDailyBalance: 30,
-      limitDaily: 300,
-      usedBalance: 400,
-      totalBalance: 4000,
-    });
-  });
-
-  it("derives used from total and remaining when used is missing", () => {
-    const result = parseAliyunTokenPlanUsage({
-      total5h: 5000,
-      remaining5h: 3800,
-      total7d: 50000,
-      remaining7d: 42000,
-    });
-    expect(result).toEqual({
-      usedDailyBalance: 1200,
-      limitDaily: 5000,
-      usedBalance: 8000,
-      totalBalance: 50000,
-      remainingBalance: 42000,
-    });
-  });
-
-  it("parses reset times", () => {
-    const result = parseAliyunTokenPlanUsage({
-      used5h: 100,
-      total5h: 500,
-      resetTime5h: "2026-07-20T10:00:00Z",
-      resetTime7d: "2026-07-23T10:00:00Z",
-    });
-    expect(result).toEqual({
-      usedDailyBalance: 100,
-      limitDaily: 500,
-      resetTime: "2026-07-20T10:00:00.000Z",
-      resetTime7d: "2026-07-23T10:00:00.000Z",
-    });
-  });
-
   it("returns null when no recognised quota fields are present", () => {
     expect(parseAliyunTokenPlanUsage({ foo: "bar", baz: 42 })).toBeNull();
   });
@@ -210,6 +176,30 @@ describe("parseAliyunTokenPlanUsage", () => {
     });
     expect(result).toBeNull();
   });
+
+  it("clamps a negative percentage to 0", () => {
+    const result = parseAliyunTokenPlanUsage({
+      per5HourPercentage: -0.2,
+      per1WeekPercentage: -0.5,
+    });
+    expect(result).toEqual({
+      usedDailyBalance: 0,
+      limitDaily: 100,
+      usedBalance: 0,
+      totalBalance: 100,
+    });
+  });
+
+  it("ignores a NaN percentage (treated as missing)", () => {
+    // NaN is not finite, so parseOptionalNumber returns undefined and the slot
+    // is treated as absent rather than zero — matching how the other adapters
+    // handle non-numeric quota values.
+    const result = parseAliyunTokenPlanUsage({
+      per5HourPercentage: NaN,
+      per1WeekPercentage: NaN,
+    });
+    expect(result).toBeNull();
+  });
 });
 
 describe("AliyunTokenPlanQuotaAdapter request behaviour", () => {
@@ -221,7 +211,7 @@ describe("AliyunTokenPlanQuotaAdapter request behaviour", () => {
       capturedUrl = url;
       capturedInit = init;
       return new Response(JSON.stringify({
-        data: { DataV2: { data: { data: { used5h: 10, total5h: 100 } } } },
+        data: { DataV2: { data: { data: { per5HourPercentage: 0.1, per1WeekPercentage: 0.2 } } } },
       }), {
         status: 200,
         headers: { "content-type": "application/json" },
@@ -237,6 +227,8 @@ describe("AliyunTokenPlanQuotaAdapter request behaviour", () => {
     expect(result).not.toBeNull();
     expect(result!.usedDailyBalance).toBe(10);
     expect(result!.limitDaily).toBe(100);
+    expect(result!.usedBalance).toBe(20);
+    expect(result!.totalBalance).toBe(100);
 
     // The gateway rejects GET — the adapter must POST.
     expect(capturedInit!.method).toBe("POST");
@@ -263,11 +255,11 @@ describe("AliyunTokenPlanQuotaAdapter request behaviour", () => {
 
   it("sets the proxy dispatcher when a proxyUrl is provided", async () => {
     let capturedInit: RequestInit & { dispatcher?: unknown } | undefined;
-    const fakeDispatcher = { __fake: true };
 
     globalThis.fetch = vi.fn(async (_url: any, init: any) => {
       capturedInit = init;
-      return new Response(JSON.stringify({ data: { used5h: 1 } }), {
+      const payload = { data: { DataV2: { data: { data: { per5HourPercentage: 0.05 } } } } };
+      return new Response(JSON.stringify(payload), {
         status: 200,
         headers: { "content-type": "application/json" },
       });
@@ -286,7 +278,8 @@ describe("AliyunTokenPlanQuotaAdapter request behaviour", () => {
     let capturedInit: RequestInit | undefined;
     globalThis.fetch = vi.fn(async (_url: any, init: any) => {
       capturedInit = init;
-      return new Response(JSON.stringify({ data: { used5h: 1 } }), { status: 200 });
+      const payload = { data: { DataV2: { data: { data: { per5HourPercentage: 0.05 } } } } };
+      return new Response(JSON.stringify(payload), { status: 200 });
     }) as any;
 
     const adapter = getQuotaAdapter(
