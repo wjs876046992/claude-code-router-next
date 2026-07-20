@@ -8,10 +8,6 @@ export const CLIENT_IDS = ["claudeCode", "codex", "pi", "qwenCode", "opencode"] 
 export type ClientId = (typeof CLIENT_IDS)[number];
 export type ClientAction = "enable" | "disable" | "restore";
 
-export interface ClientRoutingConfig {
-  extendedContextRatio?: number;
-}
-
 export interface ClientConfig {
   enabled?: boolean;
   managed?: boolean;
@@ -20,7 +16,6 @@ export interface ClientConfig {
   activeAccountId?: string;
   autoSwitchAccounts?: boolean;
   autoRefreshTokens?: boolean;
-  routing?: ClientRoutingConfig;
   quota?: {
     limit5h?: number;
     limit7d?: number;
@@ -109,8 +104,7 @@ export interface CodexTokenRefreshResult {
   error?: string;
 }
 
-interface ResolvedClientConfig extends Omit<Required<ClientConfig>, "routing"> {
-  routing?: ClientRoutingConfig;
+interface ResolvedClientConfig extends Required<ClientConfig> {
 }
 
 interface ClientDefinition {

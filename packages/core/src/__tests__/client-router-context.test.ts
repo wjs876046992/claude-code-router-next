@@ -160,10 +160,11 @@ describe("adapter-driven router context", () => {
   });
 });
 
-describe("pi longContext uses absolute threshold (not contextWindow ratio)", () => {
-  // Pi adapter sets extendedContextThreshold from contextWindow * extendedContextRatio
-  // but must NOT set longContextThreshold — it inherits the absolute chain:
-  // familyConfig.longContextThreshold -> Router.longContextThreshold -> 60000.
+describe("pi uses absolute context thresholds like every other client", () => {
+  // pi no longer derives extendedContextThreshold from contextWindow * ratio.
+  // It inherits the absolute chain: familyConfig.extendedContextThreshold ->
+  // Router.extendedContextThreshold -> 200000, and longContextThreshold inherits
+  // familyConfig -> Router -> 60000.
 
   function piRouteConfig(overrides: Record<string, any> = {}): ConfigService {
     return new ConfigService({
@@ -174,9 +175,9 @@ describe("pi longContext uses absolute threshold (not contextWindow ratio)", () 
           enabled: true,
           models: ["default", "long", "extended"],
         }],
-        // Explicit ContextWindow so the pi adapter's extendedContextThreshold
-        // = floor(200000 * 0.8) = 160000 is deterministic. Point configPath at
-        // a non-existent dir so getPiContextWindow falls back to this value.
+        // pi inherits the default extendedContextThreshold (200000) from the
+        // router; ContextWindow is kept only for reference. configPath points
+        // at a non-existent dir since pi no longer reads models.json.
         ContextWindow: 200000,
         Clients: {
           pi: {
@@ -227,10 +228,9 @@ describe("pi longContext uses absolute threshold (not contextWindow ratio)", () 
 
   it("does NOT hit longContext when token > contextWindow*30% but under absolute threshold", async () => {
     // With a high absolute longContextThreshold (e.g. 200000), a token count
-    // of 100000 exceeds 30% of a 200k contextWindow (60000) but is still
-    // under the absolute 200000 threshold — so long must NOT fire.
-    // Also, 100000 is under the extended threshold (200000 * 0.8 = 160000),
-    // so extended should not fire either. The request falls through to default.
+    // of 100000 is under it — so long must NOT fire. 100000 is also under the
+    // extended threshold (default 200000), so extended should not fire either.
+    // The request falls through to default.
     const req = piRequest(100000);
     const config = piRouteConfig({ longContextThreshold: 200000 });
     await router(req, undefined, { configService: config });
@@ -239,21 +239,19 @@ describe("pi longContext uses absolute threshold (not contextWindow ratio)", () 
     expect(req.body.model).toBe("provider,default");
   });
 
-  it("hits extendedContext when token > contextWindow * extendedContextRatio", async () => {
-    // Pi adapter sets extendedContextThreshold = contextWindow * 0.8.
-    // With default ContextWindow=200000 (from global config fallback when no
-    // models.json is present), extended threshold = 160000.
-    // token=160001 > 160000 -> extended.
-    const req = piRequest(160001);
+  it("hits extendedContext when token > global extendedContextThreshold (200000)", async () => {
+    // pi inherits the default extendedContextThreshold of 200000.
+    // token=200001 > 200000 -> extended.
+    const req = piRequest(200001);
     await router(req, undefined, { configService: piRouteConfig() });
     expect(req.scenarioType).toBe("extendedContext");
     expect(req.body.model).toBe("provider,extended");
   });
 
   it("extended takes priority over long when both thresholds are exceeded", async () => {
-    // token=500000 exceeds both longContextThreshold (60000) and
-    // extendedContextThreshold (contextWindow * 0.8 = 160000).
-    // Extended must win because it is checked first in resolveFamilyModel.
+    // token=500000 exceeds both longContextThreshold (60000) and the
+    // extendedContextThreshold (default 200000). Extended must win because
+    // it is checked first in resolveFamilyModel.
     const req = piRequest(500000);
     await router(req, undefined, { configService: piRouteConfig() });
     expect(req.scenarioType).toBe("extendedContext");
@@ -304,11 +302,10 @@ describe("pi longContext uses absolute threshold (not contextWindow ratio)", () 
 
 describe("pi ignores stale [1m] suffix from legacy takeover", () => {
   // Regression guard: an already-managed pi install may still carry the legacy
-  // `ccr-opus[1m]` alias in models.json/settings.json from before the takeover
-  // stopped emitting [1m]. The pi adapter declares supportsExplicitExtendedContext
-  // = false, so the router must NOT let the stray suffix force extendedContext on
-  // a small request — it must route to default until the token count genuinely
-  // crosses the contextWindow-derived extended threshold.
+  // `ccr-opus[1m]` alias. The pi adapter declares supportsExplicitExtendedContext
+  // = false, so the router must NOT let the stray suffix force extendedContext
+  // on a small request — it must route to default until the token count
+  // genuinely crosses the absolute extended threshold (default 200000).
 
   function piRouteConfig(): ConfigService {
     return new ConfigService({
@@ -323,6 +320,8 @@ describe("pi ignores stale [1m] suffix from legacy takeover", () => {
         Clients: {
           pi: {
             configPath: "/nonexistent/pi-test-path",
+            // Stale ratio config: must be ignored now that pi inherits the
+            // absolute extendedContextThreshold. Kept to guard the regression.
             routing: { extendedContextRatio: 0.8 },
           },
         },
@@ -363,8 +362,8 @@ describe("pi ignores stale [1m] suffix from legacy takeover", () => {
   });
 
   it("still allows extendedContext for pi via token threshold despite no [1m]", async () => {
-    // extendedContextThreshold = 400000 * 0.8 = 320000. A request above that
-    // must route to extended even though pi carries no explicit suffix.
+    // extendedContextThreshold inherits the default 200000. A request above
+    // that must route to extended even though pi carries no explicit suffix.
     const content = "hello ".repeat(320001 + 10);
     const req = {
       id: "pi-stale-big",
