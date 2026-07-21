@@ -362,13 +362,17 @@ describe("AliyunTokenPlanQuotaAdapter official sec_token request", () => {
     expect(body).toContain("region=cn-beijing");
     expect(body).toContain("params=");
 
-    // The cornerstoneParam must carry the official feURL path and
-    // X-Anonymous-Id extracted from the cna cookie.
+    // The cornerstoneParam must carry the official feURL (absolute console URL),
+    // productCode matching the coding-plan adapter, and X-Anonymous-Id.
     const paramsMatch = body.match(/params=([^&]+)/);
     expect(paramsMatch).not.toBeNull();
     const decoded = decodeURIComponent(paramsMatch![1]);
-    expect(decoded).toContain("/cn-beijing/?tab=plan#/efm/subscription/token-plan/personal");
-    expect(decoded).toContain("X-Anonymous-Id");
+    expect(decoded).toContain('"feURL":"https://bailian.console.aliyun.com/cn-beijing/?tab=plan#/efm/subscription/token-plan/personal"');
+    expect(decoded).toContain('"productCode":"p_efm"');
+    expect(decoded).toContain('"X-Anonymous-Id"');
+    // Referer must point at the token-plan console page.
+    const headers = capturedInit!.headers as Record<string, string>;
+    expect(headers.Referer).toBe("https://bailian.console.aliyun.com/cn-beijing/?tab=plan");
   });
 
   it("extracts X-Anonymous-Id from the cna cookie value", async () => {
@@ -581,5 +585,39 @@ describe("AliyunTokenPlanQuotaAdapter sec_token fallback", () => {
 
     expect(result).toBeNull();
     // No exception thrown — errors are caught internally.
+  });
+
+  it("falls back to the legacy endpoint when the official setup throws (malformed cna cookie)", async () => {
+    // extractCookieValue calls decodeURIComponent, which throws URIError on a
+    // dangling '%'. That setup code runs outside queryOfficialEndpoint's try
+    // block, so queryQuota must still catch it and degrade to the legacy path
+    // rather than letting the whole probe crash.
+    const calls: Array<{ url: string }> = [];
+
+    globalThis.fetch = vi.fn(async (url: any) => {
+      const urlStr = String(url);
+      calls.push({ url: urlStr });
+      return new Response(JSON.stringify({
+        data: { DataV2: { data: { data: { per5HourPercentage: 0.25 } } } },
+      }), { status: 200 });
+    }) as any;
+
+    const adapter = getQuotaAdapter(
+      "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic/v1/messages"
+    );
+    // cna value ends in a dangling '%' -> decodeURIComponent throws URIError.
+    const result = await adapter!.queryQuota(
+      makeProvider({
+        quotaToken: "cna=abc-def%",
+        quotaSecToken: "sec-token",
+      }),
+      5000
+    );
+
+    // Official setup threw, so only the legacy endpoint is hit and it succeeds.
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toContain("cs-data.qianwenai.com");
+    expect(result).not.toBeNull();
+    expect(result!.usedDailyBalance).toBe(25);
   });
 });

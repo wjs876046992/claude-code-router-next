@@ -926,7 +926,7 @@ export function Providers() {
                   <p className="text-sm text-red-500">{apiKeyError}</p>
                 )}
               </div>
-              {editingProvider.api_base_url && (/dashscope\.aliyuncs\.com|maas\.aliyuncs\.com|xf-yun\.com|xfyun\.cn|xfyun\.com/i.test(editingProvider.api_base_url)) && (
+              {editingProvider.api_base_url && (/dashscope\.aliyuncs\.com|xf-yun\.com|xfyun\.cn|xfyun\.com/i.test(editingProvider.api_base_url)) && (
               <div className="space-y-2">
                 <div className="flex items-center gap-1">
                   <Label htmlFor="quota_token">{t("providers.quota_token")}</Label>

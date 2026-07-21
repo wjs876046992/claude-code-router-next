@@ -571,13 +571,21 @@ class AliyunTokenPlanQuotaAdapter extends BaseQuotaAdapter {
     // parse result, fall back to the legacy cs-data.qianwenai.com endpoint so
     // quota reporting degrades gracefully rather than disappearing.
     if (secToken) {
-      const official = await this.queryOfficialEndpoint(
-        cookie,
-        secToken,
-        timeoutMs,
-        proxyUrl
-      );
-      if (official) return official;
+      // queryOfficialEndpoint catches its own fetch/parse errors, but setup
+      // code (e.g. extractCookieValue → decodeURIComponent) can still throw on
+      // a malformed cookie. Wrap the call so any such exception degrades to the
+      // legacy endpoint instead of escaping and killing the whole probe.
+      try {
+        const official = await this.queryOfficialEndpoint(
+          cookie,
+          secToken,
+          timeoutMs,
+          proxyUrl
+        );
+        if (official) return official;
+      } catch {
+        // Never log credentials — silently fall through to the legacy endpoint.
+      }
 
       // Fallback to the legacy endpoint — never log credentials on failure.
       return this.queryLegacyEndpoint(cookie, timeoutMs, proxyUrl);
@@ -613,10 +621,11 @@ class AliyunTokenPlanQuotaAdapter extends BaseQuotaAdapter {
       Data: {
         cornerstoneParam: {
           feTraceId: `ccr-${Date.now()}`,
-          // Official efm-fe path for the personal token-plan subscription page.
-          feURL: "/cn-beijing/?tab=plan#/efm/subscription/token-plan/personal",
+          feURL: "https://bailian.console.aliyun.com/cn-beijing/?tab=plan#/efm/subscription/token-plan/personal",
           protocol: "V2",
           console: "ONE_CONSOLE",
+          // productCode matches AliyunCodingPlanQuotaAdapter, which targets the
+          // same bailian-cs.console.aliyun.com BroadScope gateway.
           productCode: "p_efm",
           domain: "bailian.console.aliyun.com",
           consoleSite: "BAILIAN_ALIYUN",
@@ -643,7 +652,7 @@ class AliyunTokenPlanQuotaAdapter extends BaseQuotaAdapter {
         Cookie: cookie,
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
         Origin: "https://bailian.console.aliyun.com",
-        Referer: "https://bailian.console.aliyun.com/",
+        Referer: "https://bailian.console.aliyun.com/cn-beijing/?tab=plan",
       },
       body,
       signal: AbortSignal.timeout(timeoutMs),
