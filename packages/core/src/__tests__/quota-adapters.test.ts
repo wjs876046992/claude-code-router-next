@@ -325,3 +325,261 @@ describe("AliyunTokenPlanQuotaAdapter request behaviour", () => {
     expect(result).toBeNull();
   });
 });
+
+describe("AliyunTokenPlanQuotaAdapter official sec_token request", () => {
+  it("prefers the official bailian-cs gateway when quotaSecToken is set", async () => {
+    let capturedUrl: string | undefined;
+    let capturedInit: RequestInit | undefined;
+
+    globalThis.fetch = vi.fn(async (url: any, init: any) => {
+      capturedUrl = url;
+      capturedInit = init;
+      return new Response(JSON.stringify({
+        data: { DataV2: { data: { data: { per5HourPercentage: 0.15, per1WeekPercentage: 0.45 } } } },
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }) as any;
+
+    const adapter = getQuotaAdapter(
+      "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic/v1/messages"
+    );
+    const result = await adapter!.queryQuota(
+      makeProvider({ quotaSecToken: "my-sec-token-123" }),
+      5000
+    );
+
+    expect(result).not.toBeNull();
+    expect(result!.usedDailyBalance).toBe(15);
+    expect(result!.usedBalance).toBe(45);
+
+    // The official endpoint is bailian-cs.console.aliyun.com with _v=3.5.613.
+    expect(capturedUrl).toContain("https://bailian-cs.console.aliyun.com/data/api.json");
+    expect(capturedUrl).toContain("_v=3.5.613");
+    expect(capturedUrl).toContain("action=BroadScopeAspnGateway");
+
+    // The form body must include sec_token.
+    const body = String(capturedInit!.body);
+    expect(body).toContain("sec_token=my-sec-token-123");
+    expect(body).toContain("region=cn-beijing");
+    expect(body).toContain("params=");
+
+    // The cornerstoneParam must carry the official feURL path and
+    // X-Anonymous-Id extracted from the cna cookie.
+    const paramsMatch = body.match(/params=([^&]+)/);
+    expect(paramsMatch).not.toBeNull();
+    const decoded = decodeURIComponent(paramsMatch![1]);
+    expect(decoded).toContain("/cn-beijing/?tab=plan#/efm/subscription/token-plan/personal");
+    expect(decoded).toContain("X-Anonymous-Id");
+  });
+
+  it("extracts X-Anonymous-Id from the cna cookie value", async () => {
+    let capturedInit: RequestInit | undefined;
+
+    globalThis.fetch = vi.fn(async (_url: any, init: any) => {
+      capturedInit = init;
+      return new Response(JSON.stringify({
+        data: { DataV2: { data: { data: { per5HourPercentage: 0.1 } } } },
+      }), { status: 200 });
+    }) as any;
+
+    const adapter = getQuotaAdapter(
+      "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic/v1/messages"
+    );
+    await adapter!.queryQuota(
+      makeProvider({
+        quotaToken: "cna=abc-def-123; other_cookie=xyz",
+        quotaSecToken: "sec-456",
+      }),
+      5000
+    );
+
+    const body = String(capturedInit!.body);
+    const paramsMatch = body.match(/params=([^&]+)/);
+    const decoded = decodeURIComponent(paramsMatch![1]);
+    expect(decoded).toContain('"X-Anonymous-Id":"abc-def-123"');
+  });
+
+  it("sets X-Anonymous-Id to empty string when cna cookie is absent", async () => {
+    let capturedInit: RequestInit | undefined;
+
+    globalThis.fetch = vi.fn(async (_url: any, init: any) => {
+      capturedInit = init;
+      return new Response(JSON.stringify({
+        data: { DataV2: { data: { data: { per5HourPercentage: 0.1 } } } },
+      }), { status: 200 });
+    }) as any;
+
+    const adapter = getQuotaAdapter(
+      "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic/v1/messages"
+    );
+    await adapter!.queryQuota(
+      makeProvider({ quotaSecToken: "sec-token" }),
+      5000
+    );
+
+    const body = String(capturedInit!.body);
+    const paramsMatch = body.match(/params=([^&]+)/);
+    const decoded = decodeURIComponent(paramsMatch![1]);
+    expect(decoded).toContain('"X-Anonymous-Id":""');
+  });
+
+  it("does NOT send the sec_token body field when no quotaSecToken is configured", async () => {
+    let capturedUrl: string | undefined;
+    let capturedInit: RequestInit | undefined;
+
+    globalThis.fetch = vi.fn(async (url: any, init: any) => {
+      capturedUrl = url;
+      capturedInit = init;
+      return new Response(JSON.stringify({
+        data: { DataV2: { data: { data: { per5HourPercentage: 0.1 } } } },
+      }), { status: 200 });
+    }) as any;
+
+    const adapter = getQuotaAdapter(
+      "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic/v1/messages"
+    );
+    await adapter!.queryQuota(makeProvider(), 5000);
+
+    // Without sec_token, the legacy endpoint is used (no _v=3.5.613, no sec_token).
+    expect(capturedUrl).toContain("https://cs-data.qianwenai.com/data/api.json");
+    expect(capturedUrl).not.toContain("_v=3.5.613");
+    const body = String(capturedInit!.body);
+    expect(body).not.toContain("sec_token=");
+  });
+});
+
+describe("AliyunTokenPlanQuotaAdapter sec_token fallback", () => {
+  it("falls back to the legacy endpoint when the official request returns HTTP error", async () => {
+    const calls: Array<{ url: string; status: number }> = [];
+
+    globalThis.fetch = vi.fn(async (url: any) => {
+      const urlStr = String(url);
+      if (urlStr.includes("bailian-cs.console.aliyun.com")) {
+        calls.push({ url: urlStr, status: 403 });
+        return new Response("Forbidden", { status: 403 });
+      }
+      calls.push({ url: urlStr, status: 200 });
+      return new Response(JSON.stringify({
+        data: { DataV2: { data: { data: { per5HourPercentage: 0.3, per1WeekPercentage: 0.6 } } } },
+      }), { status: 200 });
+    }) as any;
+
+    const adapter = getQuotaAdapter(
+      "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic/v1/messages"
+    );
+    const result = await adapter!.queryQuota(
+      makeProvider({ quotaSecToken: "sec-token" }),
+      5000
+    );
+
+    // Official failed (403), fallback to legacy succeeded.
+    expect(calls).toHaveLength(2);
+    expect(calls[0].url).toContain("bailian-cs.console.aliyun.com");
+    expect(calls[1].url).toContain("cs-data.qianwenai.com");
+    expect(result).not.toBeNull();
+    expect(result!.usedDailyBalance).toBe(30);
+    expect(result!.usedBalance).toBe(60);
+  });
+
+  it("falls back to the legacy endpoint when the official response parses to null", async () => {
+    const calls: Array<{ url: string }> = [];
+
+    globalThis.fetch = vi.fn(async (url: any) => {
+      const urlStr = String(url);
+      calls.push({ url: urlStr });
+      if (urlStr.includes("bailian-cs.console.aliyun.com")) {
+        // Valid HTTP 200 but unparseable payload (gateway login error).
+        return new Response(JSON.stringify({
+          data: { success: false, errorCode: "BailianGateway.Login.NotLogined" },
+        }), { status: 200 });
+      }
+      return new Response(JSON.stringify({
+        data: { DataV2: { data: { data: { per5HourPercentage: 0.2 } } } },
+      }), { status: 200 });
+    }) as any;
+
+    const adapter = getQuotaAdapter(
+      "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic/v1/messages"
+    );
+    const result = await adapter!.queryQuota(
+      makeProvider({ quotaSecToken: "sec-token" }),
+      5000
+    );
+
+    // Official returned null parse, fallback to legacy succeeded.
+    expect(calls).toHaveLength(2);
+    expect(calls[0].url).toContain("bailian-cs.console.aliyun.com");
+    expect(calls[1].url).toContain("cs-data.qianwenai.com");
+    expect(result).not.toBeNull();
+    expect(result!.usedDailyBalance).toBe(20);
+  });
+
+  it("falls back to the legacy endpoint when the official request throws a network error", async () => {
+    const calls: Array<{ url: string }> = [];
+
+    globalThis.fetch = vi.fn(async (url: any) => {
+      const urlStr = String(url);
+      calls.push({ url: urlStr });
+      if (urlStr.includes("bailian-cs.console.aliyun.com")) {
+        throw new Error("network timeout");
+      }
+      return new Response(JSON.stringify({
+        data: { DataV2: { data: { data: { per5HourPercentage: 0.05 } } } },
+      }), { status: 200 });
+    }) as any;
+
+    const adapter = getQuotaAdapter(
+      "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic/v1/messages"
+    );
+    const result = await adapter!.queryQuota(
+      makeProvider({ quotaSecToken: "sec-token" }),
+      5000
+    );
+
+    expect(calls).toHaveLength(2);
+    expect(result).not.toBeNull();
+    expect(result!.usedDailyBalance).toBe(5);
+  });
+
+  it("returns null when both official and legacy endpoints fail", async () => {
+    const calls: Array<{ url: string }> = [];
+
+    globalThis.fetch = vi.fn(async (url: any) => {
+      const urlStr = String(url);
+      calls.push({ url: urlStr });
+      return new Response("Service Unavailable", { status: 503 });
+    }) as any;
+
+    const adapter = getQuotaAdapter(
+      "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic/v1/messages"
+    );
+    const result = await adapter!.queryQuota(
+      makeProvider({ quotaSecToken: "sec-token" }),
+      5000
+    );
+
+    expect(calls).toHaveLength(2);
+    expect(result).toBeNull();
+  });
+
+  it("does not output credentials in any error path", async () => {
+    // Even when both endpoints fail, the adapter must return null silently —
+    // it must never throw or leak sec_token/cookie values in error messages.
+    globalThis.fetch = vi.fn(async () => {
+      throw new Error("connection refused");
+    }) as any;
+
+    const adapter = getQuotaAdapter(
+      "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic/v1/messages"
+    );
+    const result = await adapter!.queryQuota(
+      makeProvider({
+        quotaToken: "super-secret-cookie",
+        quotaSecToken: "super-secret-sec-token",
+      }),
+      5000
+    );
+
+    expect(result).toBeNull();
+    // No exception thrown — errors are caught internally.
+  });
+});

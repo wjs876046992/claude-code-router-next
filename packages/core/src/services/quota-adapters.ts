@@ -564,6 +564,121 @@ class AliyunTokenPlanQuotaAdapter extends BaseQuotaAdapter {
     const cookie = provider.quotaToken?.trim();
     if (!cookie) return null;
 
+    const secToken = provider.quotaSecToken?.trim();
+
+    // When a sec_token is configured, prefer the official efm-fe 3.5.613
+    // gateway (bailian-cs.console.aliyun.com). If that fails or yields a null
+    // parse result, fall back to the legacy cs-data.qianwenai.com endpoint so
+    // quota reporting degrades gracefully rather than disappearing.
+    if (secToken) {
+      const official = await this.queryOfficialEndpoint(
+        cookie,
+        secToken,
+        timeoutMs,
+        proxyUrl
+      );
+      if (official) return official;
+
+      // Fallback to the legacy endpoint — never log credentials on failure.
+      return this.queryLegacyEndpoint(cookie, timeoutMs, proxyUrl);
+    }
+
+    // No sec_token — use the legacy cs-data.qianwenai.com request directly.
+    return this.queryLegacyEndpoint(cookie, timeoutMs, proxyUrl);
+  }
+
+  /**
+   * Query the official Bailian console gateway (efm-fe 3.5.613 format).
+   * Targets bailian-cs.console.aliyun.com with a form body that includes
+   * sec_token, and a cornerstoneParam matching the official frontend
+   * (feURL pointing at the token-plan personal subscription page).
+   * Returns null on any error or unparseable response — the caller decides
+   * whether to fall back to the legacy endpoint.
+   */
+  private async queryOfficialEndpoint(
+    cookie: string,
+    secToken: string,
+    timeoutMs: number,
+    proxyUrl?: string
+  ): Promise<ProviderQuotaResult | null> {
+    const apiName = "zeldaHttp.apikeyMgr./tokenplan/personal/api/v2/usage";
+
+    // Extract X-Anonymous-Id from the cna cookie value — the official
+    // frontend reads the Alibaba CDN tracking cookie for this field.
+    const anonymousId = extractCookieValue(cookie, "cna") || "";
+
+    const params = JSON.stringify({
+      Api: apiName,
+      V: "1.0",
+      Data: {
+        cornerstoneParam: {
+          feTraceId: `ccr-${Date.now()}`,
+          // Official efm-fe path for the personal token-plan subscription page.
+          feURL: "/cn-beijing/?tab=plan#/efm/subscription/token-plan/personal",
+          protocol: "V2",
+          console: "ONE_CONSOLE",
+          productCode: "p_efm",
+          domain: "bailian.console.aliyun.com",
+          consoleSite: "BAILIAN_ALIYUN",
+          xsp_lang: "zh-CN",
+          "X-Anonymous-Id": anonymousId,
+        },
+      },
+    });
+
+    // Official gateway expects sec_token in the form body alongside params
+    // and region — this is the authenticated parameter that replaces the
+    // cookie-only auth of the legacy endpoint.
+    const body = new URLSearchParams({
+      params,
+      region: "cn-beijing",
+      sec_token: secToken,
+    }).toString();
+
+    const fetchOptions: RequestInit & { dispatcher?: unknown } = {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/x-www-form-urlencoded",
+        Cookie: cookie,
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
+        Origin: "https://bailian.console.aliyun.com",
+        Referer: "https://bailian.console.aliyun.com/",
+      },
+      body,
+      signal: AbortSignal.timeout(timeoutMs),
+    };
+
+    try {
+      if (proxyUrl) {
+        fetchOptions.dispatcher = getProxyDispatcher(proxyUrl);
+      }
+      const response = await fetch(
+        `https://bailian-cs.console.aliyun.com/data/api.json?action=BroadScopeAspnGateway&product=sfm_bailian&api=${encodeURIComponent(apiName)}&_v=3.5.613`,
+        fetchOptions
+      );
+      if (!response.ok) return null;
+
+      const payload = await response.json();
+      return parseAliyunTokenPlanUsage(payload);
+    } catch {
+      // Never output credentials — silently return null and let the caller
+      // decide whether to fall back to the legacy endpoint.
+      return null;
+    }
+  }
+
+  /**
+   * Query the legacy cs-data.qianwenai.com tokenplan usage endpoint with
+   * cookie-based auth (no sec_token). This is the original request path
+   * used when no sec_token is configured, and the fallback when the
+   * official gateway fails.
+   */
+  private async queryLegacyEndpoint(
+    cookie: string,
+    timeoutMs: number,
+    proxyUrl?: string
+  ): Promise<ProviderQuotaResult | null> {
     // The token-plan usage endpoint is a BroadScope Aspn Gateway call, the
     // same gateway pattern as the coding-plan adapter. The gateway expects a
     // POST with a form-encoded body carrying `params` (JSON envelope with
