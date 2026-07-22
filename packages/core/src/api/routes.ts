@@ -443,10 +443,17 @@ async function validateStreamingResponse(
     );
   }
 
-  const dataLines = firstChunkText.split('\n').filter(
+  const lines = firstChunkText.split('\n');
+  const hasDataLines = lines.some(
     (line: string) => line.startsWith('data:') && line.trim().length > 5
   );
-  if (dataLines.length === 0) {
+  // SSE comment lines (starting with ':') are valid per the spec — providers
+  // like MiMo/xiaomi emit ': PROCESSING' before actual data. Only reject when
+  // the first chunk has neither data lines nor comment lines.
+  const hasCommentLines = lines.some(
+    (line: string) => line.startsWith(':') && line.trim().length > 1
+  );
+  if (!hasDataLines && !hasCommentLines) {
     reader.releaseLock();
     const preview = firstChunkText.length < 500 ? firstChunkText : firstChunkText.slice(0, 500);
     throw createApiError(
