@@ -92,8 +92,8 @@ export async function handleProfileCommand(args: string[]): Promise<void> {
         // Start server with the new profile
         const cliPath = join(__dirname, "../../cli.js");
         const childEnv = name === "default"
-          ? process.env
-          : { ...process.env, CCR_CONFIG_DIR: profilesDir + "/" + name };
+          ? { ...process.env, CCR_INTERNAL_START: "1" }
+          : { ...process.env, CCR_CONFIG_DIR: join(profilesDir, name), CCR_INTERNAL_START: "1" };
         const { spawn } = await import("child_process");
         const child = spawn("node", [cliPath, "start"], {
           detached: true,
