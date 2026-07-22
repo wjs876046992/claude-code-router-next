@@ -204,6 +204,13 @@ export interface LLMProvider {
   models: string[];
   /** Optional token for quota/billing APIs that require separate authentication (e.g. Zhipu web console JWT) */
   quotaToken?: string;
+  /**
+   * Optional sec_token for the Aliyun Bailian console official quota API
+   * (efm-fe 3.5.613 format). When present, the AliyunTokenPlanQuotaAdapter
+   * prefers the official bailian-cs.console.aliyun.com gateway and falls
+   * back to the legacy cs-data.qianwenai.com endpoint on failure.
+   */
+  quotaSecToken?: string;
   transformer?: {
     [key: string]: {
       use?: Transformer[];
@@ -245,6 +252,8 @@ export interface ConfigProvider {
   models: string[];
   /** Optional token for quota/billing APIs that require separate authentication */
   quota_token?: string;
+  /** Optional sec_token for the Aliyun Bailian console official quota API (efm-fe 3.5.613 format) */
+  quota_sec_token?: string;
   transformer: {
     use?: string[] | Array<any>[];
   } & {

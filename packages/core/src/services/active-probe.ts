@@ -432,6 +432,23 @@ export class ActiveProbeService {
       const models = Array.isArray(provider.models) ? provider.models : [];
       const proxyUrl = this.resolveProxyUrl?.(provider);
 
+      if (!adapter) {
+        // Log that no quota adapter matches this provider's baseUrl. Only log
+        // the hostname (derived from baseUrl) — never log apiKey, quotaToken,
+        // quotaSecToken, or any other credential-bearing field.
+        let hostname: string | undefined;
+        try {
+          hostname = new URL(provider.baseUrl).hostname;
+        } catch {
+          hostname = undefined;
+        }
+        this.logger?.debug?.(
+          `No quota adapter for provider ${provider.name}` +
+          (hostname ? ` (host: ${hostname})` : '') +
+          ' — skipping quota probe'
+        );
+      }
+
       if (adapter) {
         tasks.push({
           provider: provider.name,

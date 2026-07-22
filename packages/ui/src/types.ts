@@ -14,6 +14,10 @@ export interface Provider {
   enabled?: boolean;
   // Opt this provider into PROXY_URL when PROXY_GLOBAL_ENABLED is false.
   proxy_enabled?: boolean;
+  // Optional Cookie/token used to query provider quota usage (e.g. Aliyun/iFlytek Coding Plan).
+  quota_token?: string;
+  // Optional SEC_TOKEN used to query Aliyun MaaS Token Plan quota usage.
+  quota_sec_token?: string;
   // Allow for additional custom fields
   [key: string]: any;
 }
@@ -99,9 +103,6 @@ export interface ClientConfig {
   modelAlias?: string;
   activeAccountId?: string;
   autoSwitchAccounts?: boolean;
-  routing?: {
-    extendedContextRatio?: number;
-  };
   quota?: {
     limit5h?: number;
     limit7d?: number;

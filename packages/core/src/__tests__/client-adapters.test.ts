@@ -193,35 +193,25 @@ describe("applyClientAdapter", () => {
     expect(req.usageCacheKey).toBe(`${clientType}:request:${clientType}-request`);
   });
 
-  it("uses Pi models.json contextWindow, strips suffix semantics, and validates ratios", () => {
-    const configDir = createTempDir();
-    mkdirSync(configDir, { recursive: true });
-    writeFileSync(join(configDir, "models.json"), JSON.stringify({
-      providers: {
-        ccr: {
-          models: [
-            { id: "ccr-opus", contextWindow: 500000 },
-            { id: "ccr-sonnet", contextWindow: 300000 },
-          ],
-        },
-      },
-    }));
+  it("pi inherits the global absolute extendedContextThreshold (no per-client ratio)", () => {
+    // pi no longer reads models.json or Clients.pi.routing to derive a
+    // per-client extendedContextThreshold. It behaves like every other client:
+    // no contextWindow / extendedContextThreshold is injected, so the router
+    // uses the absolute chain (family -> Router -> 200000). Stale ratio config
+    // left in the user's config must be ignored, not throw.
     const config = {
       ContextWindow: 200000,
       Clients: {
         pi: {
-          configPath: configDir,
-          modelAlias: "ccr-opus[1m]",
-          routing: {
-            extendedContextRatio: 0.75,
-          },
+          configPath: "/nonexistent-pi-agent-dir",
+          routing: { extendedContextRatio: 0.8 },
         },
       },
     };
     const req = request({
-      id: "pi-context",
+      id: "pi-global-threshold",
       body: {
-        model: "ccr-opus[1m]",
+        model: "ccr-opus",
         messages: [],
         system: "You are operating inside pi",
       },
@@ -233,69 +223,9 @@ describe("applyClientAdapter", () => {
       clientType: "pi",
       usageScope: "request",
       supportsExplicitExtendedContext: false,
-      contextWindow: 500000,
-      extendedContextThreshold: 375000,
     });
-    // longContextThreshold must NOT be set by the pi adapter — it inherits the
-    // absolute threshold chain (familyConfig -> Router -> 60000) in the router.
+    expect(req.clientContext.contextWindow).toBeUndefined();
+    expect(req.clientContext.extendedContextThreshold).toBeUndefined();
     expect(req.clientContext.longContextThreshold).toBeUndefined();
-
-    expect(() => applyClientAdapter(request({
-      id: "pi-invalid",
-      body: {
-        model: "ccr-opus",
-        messages: [],
-        system: "You are operating inside pi",
-      },
-    }), {
-      Clients: {
-        pi: {
-          configPath: configDir,
-          routing: { extendedContextRatio: 1.5 },
-        },
-      },
-    })).toThrow(/extendedContextRatio must be a finite number/);
-
-    expect(() => applyClientAdapter(request({
-      id: "pi-unknown-key",
-      body: {
-        model: "ccr-opus",
-        messages: [],
-        system: "You are operating inside pi",
-      },
-    }), {
-      Clients: {
-        pi: {
-          configPath: configDir,
-          routing: { extraRatio: 0.5 },
-        },
-      },
-    })).toThrow(/unsupported field: extraRatio/);
-  });
-
-  it("refreshes Pi contextWindow when models.json mtime changes", async () => {
-    const configDir = createTempDir();
-    const modelsPath = join(configDir, "models.json");
-    writeFileSync(modelsPath, JSON.stringify({
-      providers: { ccr: { models: [{ id: "ccr-opus", contextWindow: 200000 }] } },
-    }));
-    const config = { Clients: { pi: { configPath: configDir } } };
-    const first = request({
-      id: "pi-first",
-      body: { model: "ccr-opus", messages: [], system: "You are operating inside pi" },
-    });
-    applyClientAdapter(first, config);
-    expect(first.clientContext.contextWindow).toBe(200000);
-
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    writeFileSync(modelsPath, JSON.stringify({
-      providers: { ccr: { models: [{ id: "ccr-opus", contextWindow: 400000 }] } },
-    }));
-    const second = request({
-      id: "pi-second",
-      body: { model: "ccr-opus", messages: [], system: "You are operating inside pi" },
-    });
-    applyClientAdapter(second, config);
-    expect(second.clientContext.contextWindow).toBe(400000);
   });
 });

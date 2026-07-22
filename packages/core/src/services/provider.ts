@@ -89,6 +89,7 @@ export class ProviderService {
           apiKey: providerConfig.api_key,
           models: providerConfig.models || [],
           quotaToken: (providerConfig as any).quota_token,
+          quotaSecToken: (providerConfig as any).quota_sec_token,
           transformer: providerConfig.transformer ? transformer : undefined,
           cacheMode: providerConfig.cache_mode || 'exclusive',
           enabled: providerConfig.enabled !== false,
