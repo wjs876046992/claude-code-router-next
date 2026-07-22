@@ -258,22 +258,25 @@ async function main() {
   switch (command) {
     case "start":
       await ensureDefaultProfile();
-      // For non-default profiles, spawn a child process with CCR_CONFIG_DIR set
-      // BEFORE the shared module loads (module-level constants are computed at import time).
-      if (_profileEnvOverride) {
+      // Always spawn a detached child process so the server runs in the background.
+      // For non-default profiles, CCR_CONFIG_DIR is set in the child's environment.
+      {
         const cliPath = join(__dirname, "cli.js");
+        const childEnv = _profileEnvOverride
+          ? { ...process.env, ..._profileEnvOverride }
+          : process.env;
         const child = spawn("node", [cliPath, "start"], {
           detached: true,
           stdio: "ignore",
-          env: { ...process.env, ..._profileEnvOverride },
+          env: childEnv,
         });
         child.unref();
-        console.log(`Starting server with profile...`);
+        const profileName = _profileEnvOverride
+          ? (await getActiveProfile())
+          : "default";
+        console.log(`Server started in background (profile: ${profileName}).`);
         break;
       }
-      await run();
-      try { await enableConfiguredClientsForStart(); } catch {}
-      break;
     case "stop":
       try { await disableConfiguredClientsForStop(); } catch {}
       // Compute profile paths directly (not via shared constants which may be stale)
