@@ -351,27 +351,51 @@ describe("AliyunTokenPlanQuotaAdapter official sec_token request", () => {
     expect(result!.usedDailyBalance).toBe(15);
     expect(result!.usedBalance).toBe(45);
 
-    // The official endpoint is bailian-cs.console.aliyun.com with _v=3.5.613.
+    // The gateway rejects GET — the adapter must POST.
+    expect(capturedInit!.method).toBe("POST");
+
+    // The official endpoint uses the literal version placeholder from the
+    // console request rather than the stale frontend version.
     expect(capturedUrl).toContain("https://bailian-cs.console.aliyun.com/data/api.json");
-    expect(capturedUrl).toContain("_v=3.5.613");
     expect(capturedUrl).toContain("action=BroadScopeAspnGateway");
+    expect(capturedUrl).toContain("_v=undefined");
+    expect(capturedUrl).not.toContain("_v=3.5.613");
 
-    // The form body must include sec_token.
+    // Cookie auth is the only authentication header.
+    const headers = capturedInit!.headers as Record<string, string>;
+    expect(headers.Cookie).toBe("dummy_cookie=abc123");
+    expect(headers.Authorization).toBeUndefined();
+    expect(headers.authorization).toBeUndefined();
+    expect(headers["Content-Type"]).toBe("application/x-www-form-urlencoded");
+
+    // The form body must include params, region, and sec_token.
     const body = String(capturedInit!.body);
-    expect(body).toContain("sec_token=my-sec-token-123");
-    expect(body).toContain("region=cn-beijing");
     expect(body).toContain("params=");
+    expect(body).toContain("region=cn-beijing");
+    expect(body).toContain("sec_token=my-sec-token-123");
 
-    // The cornerstoneParam must carry the official feURL (absolute console URL),
-    // productCode matching the coding-plan adapter, and X-Anonymous-Id.
+    // Decode the params envelope and pin the stable official console fields.
     const paramsMatch = body.match(/params=([^&]+)/);
     expect(paramsMatch).not.toBeNull();
-    const decoded = decodeURIComponent(paramsMatch![1]);
-    expect(decoded).toContain('"feURL":"https://bailian.console.aliyun.com/cn-beijing/?tab=plan#/efm/subscription/token-plan/personal"');
-    expect(decoded).toContain('"productCode":"p_efm"');
-    expect(decoded).toContain('"X-Anonymous-Id"');
+    const params = JSON.parse(decodeURIComponent(paramsMatch![1]));
+    const cornerstoneParam = params.Data.cornerstoneParam;
+    expect(cornerstoneParam.protocol).toBe("V2");
+    expect(cornerstoneParam.console).toBe("ONE_CONSOLE");
+    expect(cornerstoneParam.productCode).toBe("p_efm");
+    expect(cornerstoneParam.switchAgent).toBe(10736808);
+    expect(cornerstoneParam.switchUserType).toBe(3);
+    expect(cornerstoneParam.domain).toBe("bailian.console.aliyun.com");
+    expect(cornerstoneParam.consoleSite).toBe("BAILIAN_ALIYUN");
+    expect(cornerstoneParam.userNickName).toBe("");
+    expect(cornerstoneParam.userPrincipalName).toBe("");
+    expect(cornerstoneParam.xsp_lang).toBe("zh-CN");
+    expect(cornerstoneParam.feURL).toBe(
+      "https://bailian.console.aliyun.com/cn-beijing/?tab=plan#/efm/subscription/token-plan/personal"
+    );
+    expect(cornerstoneParam.feURL).not.toContain("spm=");
+    expect(cornerstoneParam["X-Anonymous-Id"]).toBeDefined();
+
     // Referer must point at the token-plan console page.
-    const headers = capturedInit!.headers as Record<string, string>;
     expect(headers.Referer).toBe("https://bailian.console.aliyun.com/cn-beijing/?tab=plan");
   });
 
@@ -443,9 +467,9 @@ describe("AliyunTokenPlanQuotaAdapter official sec_token request", () => {
     );
     await adapter!.queryQuota(makeProvider(), 5000);
 
-    // Without sec_token, the legacy endpoint is used (no _v=3.5.613, no sec_token).
+    // Without sec_token, the legacy endpoint is used (no _v param, no sec_token).
     expect(capturedUrl).toContain("https://cs-data.qianwenai.com/data/api.json");
-    expect(capturedUrl).not.toContain("_v=3.5.613");
+    expect(capturedUrl).not.toContain("_v=");
     const body = String(capturedInit!.body);
     expect(body).not.toContain("sec_token=");
   });

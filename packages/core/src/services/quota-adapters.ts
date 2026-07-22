@@ -566,7 +566,7 @@ class AliyunTokenPlanQuotaAdapter extends BaseQuotaAdapter {
 
     const secToken = provider.quotaSecToken?.trim();
 
-    // When a sec_token is configured, prefer the official efm-fe 3.5.613
+    // When a sec_token is configured, prefer the official BroadScope
     // gateway (bailian-cs.console.aliyun.com). If that fails or yields a null
     // parse result, fall back to the legacy cs-data.qianwenai.com endpoint so
     // quota reporting degrades gracefully rather than disappearing.
@@ -596,7 +596,7 @@ class AliyunTokenPlanQuotaAdapter extends BaseQuotaAdapter {
   }
 
   /**
-   * Query the official Bailian console gateway (efm-fe 3.5.613 format).
+   * Query the official Bailian console gateway (BroadScope Aspn format).
    * Targets bailian-cs.console.aliyun.com with a form body that includes
    * sec_token, and a cornerstoneParam matching the official frontend
    * (feURL pointing at the token-plan personal subscription page).
@@ -624,11 +624,15 @@ class AliyunTokenPlanQuotaAdapter extends BaseQuotaAdapter {
           feURL: "https://bailian.console.aliyun.com/cn-beijing/?tab=plan#/efm/subscription/token-plan/personal",
           protocol: "V2",
           console: "ONE_CONSOLE",
-          // productCode matches AliyunCodingPlanQuotaAdapter, which targets the
-          // same bailian-cs.console.aliyun.com BroadScope gateway.
+          // Keep the stable console routing fields aligned with the coding-plan
+          // request, which targets the same BroadScope gateway.
           productCode: "p_efm",
+          switchAgent: 10736808,
+          switchUserType: 3,
           domain: "bailian.console.aliyun.com",
           consoleSite: "BAILIAN_ALIYUN",
+          userNickName: "",
+          userPrincipalName: "",
           xsp_lang: "zh-CN",
           "X-Anonymous-Id": anonymousId,
         },
@@ -662,8 +666,9 @@ class AliyunTokenPlanQuotaAdapter extends BaseQuotaAdapter {
       if (proxyUrl) {
         fetchOptions.dispatcher = getProxyDispatcher(proxyUrl);
       }
+      // `_v` is literally "undefined" in the confirmed console request.
       const response = await fetch(
-        `https://bailian-cs.console.aliyun.com/data/api.json?action=BroadScopeAspnGateway&product=sfm_bailian&api=${encodeURIComponent(apiName)}&_v=3.5.613`,
+        `https://bailian-cs.console.aliyun.com/data/api.json?action=BroadScopeAspnGateway&product=sfm_bailian&api=${encodeURIComponent(apiName)}&_v=undefined`,
         fetchOptions
       );
       if (!response.ok) return null;
