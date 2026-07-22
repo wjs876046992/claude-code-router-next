@@ -18,6 +18,10 @@ export const PID_FILE = path.join(HOME_DIR, '.claude-code-router.pid');
 // edited (must be preserved). Per-project state lives under getProjectConfigDir().
 export const CLIENT_STATE_FILE = path.join(HOME_DIR, "client-state.json");
 
+export const PROFILES_DIR = path.join(HOME_DIR, "profiles");
+
+export const ACTIVE_PROFILE_FILE = path.join(PROFILES_DIR, "active-profile");
+
 export const REFERENCE_COUNT_FILE = path.join(os.tmpdir(), "claude-code-reference-count.txt");
 
 // Claude projects directory

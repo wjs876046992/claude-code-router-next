@@ -1,4 +1,10 @@
 import { readConfigFile } from ".";
+import {
+  getActiveProfile,
+  getProfileConfigPath,
+} from "@wengine-ai/claude-code-router-shared";
+import fs from "node:fs/promises";
+import JSON5 from "json5";
 
 const CLAUDE_AUTO_COMPACT_ENV = {
   CLAUDE_CODE_AUTO_COMPACT_WINDOW: "200000",
@@ -71,7 +77,23 @@ function getModelEnvVars(config: any): Record<string, string | undefined> {
  * This function is shared between `ccr env` and `ccr code` commands
  */
 export const createEnvVariables = async (): Promise<Record<string, string | undefined>> => {
-  const config = await readConfigFile();
+  // Read config from the active profile's directory
+  const activeProfile = await getActiveProfile();
+  let config;
+
+  if (activeProfile === "default") {
+    config = await readConfigFile();
+  } else {
+    const configPath = getProfileConfigPath(activeProfile);
+    try {
+      const content = await fs.readFile(configPath, "utf-8");
+      config = JSON5.parse(content);
+    } catch {
+      // Fallback to default config if profile config is missing
+      config = await readConfigFile();
+    }
+  }
+
   const port = config.PORT || 3456;
   const apiKey = config.APIKEY || "test";
 

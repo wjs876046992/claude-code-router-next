@@ -23,6 +23,13 @@ import {
   enableConfiguredClientsForStart,
   handleClientsCommand,
 } from "./utils/clients";
+import { handleProfileCommand } from "./utils/profile-commands";
+import {
+  getActiveProfile,
+  getProfileDir,
+  ensureDefaultProfile,
+  listProfiles,
+} from "@wengine-ai/claude-code-router-shared";
 
 
 const command = process.argv[2];
@@ -37,6 +44,7 @@ const KNOWN_COMMANDS = [
   "code",
   "model",
   "preset",
+  "profile",
   "install",
   "clients",
   "activate",
@@ -53,7 +61,7 @@ Usage: ccr [command] [preset-name]
 
 Commands:
   start         Start server
-  stop          Stop server
+  stop          Stop server (--all to stop all profiles)
   restart       Restart server
   status        Show server status
   statusline    Integrated statusline
@@ -61,12 +69,20 @@ Commands:
   model         Interactive model selection and configuration
   model --project  Configure model routing for the current project only
   preset        Manage presets (export, install, list, delete)
+  profile       Manage configuration profiles
   install       Install preset from GitHub marketplace
   clients       Manage client integrations (Claude Code, Codex)
   activate      Output environment variables for shell integration
   ui            Open the web UI in browser
   -v, version   Show version information
   -h, help      Show help information
+
+Profiles:
+  ccr profile list              List all profiles
+  ccr profile create <name>     Create a new profile
+  ccr profile switch <name>     Switch the active profile
+  ccr profile delete <name>     Delete a profile
+  ccr profile show [name]       Show profile configuration
 
 Presets:
   Any preset directory in ~/.claude-code-router/presets/
@@ -80,6 +96,8 @@ Examples:
   ccr preset export my-config            # Export current config as preset
   ccr preset install /path/to/preset     # Install a preset from directory
   ccr preset list                        # List all presets
+  ccr profile create work                # Create "work" profile
+  ccr profile switch work                # Switch to "work" profile
   ccr install my-preset                  # Install preset from marketplace
   ccr clients list
   ccr clients enable claudeCode codex
@@ -221,30 +239,59 @@ async function main() {
 
   switch (command) {
     case "start":
+      await ensureDefaultProfile();
+      const activeProfileForStart = await getActiveProfile();
+      if (activeProfileForStart !== "default") {
+        process.env.CCR_CONFIG_DIR = getProfileDir(activeProfileForStart);
+      }
       await run();
       try { await enableConfiguredClientsForStart(); } catch {}
       break;
     case "stop":
       try { await disableConfiguredClientsForStop(); } catch {}
-      try {
-        const pid = parseInt(readFileSync(PID_FILE, "utf-8"));
-        process.kill(pid);
-        cleanupPidFile();
-        if (existsSync(REFERENCE_COUNT_FILE)) {
+      if (process.argv[3] === "--all") {
+        // Stop all profile servers
+        const profiles = await listProfiles();
+        let stoppedCount = 0;
+        for (const p of profiles) {
+          const pidFile = p.name === "default"
+            ? PID_FILE
+            : require("@wengine-ai/claude-code-router-shared").getProfilePidFile(p.name);
           try {
-            fs.unlinkSync(REFERENCE_COUNT_FILE);
-          } catch (e) {
-            // Ignore cleanup errors
-          }
+            const pid = parseInt(readFileSync(pidFile, "utf-8"));
+            process.kill(pid);
+            fs.unlinkSync(pidFile);
+            stoppedCount++;
+          } catch {}
         }
-        console.log(
-          "claude code router service has been successfully stopped."
-        );
-      } catch (e) {
-        console.log(
-          "Failed to stop the service. It may have already been stopped."
-        );
-        cleanupPidFile();
+        console.log(`Stopped ${stoppedCount} profile server(s).`);
+      } else {
+        // Stop active profile's server
+        await ensureDefaultProfile();
+        const activeProfileForStop = await getActiveProfile();
+        const pidFile = activeProfileForStop === "default"
+          ? PID_FILE
+          : require("@wengine-ai/claude-code-router-shared").getProfilePidFile(activeProfileForStop);
+        try {
+          const pid = parseInt(readFileSync(pidFile, "utf-8"));
+          process.kill(pid);
+          try { fs.unlinkSync(pidFile); } catch {}
+          if (existsSync(REFERENCE_COUNT_FILE)) {
+            try {
+              fs.unlinkSync(REFERENCE_COUNT_FILE);
+            } catch (e) {
+              // Ignore cleanup errors
+            }
+          }
+          console.log(
+            `Profile "${activeProfileForStop}" service has been successfully stopped.`
+          );
+        } catch (e) {
+          console.log(
+            "Failed to stop the service. It may have already been stopped."
+          );
+          try { cleanupPidFile(); } catch {}
+        }
       }
       break;
     case "status":
@@ -280,6 +327,9 @@ async function main() {
       break;
     case "preset":
       await handlePresetCommand(process.argv.slice(3));
+      break;
+    case "profile":
+      await handleProfileCommand(process.argv.slice(3));
       break;
     case "install":
       const presetName = process.argv[3];
@@ -448,6 +498,11 @@ async function main() {
       console.log(`claude-code-router version: ${version}`);
       break;
     case "restart":
+      await ensureDefaultProfile();
+      const activeProfileForRestart = await getActiveProfile();
+      if (activeProfileForRestart !== "default") {
+        process.env.CCR_CONFIG_DIR = getProfileDir(activeProfileForRestart);
+      }
       try { await disableConfiguredClientsForStop(); } catch {}
       await restartService();
       try { await enableConfiguredClientsForStart(); } catch {}
