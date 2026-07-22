@@ -126,6 +126,24 @@ async function waitForService(
 }
 
 async function main() {
+  // Read active profile and set CCR_CONFIG_DIR before any shared-dependent code.
+  // Since shared constants are computed at import time, we use a helper that
+  // reads the profile file directly (without shared) and returns the env override.
+  const _profileEnvOverride = await (async () => {
+    const os = await import("os");
+    const path = await import("path");
+    const fs = await import("fs");
+    const _homeDir = path.join(os.homedir(), ".claude-code-router");
+    const _activeProfileFile = path.join(_homeDir, "profiles", "active-profile");
+    try {
+      const _active = fs.readFileSync(_activeProfileFile, "utf-8").trim();
+      if (_active && _active !== "default") {
+        return { CCR_CONFIG_DIR: path.join(_homeDir, "profiles", _active) };
+      }
+    } catch {}
+    return null;
+  })();
+
   const isRunning = isServiceRunning()
 
   // If command is not a known command, check if it's a preset
@@ -240,56 +258,75 @@ async function main() {
   switch (command) {
     case "start":
       await ensureDefaultProfile();
-      const activeProfileForStart = await getActiveProfile();
-      if (activeProfileForStart !== "default") {
-        process.env.CCR_CONFIG_DIR = getProfileDir(activeProfileForStart);
+      // For non-default profiles, spawn a child process with CCR_CONFIG_DIR set
+      // BEFORE the shared module loads (module-level constants are computed at import time).
+      if (_profileEnvOverride) {
+        const cliPath = join(__dirname, "cli.js");
+        const child = spawn("node", [cliPath, "start"], {
+          detached: true,
+          stdio: "ignore",
+          env: { ...process.env, ..._profileEnvOverride },
+        });
+        child.unref();
+        console.log(`Starting server with profile...`);
+        break;
       }
       await run();
       try { await enableConfiguredClientsForStart(); } catch {}
       break;
     case "stop":
       try { await disableConfiguredClientsForStop(); } catch {}
+      // Compute profile paths directly (not via shared constants which may be stale)
+      const _os = await import("os");
+      const _path = await import("path");
+      const _homeDir = _path.join(_os.homedir(), ".claude-code-router");
+      const _profilesDir = _path.join(_homeDir, "profiles");
+      const _activeProfileFile = _path.join(_profilesDir, "active-profile");
+      let _activeName = "default";
+      try { _activeName = readFileSync(_activeProfileFile, "utf-8").trim() || "default"; } catch {}
+
+      const _getPidFile = (name: string) =>
+        name === "default"
+          ? _path.join(_homeDir, ".claude-code-router.pid")
+          : _path.join(_profilesDir, name, ".claude-code-router.pid");
+
       if (process.argv[3] === "--all") {
         // Stop all profile servers
-        const profiles = await listProfiles();
-        let stoppedCount = 0;
-        for (const p of profiles) {
-          const pidFile = p.name === "default"
-            ? PID_FILE
-            : require("@wengine-ai/claude-code-router-shared").getProfilePidFile(p.name);
-          try {
-            const pid = parseInt(readFileSync(pidFile, "utf-8"));
-            process.kill(pid);
-            fs.unlinkSync(pidFile);
-            stoppedCount++;
-          } catch {}
-        }
-        console.log(`Stopped ${stoppedCount} profile server(s).`);
-      } else {
-        // Stop active profile's server
-        await ensureDefaultProfile();
-        const activeProfileForStop = await getActiveProfile();
-        const pidFile = activeProfileForStop === "default"
-          ? PID_FILE
-          : require("@wengine-ai/claude-code-router-shared").getProfilePidFile(activeProfileForStop);
+        let _stoppedCount = 0;
         try {
-          const pid = parseInt(readFileSync(pidFile, "utf-8"));
-          process.kill(pid);
-          try { fs.unlinkSync(pidFile); } catch {}
-          if (existsSync(REFERENCE_COUNT_FILE)) {
-            try {
-              fs.unlinkSync(REFERENCE_COUNT_FILE);
-            } catch (e) {
-              // Ignore cleanup errors
+          const _entries = fs.readdirSync(_profilesDir, { withFileTypes: true });
+          for (const _entry of _entries) {
+            if (_entry.isDirectory() && !_entry.name.startsWith(".")) {
+              try {
+                const pid = parseInt(readFileSync(_getPidFile(_entry.name), "utf-8"));
+                process.kill(pid);
+                fs.unlinkSync(_getPidFile(_entry.name));
+                _stoppedCount++;
+              } catch {}
             }
           }
-          console.log(
-            `Profile "${activeProfileForStop}" service has been successfully stopped.`
-          );
+        } catch {}
+        // Also stop default profile
+        try {
+          const pid = parseInt(readFileSync(_getPidFile("default"), "utf-8"));
+          process.kill(pid);
+          fs.unlinkSync(_getPidFile("default"));
+          _stoppedCount++;
+        } catch {}
+        console.log(`Stopped ${_stoppedCount} profile server(s).`);
+      } else {
+        // Stop active profile's server
+        const _pidFile = _getPidFile(_activeName);
+        try {
+          const pid = parseInt(readFileSync(_pidFile, "utf-8"));
+          process.kill(pid);
+          try { fs.unlinkSync(_pidFile); } catch {}
+          if (existsSync(REFERENCE_COUNT_FILE)) {
+            try { fs.unlinkSync(REFERENCE_COUNT_FILE); } catch {}
+          }
+          console.log(`Profile "${_activeName}" service has been successfully stopped.`);
         } catch (e) {
-          console.log(
-            "Failed to stop the service. It may have already been stopped."
-          );
+          console.log("Failed to stop the service. It may have already been stopped.");
           try { cleanupPidFile(); } catch {}
         }
       }
@@ -499,9 +536,27 @@ async function main() {
       break;
     case "restart":
       await ensureDefaultProfile();
-      const activeProfileForRestart = await getActiveProfile();
-      if (activeProfileForRestart !== "default") {
-        process.env.CCR_CONFIG_DIR = getProfileDir(activeProfileForRestart);
+      if (_profileEnvOverride) {
+        // Stop active profile's server first
+        try { await disableConfiguredClientsForStop(); } catch {}
+        const pidFile = require("@wengine-ai/claude-code-router-shared").getProfilePidFile(
+          await getActiveProfile()
+        );
+        try {
+          const pid = parseInt(readFileSync(pidFile, "utf-8"));
+          process.kill(pid);
+          try { fs.unlinkSync(pidFile); } catch {}
+        } catch {}
+        // Spawn new process with correct CCR_CONFIG_DIR
+        const cliPath = join(__dirname, "cli.js");
+        const child = spawn("node", [cliPath, "start"], {
+          detached: true,
+          stdio: "ignore",
+          env: { ...process.env, ..._profileEnvOverride },
+        });
+        child.unref();
+        console.log(`Restarting server with profile...`);
+        break;
       }
       try { await disableConfiguredClientsForStop(); } catch {}
       await restartService();
