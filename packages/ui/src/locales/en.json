@@ -27,6 +27,8 @@
     "update_check_failed": "Failed to check for updates",
     "update_successful": "Update successful",
     "update_failed": "Update failed",
+    "updating": "Updating",
+    "update_timeout": "Update timed out. Please retry or run npm install -g manually",
     "json_editor": "JSON Editor",
     "log_viewer": "Log Viewer",
     "presets": "Presets",

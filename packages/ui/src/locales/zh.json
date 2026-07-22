@@ -27,6 +27,8 @@
     "update_check_failed": "检查更新失败",
     "update_successful": "更新成功",
     "update_failed": "更新失败",
+    "updating": "更新中",
+    "update_timeout": "更新超时，请稍后重试或手动执行 npm install -g",
     "json_editor": "JSON 编辑器",
     "log_viewer": "日志查看器",
     "presets": "预设",
