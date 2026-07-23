@@ -117,28 +117,6 @@ export function SettingsPage() {
     [config?.Providers]
   );
 
-  const piExtendedContextRatio = config?.Clients?.pi?.routing?.extendedContextRatio ?? 0.8;
-
-  const updatePiExtendedContextRatio = (value: number) => {
-    if (!Number.isFinite(value) || value <= 0 || value > 1) return;
-    setConfig((current) => {
-      if (!current) return current;
-      return {
-        ...current,
-        Clients: {
-          ...(current.Clients || {}),
-          pi: {
-            ...(current.Clients?.pi || {}),
-            routing: {
-              ...(current.Clients?.pi?.routing || {}),
-              extendedContextRatio: value,
-            },
-          },
-        },
-      };
-    });
-  };
-
   const modelOptions = useMemo(
     () =>
       providers.flatMap((provider) => {
@@ -1096,31 +1074,6 @@ export function SettingsPage() {
                           <div className="break-all text-gray-800">{client.modelAlias || "-"}</div>
                         </div>
                       </div>
-                      {client.id === "pi" && (
-                        <div className="mt-4 rounded border border-blue-200 bg-blue-50/70 p-3">
-                          <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_9rem] md:items-center">
-                            <div>
-                              <div className="text-xs font-medium text-blue-900">
-                                {t("clients.pi_extended_context_ratio")}
-                              </div>
-                              <div className="mt-1 text-xs text-blue-700">
-                                {t("clients.pi_extended_context_ratio_desc")}
-                              </div>
-                            </div>
-                            <div className="space-y-1">
-                              <Input
-                                type="number"
-                                min={1}
-                                max={100}
-                                step={1}
-                                value={Math.round(piExtendedContextRatio * 100)}
-                                onChange={(event) => updatePiExtendedContextRatio(Number(event.target.value) / 100)}
-                              />
-                              <div className="text-right text-[10px] text-blue-700">%</div>
-                            </div>
-                          </div>
-                        </div>
-                      )}
                       {client.details && (
                         <div className="mt-3 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
                           {client.details}

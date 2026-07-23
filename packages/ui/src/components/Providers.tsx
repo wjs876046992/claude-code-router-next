@@ -950,6 +950,56 @@ export function Providers() {
                 />
               </div>
               )}
+              {/* Aliyun MaaS Token Plan: Cookie (quota_token) + SEC_TOKEN (quota_sec_token).
+                  Only shown for maas.aliyuncs.com hosts; dashscope/xfyun keep the block above. */}
+              {editingProvider.api_base_url && (/maas\.aliyuncs\.com/i.test(editingProvider.api_base_url)) && (
+              <div className="space-y-3 rounded-lg border bg-slate-50/50 p-3">
+                <div className="space-y-2">
+                  <div className="flex items-center gap-1">
+                    <Label htmlFor="quota_token_maas">{t("providers.quota_token")}</Label>
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <HelpCircle className="h-3.5 w-3.5 text-gray-400 cursor-help" />
+                        </TooltipTrigger>
+                        <TooltipContent side="top" className="max-w-xs text-xs">
+                          {t("providers.quota_token_tooltip_maas")}
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  </div>
+                  <Input
+                    id="quota_token_maas"
+                    type="password"
+                    placeholder={t("providers.quota_token_placeholder")}
+                    value={editingProvider.quota_token || ''}
+                    onChange={(e) => handleProviderChange(editingProviderIndex, 'quota_token', e.target.value)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <div className="flex items-center gap-1">
+                    <Label htmlFor="quota_sec_token">{t("providers.quota_sec_token")}</Label>
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <HelpCircle className="h-3.5 w-3.5 text-gray-400 cursor-help" />
+                        </TooltipTrigger>
+                        <TooltipContent side="top" className="max-w-xs text-xs">
+                          {t("providers.quota_sec_token_tooltip")}
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  </div>
+                  <Input
+                    id="quota_sec_token"
+                    type="password"
+                    placeholder={t("providers.quota_sec_token_placeholder")}
+                    value={editingProvider.quota_sec_token || ''}
+                    onChange={(e) => handleProviderChange(editingProviderIndex, 'quota_sec_token', e.target.value)}
+                  />
+                </div>
+              </div>
+              )}
               {/* Wakeup configuration */}
               <div className="space-y-4 rounded-lg border bg-slate-50/50 p-3">
                 <div className="flex items-center justify-between">

@@ -1,12 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { readFileSync, statSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
-import {
-  getContextWindow,
-  type ClientConfig,
-  type ClientId,
-} from "@wengine-ai/claude-code-router-shared";
 import { extractSessionIdFromUserId } from "../utils/session-id";
 
 export const CLIENT_TYPES = [
@@ -27,7 +19,6 @@ export interface ClientContext {
   usageScope: ClientUsageScope;
   stableSessionId?: string;
   supportsExplicitExtendedContext: boolean;
-  contextWindow?: number;
   longContextThreshold?: number;
   extendedContextThreshold?: number;
 }
@@ -36,17 +27,6 @@ export interface ClientAdapter {
   type: ClientType;
   createContext(req: any, config: Record<string, any>): ClientContext;
 }
-
-interface PiModelsCacheEntry {
-  mtimeMs: number;
-  size: number;
-  contextWindows: Map<string, number>;
-  firstContextWindow?: number;
-}
-
-const PI_DEFAULT_EXTENDED_CONTEXT_RATIO = 0.8;
-const PI_ROUTING_KEYS = new Set(["extendedContextRatio"]);
-const piModelsCache = new Map<string, PiModelsCacheEntry>();
 
 function isObject(value: unknown): value is Record<string, any> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -69,129 +49,6 @@ function getPathname(req: any): string {
   } catch {
     return req.url;
   }
-}
-
-function normalizeRequestModel(model: unknown): string {
-  if (typeof model !== "string") return "";
-  const routeModel = model.includes(",") ? model.split(",").pop() || model : model;
-  return routeModel.trim().replace(/\[1m\]$/i, "").toLowerCase();
-}
-
-function positiveInteger(value: unknown): number | undefined {
-  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
-    return Math.floor(value);
-  }
-  if (typeof value === "string" && /^\d+$/.test(value.trim())) {
-    const parsed = Number.parseInt(value.trim(), 10);
-    return parsed > 0 ? parsed : undefined;
-  }
-  return undefined;
-}
-
-function expandHome(filePath: string): string {
-  if (filePath === "~") return homedir();
-  if (filePath.startsWith("~/")) return join(homedir(), filePath.slice(2));
-  return filePath;
-}
-
-function getRawClientConfig(config: Record<string, any>, key: ClientId): ClientConfig {
-  const clients = isObject(config?.Clients) ? config.Clients : {};
-  return isObject(clients[key]) ? clients[key] : {};
-}
-
-function readPiModelsCache(modelsPath: string): PiModelsCacheEntry | undefined {
-  let fileStat: ReturnType<typeof statSync>;
-  try {
-    fileStat = statSync(modelsPath);
-  } catch {
-    piModelsCache.delete(modelsPath);
-    return undefined;
-  }
-
-  const cached = piModelsCache.get(modelsPath);
-  if (cached && cached.mtimeMs === fileStat.mtimeMs && cached.size === fileStat.size) {
-    return cached;
-  }
-
-  try {
-    const parsed = JSON.parse(readFileSync(modelsPath, "utf8"));
-    const provider = isObject(parsed?.providers) && isObject(parsed.providers.ccr)
-      ? parsed.providers.ccr
-      : undefined;
-    const models = Array.isArray(provider?.models) ? provider.models : [];
-    const contextWindows = new Map<string, number>();
-    let firstContextWindow: number | undefined;
-
-    for (const model of models) {
-      if (!isObject(model)) continue;
-      const contextWindow = positiveInteger(model.contextWindow);
-      if (!contextWindow) continue;
-      if (!firstContextWindow) firstContextWindow = contextWindow;
-      if (typeof model.id === "string" && model.id.trim()) {
-        contextWindows.set(normalizeRequestModel(model.id), contextWindow);
-      }
-    }
-
-    const entry: PiModelsCacheEntry = {
-      mtimeMs: fileStat.mtimeMs,
-      size: fileStat.size,
-      contextWindows,
-      firstContextWindow,
-    };
-    piModelsCache.set(modelsPath, entry);
-    return entry;
-  } catch {
-    piModelsCache.delete(modelsPath);
-    return undefined;
-  }
-}
-
-function getPiContextWindow(req: any, config: Record<string, any>): number {
-  const piConfig = getRawClientConfig(config, "pi");
-  const configDir = expandHome(piConfig.configPath || "~/.pi/agent");
-  const cache = readPiModelsCache(join(configDir, "models.json"));
-  const requestModel = normalizeRequestModel(req?.originalModel || req?.body?.model);
-  const configuredAlias = normalizeRequestModel(piConfig.modelAlias || "ccr-opus");
-
-  return (
-    (requestModel ? cache?.contextWindows.get(requestModel) : undefined) ||
-    (configuredAlias ? cache?.contextWindows.get(configuredAlias) : undefined) ||
-    cache?.firstContextWindow ||
-    getContextWindow(config)
-  );
-}
-
-function parsePiRouting(config: Record<string, any>): {
-  extendedContextRatio: number;
-} {
-  const routing = getRawClientConfig(config, "pi").routing;
-  if (routing === undefined) {
-    return {
-      extendedContextRatio: PI_DEFAULT_EXTENDED_CONTEXT_RATIO,
-    };
-  }
-  if (!isObject(routing)) {
-    throw new Error("Clients.pi.routing must be an object");
-  }
-
-  for (const key of Object.keys(routing)) {
-    if (!PI_ROUTING_KEYS.has(key)) {
-      throw new Error(`Clients.pi.routing contains unsupported field: ${key}`);
-    }
-  }
-
-  const validateRatio = (key: "extendedContextRatio", fallback: number) => {
-    const value = routing[key];
-    if (value === undefined) return fallback;
-    if (typeof value !== "number" || !Number.isFinite(value) || value <= 0 || value > 1) {
-      throw new Error(`Clients.pi.routing.${key} must be a finite number greater than 0 and at most 1`);
-    }
-    return value;
-  };
-
-  const extendedContextRatio = validateRatio("extendedContextRatio", PI_DEFAULT_EXTENDED_CONTEXT_RATIO);
-
-  return { extendedContextRatio };
 }
 
 function requestScopeContext(
@@ -228,17 +85,14 @@ const claudeCodeAdapter: ClientAdapter = {
 
 const piAdapter: ClientAdapter = {
   type: "pi",
-  createContext(req, config) {
-    const contextWindow = getPiContextWindow(req, config);
-    const routing = parsePiRouting(config);
-    // pi's longContextThreshold is NOT set here — it must inherit the absolute
-    // threshold chain: familyConfig.longContextThreshold -> Router.longContextThreshold -> 60000.
-    // Only the extendedContextThreshold is derived from contextWindow * extendedContextRatio.
-    return {
-      ...requestScopeContext("pi", false),
-      contextWindow,
-      extendedContextThreshold: Math.max(1, Math.floor(contextWindow * routing.extendedContextRatio)),
-    };
+  createContext() {
+    // pi no longer derives extendedContextThreshold from a per-client ratio of
+    // its own context window. Like every other client it inherits the absolute
+    // threshold chain: familyConfig.extendedContextThreshold ->
+    // Router.extendedContextThreshold -> 200000. The threshold represents the
+    // default target model's usable window (which other models may not support),
+    // not pi's own client window, so a uniform absolute value is correct.
+    return requestScopeContext("pi", false);
   },
 };
 
@@ -383,5 +237,6 @@ export function applyClientAdapter(
 }
 
 export function clearClientAdapterCaches(): void {
-  piModelsCache.clear();
+  // No per-client caches remain after the pi extendedContextRatio removal.
+  // Kept as a no-op so server lifecycle callers (onClose) stay compatible.
 }

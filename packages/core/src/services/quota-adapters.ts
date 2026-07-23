@@ -389,6 +389,368 @@ class AliyunCodingPlanQuotaAdapter extends BaseQuotaAdapter {
   }
 }
 
+/**
+ * Parse the response payload from the cs-data.qianwenai.com tokenplan usage
+ * endpoint into a ProviderQuotaResult.
+ *
+ * Confirmed response shape (authenticated sample):
+ *   payload.data.DataV2.data.data = {
+ *     per5HourPercentage: 0.0663,        // fraction in [0,1] used this 5h window
+ *     per1WeekPercentage: 0.3743,       // fraction in [0,1] used this 7d window
+ *     per5HourResetTime:  1784546640000, // ms epoch, 5h window reset
+ *     per1WeekResetTime:  1785058140000  // ms epoch, 7d window reset
+ *   }
+ *
+ * The endpoint returns USAGE FRACTIONS, not absolute token counts. We map each
+ * fraction to a percentage display: used = fraction*100, limit = 100, which the
+ * UI renders as "6.6%" (matching the Zhipu TOKENS_LIMIT percentage path). The
+ * gateway error envelope (success:false / errorCode) is rejected up front so
+ * an unauthenticated NotLogined response is never mined for quota.
+ */
+export function parseAliyunTokenPlanUsage(payload: any): ProviderQuotaResult | null {
+  if (!payload || typeof payload !== "object") return null;
+
+  // Reject gateway-level errors early (e.g. BailianGateway.Login.NotLogined).
+  const gatewayError = readGatewayError(payload);
+  if (gatewayError) return null;
+
+  // The usage object lives at payload.data.DataV2.data.data. Walk every nested
+  // object candidate so shallower wraps are still tolerated.
+  for (const candidate of collectObjectCandidates(payload)) {
+    const result = extractTokenPlanQuota(candidate);
+    if (result) return result;
+  }
+  return null;
+}
+
+// Confirmed token-plan field names. The percentage fields are fractions in
+// [0,1]; the reset fields are ms-epoch timestamps.
+const FIELD_5H_PERCENTAGE = ["per5HourPercentage", "per5HourUsedPercentage", "fiveHourPercentage"];
+const FIELD_7D_PERCENTAGE = ["per1WeekPercentage", "perWeekPercentage", "per1WeekUsedPercentage"];
+const FIELD_5H_RESET = ["per5HourResetTime", "per5HourNextResetTime", "fiveHourResetTime"];
+const FIELD_7D_RESET = ["per1WeekResetTime", "per1WeekNextResetTime", "perWeekResetTime"];
+
+function extractTokenPlanQuota(data: any): ProviderQuotaResult | null {
+  if (!data || typeof data !== "object") return null;
+
+  const result: ProviderQuotaResult = {};
+
+  // 5-hour window: fraction -> percentage display (used = pct, limit = 100).
+  const pct5h = pickNumber(data, FIELD_5H_PERCENTAGE);
+  if (pct5h !== undefined) {
+    const pct = fractionToPercent(pct5h);
+    result.usedDailyBalance = pct;
+    result.limitDaily = 100;
+  }
+
+  // 7-day window: fraction -> percentage display (stored in the 7d/balance
+  // slots: usedBalance/totalBalance, no currency so UI treats it as rateLimit).
+  const pct7d = pickNumber(data, FIELD_7D_PERCENTAGE);
+  if (pct7d !== undefined) {
+    const pct = fractionToPercent(pct7d);
+    result.usedBalance = pct;
+    result.totalBalance = 100;
+  }
+
+  const reset5h = pickNumber(data, FIELD_5H_RESET);
+  if (reset5h !== undefined) {
+    const iso = tryParseDate(reset5h);
+    if (iso) result.resetTime = iso;
+  }
+
+  const reset7d = pickNumber(data, FIELD_7D_RESET);
+  if (reset7d !== undefined) {
+    const iso = tryParseDate(reset7d);
+    if (iso) {
+      result.resetTime7d = iso;
+      if (!result.resetTime) result.resetTime = iso;
+    }
+  }
+
+  if (
+    result.usedDailyBalance === undefined &&
+    result.limitDaily === undefined &&
+    result.usedBalance === undefined &&
+    result.totalBalance === undefined &&
+    result.resetTime === undefined
+  ) {
+    return null;
+  }
+
+  return result;
+}
+
+/**
+ * Convert a usage fraction in [0,1] to a percentage value in [0,100].
+ * Accepts values >1 (e.g. 1.5 meaning 150% over) and clamps negatives to 0.
+ */
+function fractionToPercent(fraction: number): number {
+  if (!Number.isFinite(fraction)) return 0;
+  if (fraction <= 0) return 0;
+  return Math.round(fraction * 10000) / 100; // 2dp, e.g. 0.0663618 -> 6.64
+}
+
+function pickNumber(data: any, names: string[]): number | undefined {
+  for (const name of names) {
+    const value = parseOptionalNumber(data?.[name]);
+    if (value !== undefined) return value;
+  }
+  return undefined;
+}
+
+/**
+ * Collect the payload itself plus every nested plain object reachable through
+ * the BroadScope gateway envelope keys (`data`, `Data`, `DataV2`). Each
+ * candidate is tried by the parser, so the confirmed
+ * `data.DataV2.data.data.<result>` depth and shallower wraps are both covered.
+ */
+function collectObjectCandidates(payload: any): any[] {
+  const candidates: any[] = [];
+  const seen = new WeakSet();
+  const ENVELOPE_KEYS = ["data", "Data", "DataV2"];
+
+  const visit = (node: any) => {
+    if (!node || typeof node !== "object") return;
+    if (seen.has(node)) return;
+    seen.add(node);
+    candidates.push(node);
+    for (const key of ENVELOPE_KEYS) {
+      if (node[key] && typeof node[key] === "object") {
+        visit(node[key]);
+      }
+    }
+  };
+
+  visit(payload);
+  return candidates;
+}
+
+function readGatewayError(payload: any): string | null {
+  const data = payload?.data;
+  if (data && typeof data === "object") {
+    if (data.success === false || data.errorCode || data.errorMsg) {
+      return String(data.errorCode || data.errorMsg || "gateway-error");
+    }
+  }
+  return null;
+}
+
+function tryParseDate(value: unknown): string | undefined {
+  if (typeof value !== "string" && typeof value !== "number") return undefined;
+  // Numeric timestamps may be seconds (Aliyun gateways sometimes use s) —
+  // anything below 1e12 is treated as seconds and scaled to ms.
+  let coerced = value;
+  if (typeof value === "number" && value < 1e12) {
+    coerced = value * 1000;
+  }
+  if (typeof value === "string") {
+    const asNum = Number(value.trim());
+    if (Number.isFinite(asNum) && asNum < 1e12) {
+      coerced = asNum * 1000;
+    }
+  }
+  const date = new Date(coerced);
+  return isNaN(date.getTime()) ? undefined : date.toISOString();
+}
+
+class AliyunTokenPlanQuotaAdapter extends BaseQuotaAdapter {
+  async queryQuota(
+    provider: LLMProvider,
+    timeoutMs: number,
+    proxyUrl?: string
+  ): Promise<ProviderQuotaResult | null> {
+    // quotaToken carries the console cookie string. Trim defensively so an
+    // accidental whitespace/newline in the config cannot corrupt the header.
+    const cookie = provider.quotaToken?.trim();
+    if (!cookie) return null;
+
+    const secToken = provider.quotaSecToken?.trim();
+
+    // When a sec_token is configured, prefer the official BroadScope
+    // gateway (bailian-cs.console.aliyun.com). If that fails or yields a null
+    // parse result, fall back to the legacy cs-data.qianwenai.com endpoint so
+    // quota reporting degrades gracefully rather than disappearing.
+    if (secToken) {
+      // queryOfficialEndpoint catches its own fetch/parse errors, but setup
+      // code (e.g. extractCookieValue → decodeURIComponent) can still throw on
+      // a malformed cookie. Wrap the call so any such exception degrades to the
+      // legacy endpoint instead of escaping and killing the whole probe.
+      try {
+        const official = await this.queryOfficialEndpoint(
+          cookie,
+          secToken,
+          timeoutMs,
+          proxyUrl
+        );
+        if (official) return official;
+      } catch {
+        // Never log credentials — silently fall through to the legacy endpoint.
+      }
+
+      // Fallback to the legacy endpoint — never log credentials on failure.
+      return this.queryLegacyEndpoint(cookie, timeoutMs, proxyUrl);
+    }
+
+    // No sec_token — use the legacy cs-data.qianwenai.com request directly.
+    return this.queryLegacyEndpoint(cookie, timeoutMs, proxyUrl);
+  }
+
+  /**
+   * Query the official Bailian console gateway (BroadScope Aspn format).
+   * Targets bailian-cs.console.aliyun.com with a form body that includes
+   * sec_token, and a cornerstoneParam matching the official frontend
+   * (feURL pointing at the token-plan personal subscription page).
+   * Returns null on any error or unparseable response — the caller decides
+   * whether to fall back to the legacy endpoint.
+   */
+  private async queryOfficialEndpoint(
+    cookie: string,
+    secToken: string,
+    timeoutMs: number,
+    proxyUrl?: string
+  ): Promise<ProviderQuotaResult | null> {
+    const apiName = "zeldaHttp.apikeyMgr./tokenplan/personal/api/v2/usage";
+
+    // Extract X-Anonymous-Id from the cna cookie value — the official
+    // frontend reads the Alibaba CDN tracking cookie for this field.
+    const anonymousId = extractCookieValue(cookie, "cna") || "";
+
+    const params = JSON.stringify({
+      Api: apiName,
+      V: "1.0",
+      Data: {
+        cornerstoneParam: {
+          feTraceId: `ccr-${Date.now()}`,
+          feURL: "https://bailian.console.aliyun.com/cn-beijing/?tab=plan#/efm/subscription/token-plan/personal",
+          protocol: "V2",
+          console: "ONE_CONSOLE",
+          // Keep the stable console routing fields aligned with the coding-plan
+          // request, which targets the same BroadScope gateway.
+          productCode: "p_efm",
+          switchAgent: 10736808,
+          switchUserType: 3,
+          domain: "bailian.console.aliyun.com",
+          consoleSite: "BAILIAN_ALIYUN",
+          userNickName: "",
+          userPrincipalName: "",
+          xsp_lang: "zh-CN",
+          "X-Anonymous-Id": anonymousId,
+        },
+      },
+    });
+
+    // Official gateway expects sec_token in the form body alongside params
+    // and region — this is the authenticated parameter that replaces the
+    // cookie-only auth of the legacy endpoint.
+    const body = new URLSearchParams({
+      params,
+      region: "cn-beijing",
+      sec_token: secToken,
+    }).toString();
+
+    const fetchOptions: RequestInit & { dispatcher?: unknown } = {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/x-www-form-urlencoded",
+        Cookie: cookie,
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
+        Origin: "https://bailian.console.aliyun.com",
+        Referer: "https://bailian.console.aliyun.com/cn-beijing/?tab=plan",
+      },
+      body,
+      signal: AbortSignal.timeout(timeoutMs),
+    };
+
+    try {
+      if (proxyUrl) {
+        fetchOptions.dispatcher = getProxyDispatcher(proxyUrl);
+      }
+      // `_v` is literally "undefined" in the confirmed console request.
+      const response = await fetch(
+        `https://bailian-cs.console.aliyun.com/data/api.json?action=BroadScopeAspnGateway&product=sfm_bailian&api=${encodeURIComponent(apiName)}&_v=undefined`,
+        fetchOptions
+      );
+      if (!response.ok) return null;
+
+      const payload = await response.json();
+      return parseAliyunTokenPlanUsage(payload);
+    } catch {
+      // Never output credentials — silently return null and let the caller
+      // decide whether to fall back to the legacy endpoint.
+      return null;
+    }
+  }
+
+  /**
+   * Query the legacy cs-data.qianwenai.com tokenplan usage endpoint with
+   * cookie-based auth (no sec_token). This is the original request path
+   * used when no sec_token is configured, and the fallback when the
+   * official gateway fails.
+   */
+  private async queryLegacyEndpoint(
+    cookie: string,
+    timeoutMs: number,
+    proxyUrl?: string
+  ): Promise<ProviderQuotaResult | null> {
+    // The token-plan usage endpoint is a BroadScope Aspn Gateway call, the
+    // same gateway pattern as the coding-plan adapter. The gateway expects a
+    // POST with a form-encoded body carrying `params` (JSON envelope with
+    // Api/V/Data) and `region`. GET requests are rejected by the gateway, so
+    // we must build the body explicitly instead of reusing fetchJson (which
+    // would force a Bearer Authorization header).
+    const apiName = "zeldaHttp.apikeyMgr./tokenplan/personal/api/v2/usage";
+    const params = JSON.stringify({
+      Api: apiName,
+      V: "1.0",
+      Data: {
+        cornerstoneParam: {
+          feTraceId: `ccr-${Date.now()}`,
+          feURL: "https://bailian.console.aliyun.com/",
+          protocol: "V2",
+          console: "ONE_CONSOLE",
+          productCode: "p_efm",
+          domain: "bailian.console.aliyun.com",
+          consoleSite: "BAILIAN_ALIYUN",
+          xsp_lang: "zh-CN",
+        },
+      },
+    });
+    const body = new URLSearchParams({ params, region: "cn-beijing" }).toString();
+
+    const fetchOptions: RequestInit & { dispatcher?: unknown } = {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/x-www-form-urlencoded",
+        // Cookie-based auth — do NOT send Authorization Bearer.
+        Cookie: cookie,
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
+        Origin: "https://bailian.console.aliyun.com",
+        Referer: "https://bailian.console.aliyun.com/",
+      },
+      body,
+      signal: AbortSignal.timeout(timeoutMs),
+    };
+
+    try {
+      if (proxyUrl) {
+        fetchOptions.dispatcher = getProxyDispatcher(proxyUrl);
+      }
+      const response = await fetch(
+        `https://cs-data.qianwenai.com/data/api.json?product=sfm_bailian&action=BroadScopeAspnGateway&api=${encodeURIComponent(apiName)}`,
+        fetchOptions
+      );
+      if (!response.ok) return null;
+
+      const payload = await response.json();
+      return parseAliyunTokenPlanUsage(payload);
+    } catch {
+      return null;
+    }
+  }
+}
+
 class XfyunCodingPlanQuotaAdapter extends BaseQuotaAdapter {
   async queryQuota(
     provider: LLMProvider,
@@ -624,6 +986,7 @@ const openRouterQuotaAdapter = new OpenRouterQuotaAdapter();
 const siliconFlowQuotaAdapter = new SiliconFlowQuotaAdapter();
 const zhipuQuotaAdapter = new ZhipuQuotaAdapter();
 const aliyunCodingPlanQuotaAdapter = new AliyunCodingPlanQuotaAdapter();
+const aliyunTokenPlanQuotaAdapter = new AliyunTokenPlanQuotaAdapter();
 const xfyunCodingPlanQuotaAdapter = new XfyunCodingPlanQuotaAdapter();
 const kimiCodingPlanQuotaAdapter = new KimiCodingPlanQuotaAdapter();
 const miniMaxCodingPlanQuotaAdapter = new MiniMaxCodingPlanQuotaAdapter();
@@ -674,12 +1037,26 @@ export function getQuotaAdapter(baseUrl: string): QuotaAdapter | null {
     return zhipuQuotaAdapter;
   }
 
-  // Aliyun Coding Plan quota adapter - matches dashscope.aliyuncs.com or coding.dashscope.aliyuncs.com
+  // Aliyun Coding Plan quota adapter — queries the Bailian console
+  // (queryCodingPlanInstanceInfoV2) with a console cookie. Matches the
+  // DashScope inference host (dashscope.aliyuncs.com).
   if (
     hostname === "dashscope.aliyuncs.com" ||
     hostname.endsWith(".dashscope.aliyuncs.com")
   ) {
     return aliyunCodingPlanQuotaAdapter;
+  }
+
+  // Aliyun Token Plan quota adapter — dedicated adapter for the
+  // maas.aliyuncs.com token-plan gateway (e.g.
+  // token-plan.cn-beijing.maas.aliyuncs.com). Queries the
+  // cs-data.qianwenai.com tokenplan usage endpoint with a console cookie,
+  // separate from the DashScope coding-plan adapter.
+  if (
+    hostname === "maas.aliyuncs.com" ||
+    hostname.endsWith(".maas.aliyuncs.com")
+  ) {
+    return aliyunTokenPlanQuotaAdapter;
   }
 
   // iFlytek Coding Plan quota adapter - model API hosts use xf-yun.com,

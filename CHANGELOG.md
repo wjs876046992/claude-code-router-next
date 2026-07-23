@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [2.3.236] - 2026-07-22
+
+### Added
+
+- **阿里云 Token Plan 用量查询（5h/7d 额度）**: 为 `*.maas.aliyuncs.com`（如 `token-plan.cn-beijing.maas.aliyuncs.com`）的 Anthropic 兼容网关新增专用 `AliyunTokenPlanQuotaAdapter`，与 DashScope Coding Plan 适配器分离。它向 Token Plan 专用用量接口 `zeldaHttp.apikeyMgr./tokenplan/personal/api/v2/usage` 发起 BroadScope `POST` 请求（表单 `params`+`region`，Cookie 鉴权、无 Bearer），解析确认的 `DataV2` 响应字段 `per5HourPercentage` / `per1WeekPercentage`（用量分数）与 `per5HourResetTime` / `per1WeekResetTime`（重置时间），并把分数映射为 5h/7d 百分比展示，与智谱 TOKENS_LIMIT 百分比路径一致。
+- **`quota_sec_token` 配置项与官方网关**: provider 新增可选 `quota_sec_token`（映射到 `LLMProvider.quotaSecToken`）与 Web UI 密码输入框（仅 `maas.aliyuncs.com` 主机显示）。配置后切换到官方 `bailian-cs.console.aliyun.com` BroadScope 网关，form body 携带 `sec_token`、`region=cn-beijing` 与对齐真实控制台请求的 `cornerstoneParam`（字面 `_v=undefined`、稳定路由字段、动态 `feTraceId`、从 `cna` cookie 派生的 `X-Anonymous-Id`，不含会话级 `spm` 跟踪参数）。
+- **无匹配 adapter 的安全诊断日志**: `active-probe` 在 provider 无对应 quota adapter 时输出 debug 日志，且只记录从 baseUrl 推导的 hostname，绝不输出 `apiKey` / `quotaToken` / `quotaSecToken` 等凭据字段。
+
+### Changed
+
+- **pi 扩展上下文触发统一为绝对阈值**: pi 不再按自身 `contextWindow` × `extendedContextRatio` 推导 `extendedContextThreshold`，改为与 Claude Code / Codex 等一致地继承绝对阈值链（family → Router → 200000）。移除失效的 pi `models.json` contextWindow 缓存与 `Clients.pi.routing.extendedContextRatio` 配置面（UI 输入与 i18n），`longContext` 绝对阈值（默认 60000）不变；存量配置中残留的 `Clients.pi.routing` 被忽略而非报错。
+
+### Fixed
+
+- **官方 Token Plan 请求对齐真实控制台载荷与降级回退**: official 网关请求改为已确认的字面 `_v=undefined` 与稳定 `cornerstoneParam`；网关级登录错误信封（`success:false` / `errorCode`，如 `BailianGateway.Login.NotLogined`）不再被误采为用量；HTTP 错误、网络异常、解析为 null、甚至 malformed `cna` cookie 触发的 `decodeURIComponent` URIError 等 setup 异常都会安全降级到 legacy `cs-data.qianwenai.com` 端点（不带 `sec_token`），全链路静默返回 null、绝不输出凭据。
+- **测试 HOME 隔离真正到达 vitest worker**: 此前 `globalSetup` 通过 `process.env` 设置 `CCR_CONFIG_DIR`，但 vitest 配置里 `env: { CCR_CONFIG_DIR: '' }` 会覆盖 `process.env`，worker 看到的是空串，`HOME_DIR` 回退到真实 `~/.claude-code-router`，导致 core/shared 测试套件运行在用户真实配置目录、`POST /api/config` 类集成测试甚至会对真实项目配置做 takeover 同步。改为在 config-load 时创建临时 HOME 并把真实路径经 env 透传给 worker，确保隔离生效、不再写真实配置目录。
+
 ## [2.3.235] - 2026-07-18
 
 ### Fixed
