@@ -266,8 +266,8 @@ async function main() {
         // Parent process: spawn detached child to run in background
         const cliPath = join(__dirname, "cli.js");
         const childEnv = {
-          ...(_profileEnvOverride || {}),
           ...process.env,
+          ...(_profileEnvOverride || {}),
           CCR_INTERNAL_START: "1",
         };
         const child = spawn("node", [cliPath, "start"], {
