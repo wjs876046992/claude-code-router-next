@@ -62,46 +62,60 @@ export async function handleProfileCommand(args: string[]): Promise<void> {
       await setActiveProfile(name);
       console.log(`Switched to profile "${name}".`);
 
-      // If a server is running, restart it with the new profile
-      const { execSync } = await import("child_process");
+      // If a server was running, stop it and restart with the new profile
       const { join } = await import("path");
       const { homedir } = await import("os");
+      const { readdirSync } = await import("fs");
       const homeDir = join(homedir(), ".claude-code-router");
-      const defaultPidFile = join(homeDir, ".claude-code-router.pid");
       const profilesDir = join(homeDir, "profiles");
-      const profilePidFile = join(profilesDir, name, ".claude-code-router.pid");
 
+      // Find and stop ALL running servers (check all profile PID files)
+      const stoppedProfiles: string[] = [];
       const pidFiles = [
-        { name: "default", path: defaultPidFile },
-        { name, path: profilePidFile },
+        join(homeDir, ".claude-code-router.pid"), // default
+        join(profilesDir, name, ".claude-code-router.pid"), // target
       ];
+      // Also check all other profiles
+      try {
+        const entries = readdirSync(profilesDir, { withFileTypes: true });
+        for (const entry of entries) {
+          if (entry.isDirectory() && !entry.name.startsWith('.')) {
+            pidFiles.push(join(profilesDir, entry.name, ".claude-code-router.pid"));
+          }
+        }
+      } catch {}
 
-      let wasRunning = false;
       for (const pf of pidFiles) {
         try {
-          const pid = parseInt(await fs.readFile(pf.path, "utf-8"));
-          process.kill(pid, 0); // Check if process exists
-          wasRunning = true;
-          process.kill(pid);
-          try { await fs.unlink(pf.path); } catch {}
-          console.log(`Stopped old server (profile: ${pf.name}).`);
+          const content = await fs.readFile(pf, "utf-8");
+          const pid = parseInt(content.trim());
+          if (!isNaN(pid)) {
+            try { process.kill(pid); } catch {}
+            try { await fs.unlink(pf); } catch {}
+            stoppedProfiles.push(pf);
+          }
         } catch {}
       }
 
-      if (wasRunning) {
-        // Start server with the new profile
-        const cliPath = join(__dirname, "../../cli.js");
+      if (stoppedProfiles.length > 0) {
+        console.log(`Stopped ${stoppedProfiles.length} old server(s).`);
+      }
+
+      // Start server with the new profile
+      {
+        const { spawn } = await import("child_process");
+        // In the bundled CLI, __dirname is dist/, and cli.js is also in dist/
+        const cliPath = join(__dirname, "cli.js");
         const childEnv = name === "default"
           ? { ...process.env, CCR_INTERNAL_START: "1" }
           : { ...process.env, CCR_CONFIG_DIR: join(profilesDir, name), CCR_INTERNAL_START: "1" };
-        const { spawn } = await import("child_process");
         const child = spawn("node", [cliPath, "start"], {
           detached: true,
           stdio: "ignore",
           env: childEnv,
         });
         child.unref();
-        console.log(`Server restarted with profile "${name}".`);
+        console.log(`Server started with profile "${name}".`);
       }
       break;
     }

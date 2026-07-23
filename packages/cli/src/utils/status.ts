@@ -14,6 +14,9 @@ export async function showStatus() {
         console.log(`🌐 Port: ${info.port}`);
         console.log(`📡 API Endpoint: ${info.endpoint}`);
         console.log(`📄 PID File: ${info.pidFile}`);
+        if (info.profile && info.profile !== 'default') {
+            console.log(`🏷️  Profile: ${info.profile}`);
+        }
         console.log('');
         console.log('🚀 Ready to use! Run the following commands:');
         console.log('   ccr code    # Start coding with Claude');
