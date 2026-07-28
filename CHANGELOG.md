@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [2.3.237] - 2026-07-28
+
+### Fixed
+
+- **更新操作现在有明确进度反馈且不会无限挂起**: 点击“立即更新”后，弹窗按钮会进入禁用状态并显示旋转图标与“更新中…”文案，防止重复触发并发安装；前端请求与后端 `npm install -g` 均设置 5 分钟上限，后端同时将输出缓冲提高到 4 MB。超时会显示可读错误而非让界面永久等待。
+
+### Docs
+
+- **精简常驻 Claude 项目指引**: 从 `CLAUDE.md` 删除可直接由 `package.json` scripts、CLI `--help` 与仓库结构推导的构建命令、CLI 命令和依赖布局说明，保留非显然的安全约束、发布约定与架构注意事项，降低每次会话的固定上下文开销。
+
 ## [2.3.236] - 2026-07-22
 
 ### Added
