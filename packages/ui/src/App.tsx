@@ -154,10 +154,20 @@ function App() {
     try {
       const result = await api.performUpdate();
       if (result.success) {
-        setToast({ message: t('app.update_successful'), type: 'success' });
         setIsNewVersionAvailable(false);
         setIsUpdateDialogOpen(false);
         setHasCheckedUpdate(false);
+
+        if (result.restarting) {
+          // New package is on disk but this running process is still the old
+          // code. The server self-restarts; poll checkForUpdates until the new
+          // process is back and its version matches npm latest (hasUpdate:false),
+          // then reload to load the new frontend bundle.
+          setToast({ message: t('app.update_restarting'), type: 'success' });
+          await waitForServiceBack();
+        } else {
+          setToast({ message: t('app.update_successful'), type: 'success' });
+        }
       } else {
         setToast({ message: t('app.update_failed') + ': ' + result.message, type: 'error' });
       }
@@ -169,6 +179,29 @@ function App() {
     } finally {
       setIsPerformingUpdate(false);
     }
+  };
+
+  // After an in-place update, the server self-restarts. Poll checkForUpdates
+  // (which the new process serves once it's back up) until hasUpdate:false —
+  // meaning the new code has loaded and its version matches npm latest — then
+  // reload the page to pick up the new frontend bundle. Give up after ~30s and
+  // ask the user to refresh manually.
+  const waitForServiceBack = async () => {
+    const intervalMs = 1500;
+    const maxAttempts = 20;
+    for (let i = 0; i < maxAttempts; i++) {
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+      try {
+        const info = await api.checkForUpdates();
+        if (!info.hasUpdate) {
+          window.location.reload();
+          return;
+        }
+      } catch {
+        // Service is still down (old process killed, new one booting). Retry.
+      }
+    }
+    setToast({ message: t('app.update_refresh_hint'), type: 'warning' });
   };
 
   if (isCheckingAuth) {

@@ -180,8 +180,8 @@ class ApiClient {
   // Perform update. The npm global install can take minutes, so cap the
   // request at 5 min to match the backend exec timeout and avoid an
   // indefinite hang in the UI.
-  async performUpdate(): Promise<{ success: boolean; message: string }> {
-    return this.post<{ success: boolean; message: string }>('/update/perform', {}, 300_000);
+  async performUpdate(): Promise<{ success: boolean; restarting?: boolean; message: string }> {
+    return this.post<{ success: boolean; restarting?: boolean; message: string }>('/update/perform', {}, 300_000);
   }
 
   // Get log files list
