@@ -35,6 +35,7 @@ function App() {
   const [isUpdateDialogOpen, setIsUpdateDialogOpen] = useState(false);
   const [newVersionInfo, setNewVersionInfo] = useState<{ version: string; changelog: string } | null>(null);
   const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
+  const [isPerformingUpdate, setIsPerformingUpdate] = useState(false);
   const [hasCheckedUpdate, setHasCheckedUpdate] = useState(false);
   const [isUpdateFeatureAvailable, setIsUpdateFeatureAvailable] = useState(true);
   const hasAutoCheckedUpdate = useRef(false);
@@ -148,7 +149,8 @@ function App() {
   }, [config, navigate, hasCheckedUpdate, checkForUpdates]);
 
   const performUpdate = async () => {
-    if (!newVersionInfo) return;
+    if (!newVersionInfo || isPerformingUpdate) return;
+    setIsPerformingUpdate(true);
     try {
       const result = await api.performUpdate();
       if (result.success) {
@@ -161,7 +163,11 @@ function App() {
       }
     } catch (error) {
       console.error('Failed to perform update:', error);
-      setToast({ message: t('app.update_failed') + ': ' + (error as Error).message, type: 'error' });
+      const isTimeout = (error as Error)?.name === 'TimeoutError' || (error as Error)?.name === 'AbortError';
+      const message = isTimeout ? t('app.update_timeout') : (error as Error).message;
+      setToast({ message: t('app.update_failed') + ': ' + message, type: 'error' });
+    } finally {
+      setIsPerformingUpdate(false);
     }
   };
 
@@ -316,11 +322,18 @@ function App() {
               )}
             </div>
             <DialogFooter className="gap-2">
-              <Button variant="outline" onClick={() => setIsUpdateDialogOpen(false)} className="rounded-xl">
+              <Button variant="outline" onClick={() => setIsUpdateDialogOpen(false)} disabled={isPerformingUpdate} className="rounded-xl">
                 {t('app.later')}
               </Button>
-              <Button onClick={performUpdate} className="rounded-xl bg-primary hover:bg-primary/90">
-                {t('app.update_now')}
+              <Button onClick={performUpdate} disabled={isPerformingUpdate} className="rounded-xl bg-primary hover:bg-primary/90">
+                {isPerformingUpdate ? (
+                  <>
+                    <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                    {t('app.updating')}…
+                  </>
+                ) : (
+                  t('app.update_now')
+                )}
               </Button>
             </DialogFooter>
           </DialogContent>

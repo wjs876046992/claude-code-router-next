@@ -175,8 +175,13 @@ export async function performUpdate() {
       console.warn("Failed to create pre-upgrade config backup:", backupError);
     }
 
-    // Execute npm update command
-    const { stdout, stderr } = await execPromise(`npm install -g ${packageName}@latest`);
+    // Execute npm update command. Cap with a timeout (5 min) and enlarged
+    // maxBuffer so a slow/hung global npm install can't hold the request open
+    // forever and npm's progress output can't blow the default 1MB buffer.
+    const { stdout, stderr } = await execPromise(`npm install -g ${packageName}@latest`, {
+      timeout: 300_000,
+      maxBuffer: 4 * 1024 * 1024,
+    });
 
     if (stderr) {
       console.error("Update stderr:", stderr);
