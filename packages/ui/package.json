@@ -1,7 +1,7 @@
 {
   "name": "@wengine-ai/claude-code-router-ui",
   "private": true,
-  "version": "2.3.237",
+  "version": "2.3.238",
   "type": "module",
   "scripts": {
     "dev": "vite",

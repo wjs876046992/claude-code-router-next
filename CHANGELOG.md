@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [2.3.238] - 2026-07-28
+
+### Fixed
+
+- **更新成功后服务自动重启**: `performUpdate` 此前跑完 `npm install -g` 只返回一句“请手动重启”，从不触发重启，运行中的进程仍是旧代码，导致页面刷新后 `checkForUpdates` 持续判定有新版本，必须手动 `ccr restart` 才能恢复。现在 `npm install -g` 成功后，复用已有的 `/api/restart` 自重启模式（detached `ccr restart`）自动重启服务加载新代码；前端在服务重启回来后轮询 `checkForUpdates`，一旦 `hasUpdate:false` 即自动刷新页面加载新前端 bundle。
+- **更新请求并发锁**: 新增模块级 `updateInProgress` 守卫，刷新页面丢失 in-flight UI 状态后再次点击“立即更新”不会再触发第二次 `npm install -g`，直接返回“Update already in progress”。
+
+### Changed
+
+- **更新超时提示补全包名**: `app.update_timeout` 文案由“手动执行 `npm install -g`”改为“手动执行 `npm install -g @wengine-ai/claude-code-router-next@latest`”，用户照抄即可成功。
+
 ## [2.3.237] - 2026-07-28
 
 ### Fixed
