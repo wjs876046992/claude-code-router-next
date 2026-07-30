@@ -1,6 +1,6 @@
 import { copyFileSync, mkdirSync } from "fs";
 import { join } from "path";
-import { exec } from "child_process";
+import { exec, spawn } from "child_process";
 import { promisify } from "util";
 import { CONFIG_FILE, HOME_DIR } from "@wengine-ai/claude-code-router-shared";
 import { name as packageName } from "../../package.json";
@@ -161,7 +161,22 @@ function decodeHtmlEntities(value: string): string {
  * Perform update operation
  * @returns Update result
  */
+// Module-level guard: a second update request that arrives while npm install is
+// still running (e.g. the user refreshed the page and clicked again, losing the
+// in-flight UI state) would otherwise kick off a concurrent global install and
+// risk corrupting it. The UI also guards with isPerformingUpdate, but the server
+// is the authoritative boundary.
+let updateInProgress = false;
+
 export async function performUpdate() {
+  if (updateInProgress) {
+    return {
+      success: false,
+      message: "Update already in progress",
+    };
+  }
+
+  updateInProgress = true;
   try {
     // Take a durable pre-upgrade backup of config.json before the npm install.
     // Standard rolling backups can be overwritten by the new version's first save;
@@ -175,8 +190,13 @@ export async function performUpdate() {
       console.warn("Failed to create pre-upgrade config backup:", backupError);
     }
 
-    // Execute npm update command
-    const { stdout, stderr } = await execPromise(`npm install -g ${packageName}@latest`);
+    // Execute npm update command. Cap with a timeout (5 min) and enlarged
+    // maxBuffer so a slow/hung global npm install can't hold the request open
+    // forever and npm's progress output can't blow the default 1MB buffer.
+    const { stdout, stderr } = await execPromise(`npm install -g ${packageName}@latest`, {
+      timeout: 300_000,
+      maxBuffer: 4 * 1024 * 1024,
+    });
 
     if (stderr) {
       console.error("Update stderr:", stderr);
@@ -184,9 +204,22 @@ export async function performUpdate() {
 
     console.log("Update stdout:", stdout);
 
+    // The on-disk package is now the new version, but THIS process is still the
+    // old code. Restart the service so the new code loads and checkForUpdates
+    // stops reporting hasUpdate. Reuses the proven /api/restart self-restart
+    // pattern (detached `ccr restart` after a short delay so the HTTP response
+    // flushes before the process is killed).
+    setTimeout(() => {
+      spawn("ccr", ["restart"], {
+        detached: true,
+        stdio: "ignore",
+      }).unref();
+    }, 500);
+
     return {
       success: true,
-      message: "Update completed successfully. Please restart the application to apply changes.",
+      restarting: true,
+      message: "Update completed. Restarting service to apply changes.",
     };
   } catch (error) {
     console.error("Error performing update:", error);
@@ -194,6 +227,8 @@ export async function performUpdate() {
       success: false,
       message: `Failed to perform update: ${error instanceof Error ? error.message : "Unknown error"}`,
     };
+  } finally {
+    updateInProgress = false;
   }
 }
 

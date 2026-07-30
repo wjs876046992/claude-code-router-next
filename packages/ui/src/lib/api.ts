@@ -55,17 +55,24 @@ class ApiClient {
     return headers;
   }
 
-  // Generic fetch wrapper with base URL and authentication
-  private async apiFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+  // Generic fetch wrapper with base URL and authentication.
+  // An optional `timeoutMs` on `options` aborts the request after that many
+  // milliseconds so a hung server can't leave the caller pending forever.
+  private async apiFetch<T>(endpoint: string, options: RequestInit & { timeoutMs?: number } = {}): Promise<T> {
     const url = `${this.baseUrl}${endpoint}`;
+    const { timeoutMs, ...rest } = options;
 
     const config: RequestInit = {
-      ...options,
+      ...rest,
       headers: {
         ...this.createHeaders(),
-        ...options.headers,
+        ...rest.headers,
       },
     };
+
+    if (timeoutMs && config.signal === undefined) {
+      config.signal = AbortSignal.timeout(timeoutMs);
+    }
 
     try {
       const response = await fetch(url, config);
@@ -117,10 +124,11 @@ class ApiClient {
   }
 
   // POST request
-  async post<T>(endpoint: string, data: unknown): Promise<T> {
+  async post<T>(endpoint: string, data: unknown, timeoutMs?: number): Promise<T> {
     return this.apiFetch<T>(endpoint, {
       method: 'POST',
       body: JSON.stringify(data),
+      timeoutMs,
     });
   }
 
@@ -169,9 +177,11 @@ class ApiClient {
     return this.get<{ hasUpdate: boolean; latestVersion?: string; changelog?: string }>('/update/check');
   }
 
-  // Perform update
-  async performUpdate(): Promise<{ success: boolean; message: string }> {
-    return this.post<{ success: boolean; message: string }>('/update/perform', {});
+  // Perform update. The npm global install can take minutes, so cap the
+  // request at 5 min to match the backend exec timeout and avoid an
+  // indefinite hang in the UI.
+  async performUpdate(): Promise<{ success: boolean; restarting?: boolean; message: string }> {
+    return this.post<{ success: boolean; restarting?: boolean; message: string }>('/update/perform', {}, 300_000);
   }
 
   // Get log files list

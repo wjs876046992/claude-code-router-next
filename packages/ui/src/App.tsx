@@ -35,6 +35,7 @@ function App() {
   const [isUpdateDialogOpen, setIsUpdateDialogOpen] = useState(false);
   const [newVersionInfo, setNewVersionInfo] = useState<{ version: string; changelog: string } | null>(null);
   const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
+  const [isPerformingUpdate, setIsPerformingUpdate] = useState(false);
   const [hasCheckedUpdate, setHasCheckedUpdate] = useState(false);
   const [isUpdateFeatureAvailable, setIsUpdateFeatureAvailable] = useState(true);
   const hasAutoCheckedUpdate = useRef(false);
@@ -148,21 +149,59 @@ function App() {
   }, [config, navigate, hasCheckedUpdate, checkForUpdates]);
 
   const performUpdate = async () => {
-    if (!newVersionInfo) return;
+    if (!newVersionInfo || isPerformingUpdate) return;
+    setIsPerformingUpdate(true);
     try {
       const result = await api.performUpdate();
       if (result.success) {
-        setToast({ message: t('app.update_successful'), type: 'success' });
         setIsNewVersionAvailable(false);
         setIsUpdateDialogOpen(false);
         setHasCheckedUpdate(false);
+
+        if (result.restarting) {
+          // New package is on disk but this running process is still the old
+          // code. The server self-restarts; poll checkForUpdates until the new
+          // process is back and its version matches npm latest (hasUpdate:false),
+          // then reload to load the new frontend bundle.
+          setToast({ message: t('app.update_restarting'), type: 'success' });
+          await waitForServiceBack();
+        } else {
+          setToast({ message: t('app.update_successful'), type: 'success' });
+        }
       } else {
         setToast({ message: t('app.update_failed') + ': ' + result.message, type: 'error' });
       }
     } catch (error) {
       console.error('Failed to perform update:', error);
-      setToast({ message: t('app.update_failed') + ': ' + (error as Error).message, type: 'error' });
+      const isTimeout = (error as Error)?.name === 'TimeoutError' || (error as Error)?.name === 'AbortError';
+      const message = isTimeout ? t('app.update_timeout') : (error as Error).message;
+      setToast({ message: t('app.update_failed') + ': ' + message, type: 'error' });
+    } finally {
+      setIsPerformingUpdate(false);
     }
+  };
+
+  // After an in-place update, the server self-restarts. Poll checkForUpdates
+  // (which the new process serves once it's back up) until hasUpdate:false —
+  // meaning the new code has loaded and its version matches npm latest — then
+  // reload the page to pick up the new frontend bundle. Give up after ~30s and
+  // ask the user to refresh manually.
+  const waitForServiceBack = async () => {
+    const intervalMs = 1500;
+    const maxAttempts = 20;
+    for (let i = 0; i < maxAttempts; i++) {
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+      try {
+        const info = await api.checkForUpdates();
+        if (!info.hasUpdate) {
+          window.location.reload();
+          return;
+        }
+      } catch {
+        // Service is still down (old process killed, new one booting). Retry.
+      }
+    }
+    setToast({ message: t('app.update_refresh_hint'), type: 'warning' });
   };
 
   if (isCheckingAuth) {
@@ -316,11 +355,18 @@ function App() {
               )}
             </div>
             <DialogFooter className="gap-2">
-              <Button variant="outline" onClick={() => setIsUpdateDialogOpen(false)} className="rounded-xl">
+              <Button variant="outline" onClick={() => setIsUpdateDialogOpen(false)} disabled={isPerformingUpdate} className="rounded-xl">
                 {t('app.later')}
               </Button>
-              <Button onClick={performUpdate} className="rounded-xl bg-primary hover:bg-primary/90">
-                {t('app.update_now')}
+              <Button onClick={performUpdate} disabled={isPerformingUpdate} className="rounded-xl bg-primary hover:bg-primary/90">
+                {isPerformingUpdate ? (
+                  <>
+                    <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                    {t('app.updating')}…
+                  </>
+                ) : (
+                  t('app.update_now')
+                )}
               </Button>
             </DialogFooter>
           </DialogContent>
