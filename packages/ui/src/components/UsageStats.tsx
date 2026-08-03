@@ -19,6 +19,11 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 
+// Auto refresh cadence. Implemented as a serial self-scheduling loop, not a
+// fixed setInterval, so the next refresh always waits for the previous one to
+// settle (no overlapping /api/usage requests).
+const USAGE_AUTO_REFRESH_MS = 30_000;
+
 interface UsageRecord {
   id: string;
   timestamp: string;
@@ -161,7 +166,11 @@ export function UsageStats() {
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(false);
-  const autoRefreshRef = useRef<NodeJS.Timeout | null>(null);
+  // Guards stale responses from out-of-order fetches when filters change.
+  const generationRef = useRef(0);
+  // Serial refresh handle assigned by the auto-refresh effect so manual
+  // triggers (refresh button, clear) coalesce with the loop instead of racing it.
+  const requestRefreshRef = useRef<() => void>(() => {});
 
   // Filters
   const [startDate, setStartDate] = useState("");
@@ -177,6 +186,9 @@ export function UsageStats() {
   const pageSize = 20;
 
   const loadData = useCallback(async () => {
+    // Capture the generation so a slow response from a previous filter set
+    // can't overwrite the latest data once it resolves.
+    const generation = generationRef.current;
     setLoading(true);
     try {
       const params: Record<string, any> = { page, pageSize };
@@ -189,24 +201,77 @@ export function UsageStats() {
       if (filterStatus) params.status = filterStatus;
 
       const result = await api.getUsage(params);
+      if (generation !== generationRef.current) return;
       setRecords(result.records || []);
       setSummary(result.summary);
       setTotal(result.total);
     } catch (e) {
       console.error("Failed to load usage:", e);
     } finally {
-      setLoading(false);
+      if (generation === generationRef.current) setLoading(false);
     }
   }, [page, startDate, endDate, filterModel, filterProvider, filterScenario, filterClient, filterStatus]);
 
+  // Serial, queue-style auto refresh:
+  // - at most one /api/usage request in flight at a time;
+  // - the next refresh is armed 30s after the previous one settles;
+  // - triggers that arrive mid-flight (filter change, manual button, tab
+  //   visibility) collapse into a single follow-up refresh with the latest
+  //   filters — they never run concurrently with the in-flight request;
+  // - paused while the tab is hidden; resumed on return.
   useEffect(() => {
-    loadData();
-    // Auto refresh every 30 seconds
-    autoRefreshRef.current = setInterval(loadData, 10000);
-    return () => {
-      if (autoRefreshRef.current) {
-        clearInterval(autoRefreshRef.current);
+    const generation = ++generationRef.current;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let inFlight = false;
+    let pending = false;
+    let disposed = false;
+
+    const isOwner = () => !disposed && generation === generationRef.current;
+    const schedule = () => {
+      if (timer) clearTimeout(timer);
+      timer = null;
+      if (!isOwner() || document.visibilityState !== "visible") return;
+      timer = setTimeout(() => void run(), USAGE_AUTO_REFRESH_MS);
+    };
+
+    const run = async () => {
+      if (inFlight) {
+        pending = true;
+        return;
       }
+      inFlight = true;
+      try {
+        await loadData();
+      } finally {
+        inFlight = false;
+        if (!isOwner()) return;
+        if (pending) {
+          pending = false;
+          void run();
+          return;
+        }
+        schedule();
+      }
+    };
+
+    requestRefreshRef.current = () => void run();
+    void run();
+
+    const handleVisibility = () => {
+      if (!isOwner()) return;
+      if (document.visibilityState === "visible") {
+        void run();
+      } else if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+
+    return () => {
+      disposed = true;
+      if (timer) clearTimeout(timer);
+      document.removeEventListener("visibilitychange", handleVisibility);
     };
   }, [loadData]);
 
@@ -214,7 +279,7 @@ export function UsageStats() {
     if (!confirm(t("usage.clear_confirm"))) return;
     try {
       await api.clearUsage();
-      loadData();
+      requestRefreshRef.current();
     } catch (e) {
       console.error("Failed to clear usage:", e);
     }
@@ -352,7 +417,7 @@ export function UsageStats() {
 
           {/* Action buttons */}
           <div className="ml-auto flex items-center gap-1">
-            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={loadData} disabled={loading} title={t("usage.refresh")}>
+            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => requestRefreshRef.current()} disabled={loading} title={t("usage.refresh")}>
               <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
             </Button>
             <Button variant="ghost" size="icon" className="h-8 w-8 text-red-400 hover:text-red-600 hover:bg-red-50" onClick={handleClear} title={t("usage.clear")}>
@@ -515,19 +580,33 @@ export function UsageStats() {
                 {records.length === 0 ? (
                   <tr><td colSpan={13} className="text-center p-4 text-gray-400">{t("usage.no_data")}</td></tr>
                 ) : records.map((r) => {
-                  // Show model mapping: original → routed → upstream.
-                  // The upstream model is what the provider actually returned and may
-                  // differ when a gateway silently swaps the requested model. Adjacent
-                  // duplicates are collapsed (e.g. upstream == routed omits the last leg).
-                  const modelDisplay = [r.originalModel, r.model, r.upstreamModel]
-                    .filter((v, i, arr) => v && v !== arr[i - 1])
-                    .join(" → ");
+                  // Show the full mapping relationship in one consistent shape for
+                  // every client: "original [family/scenario] → routed (→ upstream)".
+                  // - family tag: the resolved model family (e.g. opus) when the
+                  //   request went through family routing; "explicit" when the client
+                  //   sent a fully-qualified "provider,model" route that bypasses
+                  //   family routing; "direct" otherwise. This keeps explicit routes
+                  //   and family-alias routes readable in the same shape.
+                  // - upstream: appended only when the provider silently returned a
+                  //   different model than the routed target.
+                  const sourceModel = r.originalModel || r.model || "unknown";
+                  const familyTag = r.modelFamily
+                    || (r.originalModel
+                      ? (r.originalModel.includes(",") ? "explicit" : "direct")
+                      : "unknown");
+                  const routeTag = `${familyTag}/${r.scenarioType || "default"}`;
+                  const routedLeg = r.upstreamModel && r.upstreamModel !== r.model
+                    ? `${r.model} → ${r.upstreamModel}`
+                    : r.model;
+                  const modelDisplay = r.originalModel
+                    ? `${sourceModel} [${routeTag}] → ${routedLeg}`
+                    : `${sourceModel} [${routeTag}]${r.upstreamModel && r.upstreamModel !== r.model ? ` → ${r.upstreamModel}` : ""}`;
                   return (
                   <tr key={r.id} className="border-b hover:bg-gray-50">
                     <td className="p-1.5 whitespace-nowrap">{formatTime(r.timestamp)}</td>
                     <td className="p-1.5">{clientDisplayName(r.clientType, t)}</td>
                     <td className="p-1.5">{r.provider}</td>
-                    <td className="p-1.5 max-w-[180px] truncate" title={modelDisplay}>{modelDisplay}</td>
+                    <td className="p-1.5 max-w-[280px] truncate" title={modelDisplay}>{modelDisplay}</td>
                     <td className="p-1.5">{r.modelFamily ? `${r.modelFamily}/${r.scenarioType}` : r.scenarioType}</td>
                     <td className="text-right p-1.5">{formatTokens(r.inputTokens)}</td>
                     <td className="text-right p-1.5">{formatTokens(r.outputTokens)}</td>

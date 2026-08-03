@@ -101,8 +101,6 @@ export interface ClientConfig {
   managed?: boolean;
   configPath?: string;
   modelAlias?: string;
-  activeAccountId?: string;
-  autoSwitchAccounts?: boolean;
   quota?: {
     limit5h?: number;
     limit7d?: number;
@@ -151,52 +149,6 @@ export interface ProjectsResponse {
   projects: ProjectConfigEntry[];
 }
 
-export interface CodexAccount {
-  id: string;
-  label: string;
-  email?: string;
-  plan?: string;
-  accountId?: string;
-  authMode?: string;
-  active: boolean;
-  createdAt: string;
-  updatedAt: string;
-  lastUsedAt?: string;
-  limitedUntil?: string;
-  limitedWindow?: '5h' | '7d' | 'unknown';
-  limitedReason?: string;
-  lastLimitedAt?: string;
-  usage?: {
-    used5h: number;
-    used7d: number;
-    limit5h?: number;
-    limit7d?: number;
-    reset5h?: string;
-    reset7d?: string;
-  };
-}
-
-export interface CodexAccountsResponse {
-  accounts: CodexAccount[];
-  activeAccountId?: string;
-  authPath: string;
-}
-
-export interface CodexAccountOperationResponse extends CodexAccountsResponse {
-  success: boolean;
-  account?: CodexAccount;
-  switchedAccount?: CodexAccount;
-  config: Config;
-}
-
-export interface CodexRefreshTokenExportResponse {
-  success: boolean;
-  account: CodexAccount;
-  refreshToken: string;
-  refreshedAt?: string;
-  source: 'managed' | 'current';
-}
-
 export interface FallbackConfig {
   default?: string[];
   background?: string[];
@@ -227,6 +179,10 @@ export interface Config {
   PORT: number;
   APIKEY: string;
   API_TIMEOUT_MS: string;
+  // Hard timeout (ms) for background provider reachability probes.
+  PROBE_TIMEOUT_MS?: number;
+  // Latency (ms) above which a provider probe shows a slow-network warning.
+  PROBE_SLOW_THRESHOLD_MS?: number;
   PROXY_URL: string;
   // When true (or unset), PROXY_URL applies to all providers; when false,
   // only providers with proxy_enabled=true use the proxy.
@@ -249,10 +205,39 @@ export interface ProviderHealthState {
   successCount: number;
   lastFailureTime: number;
   lastError?: string;
+  rateLimitUntil?: number | null;
+}
+
+// Latest reachability probe telemetry per provider (in-memory on the server;
+// empty after a restart until the next probe runs). Latency reflects the
+// lightweight /models connectivity probe, not model generation time.
+export interface ProviderProbeTelemetry {
+  provider: string;
+  latencyMs: number;
+  status: 'healthy' | 'slow' | 'error' | 'timeout';
+  isSlow: boolean;
+  errorKind?: 'timeout' | 'network' | 'http';
+  errorMessage?: string;
+  lastProbeAt: number;
+  lastSuccessAt?: number;
+  source: 'health' | 'manual' | 'rate-limit-headers';
 }
 
 export interface ProviderHealthResponse {
   states: ProviderHealthState[];
+  /** Optional for backwards compatibility with older servers. */
+  probes?: ProviderProbeTelemetry[];
+  timestamp: string;
+}
+
+export interface ManualProbeResponse {
+  provider: string;
+  success: boolean;
+  latencyMs?: number;
+  status?: ProviderProbeTelemetry['status'];
+  isSlow?: boolean;
+  errorKind?: ProviderProbeTelemetry['errorKind'] | null;
+  error?: string;
   timestamp: string;
 }
 
