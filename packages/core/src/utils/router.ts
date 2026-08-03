@@ -229,7 +229,7 @@ function normalizeModelName(modelName: string): string {
   return normalized.trim().toLowerCase();
 }
 
-function extractModelFamily(modelName: string): { family: string | null; extended: boolean; isCcrAlias: boolean } {
+export function extractModelFamily(modelName: string): { family: string | null; extended: boolean; isCcrAlias: boolean } {
   const normalized = normalizeModelName(modelName);
 
   // Check for [1m] suffix for extended context
@@ -548,7 +548,7 @@ function requestHasImages(req: any): boolean {
   );
 }
 
-function modelSupportsImages(modelName: string): boolean {
+export function modelSupportsImages(modelName: string): boolean {
   const normalized = normalizeModelName(modelName);
   const imageModelPatterns = [
     /claude/i,
@@ -1026,8 +1026,9 @@ export interface RouterFallbackConfig {
 
 export const router = async (req: any, _res: any, context: RouterContext) => {
   const { configService, event } = context;
-  // Save original request model before routing (for usage stats mapping)
-  req.originalModel = req.body.model;
+  // Preserve the model captured before any agent/router mutation so usage
+  // records always reflect what the client actually sent.
+  if (!req.originalModel && req.body.model) req.originalModel = req.body.model;
 
   // The adapter must run before project routing and token-threshold decisions so
   // all downstream logic consumes one client-specific request context.
@@ -1118,31 +1119,56 @@ export const router = async (req: any, _res: any, context: RouterContext) => {
       req.scenarioType = 'default';
     }
 
+    const { family: originalFamily } = extractModelFamily(
+      req.originalModel || req.body.model
+    );
+    const imageFamilyConfig = routerConfig?.enableFamilyRouting && originalFamily
+      ? routerConfig.families?.[originalFamily] as RouterFamilyConfig | undefined
+      : undefined;
+    const configuredImageModels = [
+      imageFamilyConfig?.image,
+      routerConfig?.image,
+    ].filter((value, index, values): value is string =>
+      !!value && values.indexOf(value) === index
+    );
+
     if (
-      routerConfig?.image &&
-      model !== routerConfig.image &&
+      configuredImageModels.length > 0 &&
       requestHasImages(req) &&
       !modelSupportsImages(model)
     ) {
-      const imageModel = resolveConfiguredModel(routerConfig.image, providers, false, 'image', enableFallback, !isStrictProject, isStrictProject);
-      if (imageModel) {
-        req.log.info(`Using image model fallback for ${model}`);
-        model = imageModel;
+      if (model === configuredImageModels[0]) {
         req.scenarioType = 'image';
       } else {
-        // Try project-aware fallback for image scenario
-        const imageFallback = enableFallback
-          ? resolveScenarioFallbackModel('image', providers, undefined, req.fallbackConfig, undefined, isStrictProject)
-          : null;
-        if (imageFallback) {
-          req.log.info(`Using image fallback model: ${imageFallback}`);
-          model = imageFallback;
+        const imageModel = configuredImageModels
+          .map((candidate) => resolveConfiguredModel(candidate, providers, false, 'image', enableFallback, !isStrictProject, isStrictProject))
+          .find((candidate): candidate is string => !!candidate);
+        if (imageModel) {
+          req.log.info(`Using image model fallback for ${model}`);
+          model = imageModel;
           req.scenarioType = 'image';
-        } else if (isStrictProject) {
-          throwStrictProjectError(req, routerConfig.image, providers, 'image');
         } else {
-          req.log.warn(`Image model ${routerConfig.image} unavailable (fail pool), keeping ${model}`);
-          req.scenarioType = 'image';
+          // Try project-aware family fallback first, then the global image fallback.
+          const imageFallback = enableFallback
+            ? resolveScenarioFallbackModel(
+                'image',
+                providers,
+                imageFamilyConfig?.fallback,
+                req.fallbackConfig,
+                originalFamily || undefined,
+                isStrictProject
+              )
+            : null;
+          if (imageFallback) {
+            req.log.info(`Using image fallback model: ${imageFallback}`);
+            model = imageFallback;
+            req.scenarioType = 'image';
+          } else if (isStrictProject) {
+            throwStrictProjectError(req, configuredImageModels[0], providers, 'image');
+          } else {
+            req.log.warn(`Image models ${configuredImageModels.join(', ')} unavailable (fail pool), keeping ${model}`);
+            req.scenarioType = 'image';
+          }
         }
       }
     }

@@ -1,5 +1,6 @@
 import { IAgent, ITool } from "./type";
 import { createHash } from "crypto";
+import { extractModelFamily, modelSupportsImages } from "../../utils/router";
 
 interface ImageCacheEntry {
   source: any;
@@ -74,36 +75,25 @@ class ImageCache {
 
 const imageCache = new ImageCache();
 
-function normalizeModelName(modelName: string): string {
-  let normalized = modelName || "";
-  if (normalized.includes(",")) {
-    normalized = normalized.split(",").pop() || normalized;
+function getDirectImageModel(config: any, modelName: string): string | undefined {
+  const Router = config?.Router;
+  const { family } = extractModelFamily(modelName || "");
+  if (Router?.enableFamilyRouting && family) {
+    const familyImage = Router.families?.[family]?.image;
+    if (familyImage) return familyImage;
   }
-  if (normalized.includes("/")) {
-    normalized = normalized.split("/").pop() || normalized;
-  }
-  if (normalized.includes(":")) {
-    normalized = normalized.split(":")[0];
-  }
-  return normalized.trim().toLowerCase();
+  return Router?.image;
 }
 
-function modelSupportsImages(modelName: string): boolean {
-  const normalized = normalizeModelName(modelName);
-  const imageModelPatterns = [
-    /claude/i,
-    /gemini/i,
-    /gpt-4o/i,
-    /gpt-4\.1/i,
-    /gpt-4-vision/i,
-    /qwen.*vl/i,
-    /glm-4v/i,
-    /grok.*vision/i,
-    /pixtral/i,
-    /llava/i,
-  ];
-
-  return imageModelPatterns.some((pattern) => pattern.test(normalized));
+function getAgentImageModel(config: any): string | undefined {
+  // The analyzeImage internal request re-enters the router, which uses
+  // extractModelFamily on the request model. A family image route string
+  // (e.g. "provider,opus-image") does not match the ccr-/claude- family
+  // patterns, so the router would fall back to the global Router.image and
+  // re-route this internal call away from the family image target. Keeping
+  // the agent's internal call on the global Router.image preserves the
+  // pre-fix behaviour; family-aware agent calls are left to a future change.
+  return config?.Router?.image;
 }
 
 function requestHasImages(messages: any[]): boolean {
@@ -123,6 +113,39 @@ function requestHasImages(messages: any[]): boolean {
   );
 }
 
+function promoteToolResultImages(messages: any[]): void {
+  const lastMessage = messages[messages.length - 1];
+  if (lastMessage?.role !== "user" || !Array.isArray(lastMessage.content)) {
+    return;
+  }
+
+  const images: any[] = [];
+  lastMessage.content
+    .filter((item: any) => item.type === "tool_result")
+    .forEach((item: any) => {
+      if (!Array.isArray(item.content)) {
+        return;
+      }
+
+      const remaining = item.content.filter((element: any) => {
+        if (element.type === "image") {
+          images.push(element);
+          return false;
+        }
+        return true;
+      });
+
+      // Leave tool results without images completely untouched, and keep
+      // text/structured blocks of mixed results. Only image-only results
+      // collapse into the placeholder string.
+      if (remaining.length === item.content.length) {
+        return;
+      }
+      item.content = remaining.length > 0 ? remaining : "read image successfully";
+    });
+  lastMessage.content.push(...images);
+}
+
 export class ImageAgent implements IAgent {
   name = "image";
   tools: Map<string, ITool>;
@@ -133,7 +156,11 @@ export class ImageAgent implements IAgent {
   }
 
   shouldHandle(req: any, config: any): boolean {
-    if (!config.Router.image || req.body.model === config.Router.image) {
+    const imageModel = getDirectImageModel(
+      config,
+      req.originalModel || req.body.model
+    );
+    if (!imageModel || req.body.model === imageModel) {
       return false;
     }
 
@@ -142,33 +169,19 @@ export class ImageAgent implements IAgent {
       return false;
     }
 
-    const lastMessage = req.body.messages[req.body.messages.length - 1];
-    if (!config.forceUseImageAgent) {
-      if (modelSupportsImages(req.body.model)) {
-        return false;
-      }
-
-      req.body.model = config.Router.image;
-      if (lastMessage.role === "user" && Array.isArray(lastMessage.content)) {
-        const images: any[] = [];
-        lastMessage.content
-          .filter((item: any) => item.type === "tool_result")
-          .forEach((item: any) => {
-            if (Array.isArray(item.content)) {
-              item.content.forEach((element: any) => {
-                if (element.type === "image") {
-                  images.push(element);
-                }
-              });
-              item.content = "read image successfully";
-            }
-          });
-        lastMessage.content.push(...images);
-      }
+    const forceUseImageAgent = config.forceUseImageAgent === true;
+    if (!forceUseImageAgent && modelSupportsImages(req.body.model)) {
       return false;
     }
 
-    return true;
+    // Keep nested tool-result images visible to direct image models without
+    // choosing the route here. The router owns model selection and metadata.
+    promoteToolResultImages(req.body.messages);
+
+    // The force-agent subrequest intentionally preserves the existing global
+    // Router.image behaviour. If only a family image is configured, fall back
+    // to direct family image routing instead of sending an invalid subrequest.
+    return forceUseImageAgent && !!getAgentImageModel(config);
   }
 
   appendTools() {
@@ -280,7 +293,7 @@ export class ImageAgent implements IAgent {
               "content-type": "application/json",
             },
             body: JSON.stringify({
-              model: context.config.Router.image,
+              model: getAgentImageModel(context.config),
               system: [
                 {
                   type: "text",
@@ -359,12 +372,21 @@ Your response should consistently follow this rule whenever image-related analys
             Array.isArray(msg.content) &&
             msg.content.some((ele: any) => ele.type === "image")
           ) {
-            imageCache.storeImage(
-              `${req.id}_Image#${imgId}`,
-              msg.content[0].source
-            );
-            msg.content = `[Image #${imgId}]This is an image, if you need to view or analyze it, you need to extract the imageId`;
-            imgId++;
+            // Cache every image block (not just the first element) and keep
+            // any non-image blocks of mixed tool results.
+            const tags: string[] = [];
+            const remaining = msg.content.filter((ele: any) => {
+              if (ele.type !== "image") return true;
+              imageCache.storeImage(`${req.id}_Image#${imgId}`, ele.source);
+              tags.push(`[Image #${imgId}]`);
+              imgId++;
+              return false;
+            });
+            const placeholder = `${tags.join("")}This is an image, if you need to view or analyze it, you need to extract the imageId`;
+            msg.content =
+              remaining.length > 0
+                ? [{ type: "text", text: placeholder }, ...remaining]
+                : placeholder;
           }
         }
       });
