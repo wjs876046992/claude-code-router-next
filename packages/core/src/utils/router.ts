@@ -1137,7 +1137,12 @@ export const router = async (req: any, _res: any, context: RouterContext) => {
       requestHasImages(req) &&
       !modelSupportsImages(model)
     ) {
-      if (model === configuredImageModels[0]) {
+      // If the resolved model is already one of the configured image targets
+      // (family image or global image), it must already support images by the
+      // outer guard's intent — only tag the scenario, never re-route. This
+      // preserves an explicit route to the global image when both family and
+      // global image models are configured.
+      if (configuredImageModels.includes(model)) {
         req.scenarioType = 'image';
       } else {
         const imageModel = configuredImageModels

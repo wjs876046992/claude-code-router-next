@@ -112,7 +112,9 @@ describe("image routing", () => {
     await router(req, undefined, { configService });
 
     expect(req.originalModel).toBe("ccr-opus");
-    expect(req.body.model).toBe("provider,opus-image");
+    // An explicit route to a configured image model is preserved (only the
+    // scenario is tagged); the router must not re-route it to the family image.
+    expect(req.body.model).toBe("provider,global-image");
     expect(req.scenarioType).toBe("image");
   });
 

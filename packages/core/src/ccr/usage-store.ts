@@ -476,6 +476,9 @@ function readSummaryBuckets(
   db: Database.Database,
   where: QueryWhereClause,
   keyExpression: string,
+  // MUST be a compile-time literal (never user input). It is concatenated into
+  // the SQL string below rather than parameterized, so only pass trusted
+  // constant fragments here.
   extraAndClause = ""
 ): Record<string, SummaryBucket> {
   const extraSql = extraAndClause
