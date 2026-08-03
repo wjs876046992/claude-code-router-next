@@ -35,18 +35,11 @@ import {
   findMarketPresetByName,
   getMarketPresets,
   applyClientSelection,
-  activateCodexAccount,
-  deleteCodexAccount,
   disableClient,
   enableClient,
-  exportCodexRefreshToken,
-  importCodexAccountFromRefreshToken,
-  importCurrentCodexAccount,
   isClientId,
-  listCodexAccounts,
   listClientStatuses,
   restoreClient,
-  type CodexAccountsResult,
   type PresetFile,
   type ManifestFile,
   type PresetMetadata,
@@ -67,7 +60,6 @@ import {
 import fastifyMultipart from "@fastify/multipart";
 import AdmZip from "adm-zip";
 import { query as queryUsage, querySummary as queryUsageSummary, clear as clearUsage } from "./usage-store";
-import { computeCodexAccountUsage } from "./codex-usage-cache";
 import { listAnthropicCompatibleModels } from "./models";
 
 interface ProviderQuotaUsage {
@@ -317,6 +309,7 @@ export async function registerAdminRoutes(server: any, config: any): Promise<any
             enabled: coreServer.configService.get('ACTIVE_PROBE_ENABLED') ?? true,
             quotaProbeIntervalMinutes: coreServer.configService.get('QUOTA_PROBE_INTERVAL_MINUTES') ?? 10,
             probeTimeoutMs: coreServer.configService.get('PROBE_TIMEOUT_MS') ?? 15000,
+            slowThresholdMs: Number(coreServer.configService.get('PROBE_SLOW_THRESHOLD_MS')) || 3000,
             initialDelayMs: coreServer.configService.get('PROBE_INITIAL_DELAY_MS') ?? 5000,
             excludeProviders: coreServer.configService.get('EXCLUDE_PROBE_PROVIDERS') ?? [],
           };
@@ -402,93 +395,6 @@ export async function registerAdminRoutes(server: any, config: any): Promise<any
 
   _app.post("/api/clients/:id/restore", async (req: any, reply: any) => {
     return runClientAction(req, reply, "restore");
-  });
-
-  _app.get("/api/clients/codex/accounts", async (_req: any, reply: any) => {
-    try {
-      const config = await readConfigFile();
-      return await computeCodexAccountUsage(config);
-    } catch (error: any) {
-      console.error("Failed to get Codex accounts:", error);
-      reply.status(500).send({ error: error.message || "Failed to get Codex accounts" });
-    }
-  });
-
-  _app.post("/api/clients/codex/accounts/import-current", async (req: any, reply: any) => {
-    try {
-      const body = req.body as { label?: string };
-      const config = await readConfigFile();
-      const result = importCurrentCodexAccount(config, body?.label);
-      await writeConfigFile(result.config);
-      const accounts = await computeCodexAccountUsage(result.config);
-      return { ...result, ...accounts };
-    } catch (error: any) {
-      console.error("Failed to import current Codex account:", error);
-      reply.status(500).send({ error: error.message || "Failed to import current Codex account" });
-    }
-  });
-
-  _app.post("/api/clients/codex/accounts/import-rt", async (req: any, reply: any) => {
-    try {
-      const body = req.body as { label?: string; refreshToken?: string };
-      const config = await readConfigFile();
-      const result = await importCodexAccountFromRefreshToken(config, body?.refreshToken || "", body?.label);
-      await writeConfigFile(result.config);
-      const accounts = await computeCodexAccountUsage(result.config);
-      return { ...result, ...accounts };
-    } catch (error: any) {
-      console.error("Failed to import Codex account from refresh token:", error);
-      reply.status(500).send({ error: error.message || "Failed to import Codex account from refresh token" });
-    }
-  });
-
-  _app.post("/api/clients/codex/accounts/:accountId/activate", async (req: any, reply: any) => {
-    try {
-      const { accountId } = req.params as { accountId: string };
-      const config = await readConfigFile();
-      const result = activateCodexAccount(config, accountId);
-      await writeConfigFile(result.config);
-      const accounts = await computeCodexAccountUsage(result.config);
-      return { ...result, ...accounts };
-    } catch (error: any) {
-      console.error("Failed to activate Codex account:", error);
-      reply.status(500).send({ error: error.message || "Failed to activate Codex account" });
-    }
-  });
-
-  _app.post("/api/clients/codex/accounts/:accountId/export-rt", async (req: any, reply: any) => {
-    try {
-      const { accountId } = req.params as { accountId: string };
-      const config = await readConfigFile();
-      return exportCodexRefreshToken(config, accountId);
-    } catch (error: any) {
-      console.error("Failed to export Codex refresh token:", error);
-      reply.status(500).send({ error: error.message || "Failed to export Codex refresh token" });
-    }
-  });
-
-  _app.post("/api/clients/codex/accounts/export-rt", async (_req: any, reply: any) => {
-    try {
-      const config = await readConfigFile();
-      return exportCodexRefreshToken(config);
-    } catch (error: any) {
-      console.error("Failed to export active Codex refresh token:", error);
-      reply.status(500).send({ error: error.message || "Failed to export active Codex refresh token" });
-    }
-  });
-
-  _app.delete("/api/clients/codex/accounts/:accountId", async (req: any, reply: any) => {
-    try {
-      const { accountId } = req.params as { accountId: string };
-      const config = await readConfigFile();
-      const result = deleteCodexAccount(config, accountId);
-      await writeConfigFile(result.config);
-      const accounts = await computeCodexAccountUsage(result.config);
-      return { ...result, ...accounts };
-    } catch (error: any) {
-      console.error("Failed to delete Codex account:", error);
-      reply.status(500).send({ error: error.message || "Failed to delete Codex account" });
-    }
   });
 
   // ========== Project-Level Configuration API ==========
@@ -844,6 +750,8 @@ export async function registerAdminRoutes(server: any, config: any): Promise<any
     try {
       const healthStore = getHealthStore();
       const states = healthStore.getAllStates();
+      const coreServer = (_app as any)._server;
+      const probes = coreServer?.activeProbeService?.getProbeTelemetry?.() || [];
       return {
         states: states.map((s: any) => ({
           provider: s.provider,
@@ -855,6 +763,7 @@ export async function registerAdminRoutes(server: any, config: any): Promise<any
           lastError: s.lastError,
           rateLimitUntil: s.rateLimitUntil ?? null,
         })),
+        probes,
         timestamp: new Date().toISOString()
       };
     } catch (error) {
@@ -878,8 +787,8 @@ export async function registerAdminRoutes(server: any, config: any): Promise<any
         return { error: "Active probe service is not available" };
       }
 
-      const success = await probeService.probeProviderManually(providerName);
-      if (success) {
+      const probeResult = await probeService.probeProviderManually(providerName);
+      if (probeResult.success) {
         // Endpoint reachable: clear every breaker for this provider, including
         // orphaned entries for renamed/removed model names that a per-model
         // recover would miss (the root cause of stuck "failed" UI states).
@@ -888,7 +797,12 @@ export async function registerAdminRoutes(server: any, config: any): Promise<any
 
       return {
         provider: providerName,
-        success,
+        success: probeResult.success,
+        latencyMs: probeResult.latencyMs,
+        status: probeResult.status,
+        isSlow: probeResult.isSlow,
+        errorKind: probeResult.errorKind ?? null,
+        error: probeResult.error,
         timestamp: new Date().toISOString(),
       };
     } catch (error: any) {
@@ -909,13 +823,21 @@ export async function registerAdminRoutes(server: any, config: any): Promise<any
       const providers = (coreServer?.providerService?.getProviders?.() || [])
         .filter((provider: any) => provider?.name && provider.enabled !== false);
       const results = await Promise.all(providers.map(async (provider: any) => {
-        const success = await probeService.probeProviderManually(provider.name);
-        if (success) {
+        const probeResult = await probeService.probeProviderManually(provider.name);
+        if (probeResult.success) {
           // See single-provider probe above: clear all breakers for a reachable
           // provider, not just its currently-configured models.
           clearProviderHealth(provider.name, (_req as any)?.log);
         }
-        return { provider: provider.name, success };
+        return {
+          provider: provider.name,
+          success: probeResult.success,
+          latencyMs: probeResult.latencyMs,
+          status: probeResult.status,
+          isSlow: probeResult.isSlow,
+          errorKind: probeResult.errorKind ?? null,
+          error: probeResult.error,
+        };
       }));
 
       return {

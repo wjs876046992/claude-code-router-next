@@ -689,7 +689,7 @@ describe("Fastify inject integration — project routing error", () => {
     });
     await server.ready();
     server.ccrPreHandlerCallbacks = {
-      authCodex: async () => {},
+      authClient: async () => {},
       agent: async () => {},
     };
     await server.registerNamespace("/");
@@ -769,7 +769,7 @@ describe("runtime handleFallback — strict project, no project fallback, global
     });
     await server.ready();
     server.ccrPreHandlerCallbacks = {
-      authCodex: async () => {},
+      authClient: async () => {},
       agent: async () => {},
     };
     await server.registerNamespace("/");
@@ -870,7 +870,7 @@ describe("runtime handleFallback — strict project, project fallback works", ()
     });
     await server.ready();
     server.ccrPreHandlerCallbacks = {
-      authCodex: async () => {},
+      authClient: async () => {},
       agent: async () => {},
     };
     await server.registerNamespace("/");

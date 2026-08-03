@@ -84,9 +84,9 @@ describe("auth phase does not hang on auth failure", () => {
     // If the wrapper hung, this race would reject with "hung" after the timeout.
     await expect(
       Promise.race([
-        callbacks.authCodex(req, reply),
+        callbacks.authClient(req, reply),
         new Promise((_, reject) =>
-          setTimeout(() => reject(new Error("authCodex hung on auth failure")), 1000)
+          setTimeout(() => reject(new Error("authClient hung on auth failure")), 1000)
         ),
       ])
     ).resolves.toBeUndefined();
@@ -116,9 +116,9 @@ describe("auth phase does not hang on auth failure", () => {
 
     await expect(
       Promise.race([
-        callbacks.authCodex(req, reply),
+        callbacks.authClient(req, reply),
         new Promise((_, reject) =>
-          setTimeout(() => reject(new Error("authCodex hung on key mismatch")), 1000)
+          setTimeout(() => reject(new Error("authClient hung on key mismatch")), 1000)
         ),
       ])
     ).resolves.toBeUndefined();
@@ -163,7 +163,7 @@ describe("router failure preserves prior session usage", () => {
     });
     await server.ready();
     server.ccrPreHandlerCallbacks = {
-      authCodex: async () => {},
+      authClient: async () => {},
       agent: async () => {},
     };
     await server.registerNamespace("/");

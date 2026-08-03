@@ -24,8 +24,6 @@ type UsageRecordRow = {
   model_family: string;
   scenario_type: string;
   client_type: string | null;
-  codex_account_id: string | null;
-  codex_account_email: string | null;
   stream: number;
   input_tokens: number;
   output_tokens: number;
@@ -55,8 +53,6 @@ export interface UsageRecord {
   modelFamily: string;
   scenarioType: string;
   clientType?: string; // "claude-code" | "codex" | "pi" | "qwen-code" | "opencode" | "api" | "unknown"
-  codexAccountId?: string;
-  codexAccountEmail?: string;
   stream: boolean;
   inputTokens: number;
   outputTokens: number;
@@ -146,17 +142,20 @@ function getDb(): Database.Database {
   migrateLegacyUsageJsonl(db);
   pruneExpiredRecords(db, true);
 
+  // NOTE: legacy databases may still carry codex_account_id/codex_account_email
+  // columns from the removed account management feature. They are intentionally
+  // left in place (no destructive migration) and simply never written or read.
   insertStatement = db.prepare(`
     INSERT INTO usage_records (
       id, timestamp, session_id, provider, original_model, model, upstream_model, model_family,
-      scenario_type, client_type, codex_account_id, codex_account_email,
+      scenario_type, client_type,
       stream, input_tokens, output_tokens, cache_read_input_tokens,
       cache_creation_input_tokens, ttft, tokens_per_second, duration_ms,
       status, error_message, response_body
     ) VALUES (
       @id, @timestamp, @session_id, @provider, @original_model, @model, @upstream_model,
-      @model_family, @scenario_type, @client_type, @codex_account_id,
-      @codex_account_email, @stream, @input_tokens, @output_tokens,
+      @model_family, @scenario_type, @client_type,
+      @stream, @input_tokens, @output_tokens,
       @cache_read_input_tokens, @cache_creation_input_tokens, @ttft,
       @tokens_per_second, @duration_ms, @status, @error_message, @response_body
     )
@@ -179,8 +178,6 @@ function initializeSchema(db: Database.Database): void {
       model_family TEXT NOT NULL,
       scenario_type TEXT NOT NULL,
       client_type TEXT,
-      codex_account_id TEXT,
-      codex_account_email TEXT,
       stream INTEGER NOT NULL,
       input_tokens INTEGER NOT NULL,
       output_tokens INTEGER NOT NULL,
@@ -279,14 +276,14 @@ function getInsertStatement(db: Database.Database, insertMode = "INSERT"): Datab
   return db.prepare(`
     ${insertMode} INTO usage_records (
       id, timestamp, session_id, provider, original_model, model, upstream_model, model_family,
-      scenario_type, client_type, codex_account_id, codex_account_email,
+      scenario_type, client_type,
       stream, input_tokens, output_tokens, cache_read_input_tokens,
       cache_creation_input_tokens, ttft, tokens_per_second, duration_ms,
       status, error_message, response_body
     ) VALUES (
       @id, @timestamp, @session_id, @provider, @original_model, @model, @upstream_model,
-      @model_family, @scenario_type, @client_type, @codex_account_id,
-      @codex_account_email, @stream, @input_tokens, @output_tokens,
+      @model_family, @scenario_type, @client_type,
+      @stream, @input_tokens, @output_tokens,
       @cache_read_input_tokens, @cache_creation_input_tokens, @ttft,
       @tokens_per_second, @duration_ms, @status, @error_message, @response_body
     )
@@ -349,8 +346,6 @@ function toDbRow(record: UsageRecord): UsageRecordRow {
     model_family: normalizeString(normalized.modelFamily),
     scenario_type: normalizeString(normalized.scenarioType),
     client_type: normalizeOptionalString(normalized.clientType) ?? null,
-    codex_account_id: normalizeOptionalString(normalized.codexAccountId) ?? null,
-    codex_account_email: normalizeOptionalString(normalized.codexAccountEmail) ?? null,
     stream: normalized.stream ? 1 : 0,
     input_tokens: Math.trunc(normalizeNumber(normalized.inputTokens)),
     output_tokens: Math.trunc(normalizeNumber(normalized.outputTokens)),
@@ -377,8 +372,6 @@ function toUsageRecord(row: UsageRecordRow): UsageRecord {
     modelFamily: row.model_family,
     scenarioType: row.scenario_type,
     clientType: row.client_type ?? undefined,
-    codexAccountId: row.codex_account_id ?? undefined,
-    codexAccountEmail: row.codex_account_email ?? undefined,
     stream: row.stream === 1,
     inputTokens: row.input_tokens,
     outputTokens: row.output_tokens,
@@ -453,105 +446,119 @@ function buildWhereClause(filters: UsageQueryFilters): QueryWhereClause {
   };
 }
 
-// TODO(perf): This materializes all matching rows into JS memory to compute the summary.
-// With 180-day retention and high throughput this can be large. A future improvement should
-// push aggregation (SUM, COUNT, AVG, GROUP BY) into SQL and only fall back to in-memory
-// computeSummary for the byModel/byProvider/byScenario/byFamily/byDay/byClient breakdowns
-// if a single-pass SQL approach proves insufficient.
-function readFilteredRecords(db: Database.Database, filters: UsageQueryFilters): UsageRecord[] {
-  const where = buildWhereClause(filters);
-  const rows = db
-    .prepare(`SELECT * FROM usage_records ${where.sql}`)
-    .all(...where.params) as UsageRecordRow[];
-  return rows.map(toUsageRecord);
+// Aggregate summaries directly in SQL. The previous implementation materialized
+// every matching row into JS memory (SELECT * + per-row aggregation), which
+// blocked the event loop for seconds on large tables because better-sqlite3 is
+// synchronous. COUNT/SUM/AVG/GROUP BY keep this work inside SQLite and return
+// only tiny result sets. Semantics intentionally mirror the old JS version:
+// tokens are counted for successful requests only.
+const SUMMARY_BUCKET_AGGREGATES = `
+  COUNT(*) AS count,
+  COALESCE(SUM(CASE WHEN status = 'success' THEN input_tokens ELSE 0 END), 0) AS inputTokens,
+  COALESCE(SUM(CASE WHEN status = 'success' THEN output_tokens ELSE 0 END), 0) AS outputTokens,
+  COALESCE(SUM(CASE WHEN status = 'success' THEN cache_read_input_tokens ELSE 0 END), 0) AS cacheReadInputTokens,
+  COALESCE(SUM(CASE WHEN status = 'success' THEN cache_creation_input_tokens ELSE 0 END), 0) AS cacheCreationInputTokens
+`;
+
+type SummaryBucket = {
+  count: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadInputTokens: number;
+  cacheCreationInputTokens: number;
+};
+
+interface SummaryBucketRow extends SummaryBucket {
+  key: string;
 }
 
-function computeSummary(records: UsageRecord[]): UsageSummary {
-  const summary: UsageSummary = {
-    totalRequests: records.length,
-    successCount: 0,
-    errorCount: 0,
-    totalInputTokens: 0,
-    totalOutputTokens: 0,
-    totalCacheReadInputTokens: 0,
-    totalCacheCreationInputTokens: 0,
-    avgTtft: null,
-    avgTokensPerSecond: null,
-    byModel: {},
-    byProvider: {},
-    byScenario: {},
-    byFamily: {},
-    byDay: {},
-    byClient: {},
+function readSummaryBuckets(
+  db: Database.Database,
+  where: QueryWhereClause,
+  keyExpression: string,
+  extraAndClause = ""
+): Record<string, SummaryBucket> {
+  const extraSql = extraAndClause
+    ? where.sql
+      ? `${where.sql} AND ${extraAndClause}`
+      : `WHERE ${extraAndClause}`
+    : where.sql;
+
+  const rows = db
+    .prepare(`
+      SELECT ${keyExpression} AS key, ${SUMMARY_BUCKET_AGGREGATES}
+      FROM usage_records ${extraSql}
+      GROUP BY key
+    `)
+    .all(...where.params) as SummaryBucketRow[];
+
+  const map: Record<string, SummaryBucket> = {};
+  for (const row of rows) {
+    if (row.key == null) continue;
+    map[String(row.key)] = {
+      count: row.count,
+      inputTokens: row.inputTokens,
+      outputTokens: row.outputTokens,
+      cacheReadInputTokens: row.cacheReadInputTokens,
+      cacheCreationInputTokens: row.cacheCreationInputTokens,
+    };
+  }
+  return map;
+}
+
+function computeSummarySQL(db: Database.Database, filters: UsageQueryFilters): UsageSummary {
+  const where = buildWhereClause(filters);
+
+  const totals = db
+    .prepare(`
+      SELECT
+        COUNT(*) AS totalRequests,
+        COALESCE(SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END), 0) AS successCount,
+        COALESCE(SUM(CASE WHEN status = 'success' THEN input_tokens ELSE 0 END), 0) AS totalInputTokens,
+        COALESCE(SUM(CASE WHEN status = 'success' THEN output_tokens ELSE 0 END), 0) AS totalOutputTokens,
+        COALESCE(SUM(CASE WHEN status = 'success' THEN cache_read_input_tokens ELSE 0 END), 0) AS totalCacheReadInputTokens,
+        COALESCE(SUM(CASE WHEN status = 'success' THEN cache_creation_input_tokens ELSE 0 END), 0) AS totalCacheCreationInputTokens,
+        AVG(CASE WHEN status = 'success' AND ttft IS NOT NULL THEN ttft END) AS avgTtft,
+        AVG(CASE WHEN status = 'success' AND tokens_per_second IS NOT NULL THEN tokens_per_second END) AS avgTokensPerSecond
+      FROM usage_records ${where.sql}
+    `)
+    .get(...where.params) as {
+    totalRequests: number;
+    successCount: number;
+    totalInputTokens: number;
+    totalOutputTokens: number;
+    totalCacheReadInputTokens: number;
+    totalCacheCreationInputTokens: number;
+    avgTtft: number | null;
+    avgTokensPerSecond: number | null;
   };
 
-  let ttftSum = 0;
-  let ttftCount = 0;
-  let speedSum = 0;
-  let speedCount = 0;
-
-  for (const r of records) {
-    const isSuccess = r.status === "success";
-    if (isSuccess) {
-      summary.successCount++;
-    } else {
-      summary.errorCount++;
-    }
-
-    const inputTokens = isSuccess ? (r.inputTokens || 0) : 0;
-    const outputTokens = isSuccess ? (r.outputTokens || 0) : 0;
-    const cacheReadInputTokens = isSuccess ? (r.cacheReadInputTokens || 0) : 0;
-    const cacheCreationInputTokens = isSuccess ? (r.cacheCreationInputTokens || 0) : 0;
-
-    summary.totalInputTokens += inputTokens;
-    summary.totalOutputTokens += outputTokens;
-    summary.totalCacheReadInputTokens += cacheReadInputTokens;
-    summary.totalCacheCreationInputTokens += cacheCreationInputTokens;
-
-    if (isSuccess && r.ttft != null) {
-      ttftSum += r.ttft;
-      ttftCount++;
-    }
-    if (isSuccess && r.tokensPerSecond != null) {
-      speedSum += r.tokensPerSecond;
-      speedCount++;
-    }
-
-    const day = r.timestamp.slice(0, 10);
-
-    aggregateInto(summary.byModel, r.model, inputTokens, outputTokens, cacheReadInputTokens, cacheCreationInputTokens);
-    aggregateInto(summary.byProvider, r.provider, inputTokens, outputTokens, cacheReadInputTokens, cacheCreationInputTokens);
-    aggregateInto(summary.byScenario, r.scenarioType, inputTokens, outputTokens, cacheReadInputTokens, cacheCreationInputTokens);
-    if (r.modelFamily) {
-      const familyScenario = `${r.modelFamily}/${r.scenarioType}`;
-      aggregateInto(summary.byFamily, familyScenario, inputTokens, outputTokens, cacheReadInputTokens, cacheCreationInputTokens);
-    }
-    aggregateInto(summary.byDay, day, inputTokens, outputTokens, cacheReadInputTokens, cacheCreationInputTokens);
-    aggregateInto(summary.byClient, r.clientType || "unknown", inputTokens, outputTokens, cacheReadInputTokens, cacheCreationInputTokens);
-  }
-
-  if (ttftCount > 0) summary.avgTtft = Math.round(ttftSum / ttftCount);
-  if (speedCount > 0) summary.avgTokensPerSecond = Math.round(speedSum / speedCount);
-
-  return summary;
-}
-
-function aggregateInto(
-  map: Record<string, { count: number; inputTokens: number; outputTokens: number; cacheReadInputTokens: number; cacheCreationInputTokens: number }>,
-  key: string,
-  inputTokens: number,
-  outputTokens: number,
-  cacheReadInputTokens: number,
-  cacheCreationInputTokens: number
-): void {
-  if (!map[key]) {
-    map[key] = { count: 0, inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 };
-  }
-  map[key].count++;
-  map[key].inputTokens += inputTokens;
-  map[key].outputTokens += outputTokens;
-  map[key].cacheReadInputTokens += cacheReadInputTokens;
-  map[key].cacheCreationInputTokens += cacheCreationInputTokens;
+  return {
+    totalRequests: totals.totalRequests,
+    successCount: totals.successCount,
+    errorCount: totals.totalRequests - totals.successCount,
+    totalInputTokens: totals.totalInputTokens,
+    totalOutputTokens: totals.totalOutputTokens,
+    totalCacheReadInputTokens: totals.totalCacheReadInputTokens,
+    totalCacheCreationInputTokens: totals.totalCacheCreationInputTokens,
+    avgTtft: totals.avgTtft != null ? Math.round(totals.avgTtft) : null,
+    avgTokensPerSecond: totals.avgTokensPerSecond != null ? Math.round(totals.avgTokensPerSecond) : null,
+    byModel: readSummaryBuckets(db, where, "model"),
+    byProvider: readSummaryBuckets(db, where, "provider"),
+    byScenario: readSummaryBuckets(db, where, "scenario_type"),
+    byFamily: readSummaryBuckets(
+      db,
+      where,
+      "model_family || '/' || scenario_type",
+      "model_family IS NOT NULL AND model_family != ''"
+    ),
+    byDay: readSummaryBuckets(db, where, "substr(timestamp, 1, 10)"),
+    byClient: readSummaryBuckets(
+      db,
+      where,
+      "CASE WHEN client_type IS NULL OR client_type = '' THEN 'unknown' ELSE client_type END"
+    ),
+  };
 }
 
 export function append(record: UsageRecord): void {
@@ -576,7 +583,7 @@ export function query(filters: UsageQueryFilters): UsageQueryResult {
     .prepare(`SELECT * FROM usage_records ${where.sql} ORDER BY timestamp DESC LIMIT ? OFFSET ?`)
     .all(...where.params, pageSize, offset) as UsageRecordRow[];
 
-  const summary = computeSummary(readFilteredRecords(db, filters));
+  const summary = computeSummarySQL(db, filters);
 
   return {
     records: rows.map(toUsageRecord),
@@ -589,7 +596,7 @@ export function query(filters: UsageQueryFilters): UsageQueryResult {
 
 export function querySummary(startTime?: string, endTime?: string, status?: UsageStatus): UsageSummary {
   const db = getDb();
-  return computeSummary(readFilteredRecords(db, { startTime, endTime, status }));
+  return computeSummarySQL(db, { startTime, endTime, status });
 }
 
 export function clear(beforeDate?: string): void {
