@@ -172,8 +172,8 @@ export function detectClientType(req: any): ClientType {
   }
   // Codex strong signals must precede the generic metadata.user_id heuristic:
   // a /v1/responses request can carry an OpenAI-style metadata.user_id and
-  // would otherwise be misclassified as claude-code, skipping Codex account
-  // selection and mislabeling usage/client attribution.
+  // would otherwise be misclassified as claude-code, skipping Responses
+  // protocol handling and mislabeling usage/client attribution.
   if (userAgent.includes("codex") || userAgent.includes("Codex")) return "codex";
   if (pathname.endsWith("/v1/responses")) return "codex";
 

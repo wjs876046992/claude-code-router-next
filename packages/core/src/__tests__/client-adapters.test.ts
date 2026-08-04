@@ -79,7 +79,8 @@ describe("builtin client adapter registry", () => {
 
     // Codex strong signals must beat the generic metadata.user_id heuristic:
     // a /v1/responses (or codex UA) request carrying an OpenAI-style
-    // metadata.user_id must still classify as codex so account selection runs.
+    // metadata.user_id must still classify as codex so Responses protocol
+    // handling and usage attribution stay correct.
     expect(detectClientType(request({
       url: "/v1/responses",
       body: { model: "gpt-5", input: [], metadata: { user_id: "user_abc_session_xyz" } },

@@ -5,7 +5,7 @@ import { sessionUsageCache } from "../utils/cache";
 const EXPECTED_PHASES = [
   "request-normalize",
   "adapter",
-  "auth-codex",
+  "auth-client",
   "agent",
   "router",
   "provider-model-normalize",
@@ -30,7 +30,7 @@ describe("CCR request pipeline order", () => {
     await server.ready();
 
     server.ccrPreHandlerCallbacks = {
-      authCodex: async (_req: any) => {},
+      authClient: async (_req: any) => {},
       agent: async (_req: any) => {},
     };
 

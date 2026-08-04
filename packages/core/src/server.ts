@@ -246,10 +246,10 @@ class Server {
         if (!req.originalModel && req.body.model) req.originalModel = req.body.model;
         applyClientAdapter(req, configService.getAll());
 
-        // Phase 3: auth/Codex (injected by createCcrServer via callbacks)
-        phaseTrace.push("auth-codex");
+        // Phase 3: auth/client context (injected by createCcrServer via callbacks)
+        phaseTrace.push("auth-client");
         if (this.ccrPreHandlerCallbacks) {
-          await this.ccrPreHandlerCallbacks.authCodex(req, reply);
+          await this.ccrPreHandlerCallbacks.authClient(req, reply);
           if (reply.sent) return;
         }
 
@@ -371,6 +371,7 @@ class Server {
           enabled: this.configService.get('ACTIVE_PROBE_ENABLED') ?? true,
           quotaProbeIntervalMinutes: this.configService.get('QUOTA_PROBE_INTERVAL_MINUTES') ?? 10,
           probeTimeoutMs: this.configService.get('PROBE_TIMEOUT_MS') ?? 15000,
+          slowThresholdMs: Number(this.configService.get('PROBE_SLOW_THRESHOLD_MS')) || 3000,
           initialDelayMs: this.configService.get('PROBE_INITIAL_DELAY_MS') ?? 5000,
           excludeProviders: this.configService.get('EXCLUDE_PROBE_PROVIDERS') ?? [],
         };

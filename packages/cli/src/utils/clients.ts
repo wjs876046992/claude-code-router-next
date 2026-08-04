@@ -1,17 +1,11 @@
 import {
   applyClientSelection,
-  activateCodexAccount,
   CLIENT_IDS,
-  deleteCodexAccount,
   disableClient,
   disableConfiguredClients,
   enableClient,
   enableConfiguredClients,
-  exportCodexRefreshToken,
-  importCodexAccountFromRefreshToken,
-  importCurrentCodexAccount,
   isClientId,
-  listCodexAccounts,
   listClientStatuses,
   restoreClient,
   type ClientApplyResult,
@@ -70,25 +64,6 @@ function printClientList(config: Record<string, any>): void {
   }
 }
 
-function printCodexAccounts(config: Record<string, any>): void {
-  const result = listCodexAccounts(config);
-  console.log("\nCodex Accounts");
-  console.log("--------------");
-  console.log(`auth: ${result.authPath}`);
-  if (result.accounts.length === 0) {
-    console.log("No managed Codex accounts. Run: ccr clients codex import-current [label]");
-    return;
-  }
-  for (const account of result.accounts) {
-    const active = account.active ? "*" : " ";
-    const plan = account.plan ? ` (${account.plan})` : "";
-    console.log(`${active} ${account.id}`);
-    console.log(`  label: ${account.label}${plan}`);
-    if (account.email) console.log(`  email: ${account.email}`);
-    if (account.lastUsedAt) console.log(`  used:  ${account.lastUsedAt}`);
-  }
-}
-
 function validateClientArgs(args: string[], allowEmpty = false): ClientId[] {
   if (args.length === 0) {
     if (allowEmpty) return [];
@@ -142,57 +117,6 @@ export async function handleClientsCommand(args: string[]): Promise<void> {
   const subcommand = args[0] || "list";
 
   switch (subcommand) {
-    case "codex": {
-      const action = args[1] || "accounts";
-      const config = await readConfigFile();
-      if (action === "accounts" || action === "list") {
-        printCodexAccounts(config);
-        return;
-      }
-      if (action === "import-current") {
-        const result = importCurrentCodexAccount(config, args.slice(2).join(" "));
-        await writeConfigFile(result.config);
-        console.log(`✓ Imported Codex account: ${result.account?.label || result.account?.id}`);
-        return;
-      }
-      if (action === "import-rt") {
-        const refreshToken = args[2];
-        if (!refreshToken) throw new Error("No Codex refresh token specified");
-        const result = await importCodexAccountFromRefreshToken(config, refreshToken, args.slice(3).join(" "));
-        await writeConfigFile(result.config);
-        console.log(`✓ Imported Codex account: ${result.account?.label || result.account?.id}`);
-        return;
-      }
-      if (action === "activate") {
-        const accountId = args[2];
-        if (!accountId) throw new Error("No Codex account id specified");
-        const result = activateCodexAccount(config, accountId);
-        await writeConfigFile(result.config);
-        console.log(`✓ Activated Codex account: ${result.account?.label || accountId}`);
-        return;
-      }
-      if (action === "delete") {
-        const accountId = args[2];
-        if (!accountId) throw new Error("No Codex account id specified");
-        const result = deleteCodexAccount(config, accountId);
-        await writeConfigFile(result.config);
-        console.log(`✓ Deleted Codex account: ${accountId}`);
-        return;
-      }
-      if (action === "export-rt") {
-        const result = exportCodexRefreshToken(config, args[2]);
-        console.log(result.refreshToken);
-        return;
-      }
-      console.log(`Usage:
-  ccr clients codex accounts
-  ccr clients codex import-current [label]
-  ccr clients codex import-rt <refresh-token> [label]
-  ccr clients codex export-rt [account-id]
-  ccr clients codex activate <account-id>
-  ccr clients codex delete <account-id>`);
-      process.exit(1);
-    }
     case "list": {
       const config = await readConfigFile();
       printClientList(config);
@@ -217,9 +141,7 @@ export async function handleClientsCommand(args: string[]): Promise<void> {
     default:
       console.log(`Usage:
   ccr clients list
-  ccr clients codex accounts
-  ccr clients codex import-current "Plus account"
-  ccr clients codex activate <account-id>
+  ccr clients apply [client...]
   ccr clients enable claudeCode codex
   ccr clients disable codex
   ccr clients restore claudeCode`);

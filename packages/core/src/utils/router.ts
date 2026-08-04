@@ -229,7 +229,7 @@ function normalizeModelName(modelName: string): string {
   return normalized.trim().toLowerCase();
 }
 
-function extractModelFamily(modelName: string): { family: string | null; extended: boolean; isCcrAlias: boolean } {
+export function extractModelFamily(modelName: string): { family: string | null; extended: boolean; isCcrAlias: boolean } {
   const normalized = normalizeModelName(modelName);
 
   // Check for [1m] suffix for extended context
@@ -548,7 +548,7 @@ function requestHasImages(req: any): boolean {
   );
 }
 
-function modelSupportsImages(modelName: string): boolean {
+export function modelSupportsImages(modelName: string): boolean {
   const normalized = normalizeModelName(modelName);
   const imageModelPatterns = [
     /claude/i,
@@ -791,25 +791,12 @@ const getUseModel = async (
     }
   }
 
-  // Handle explicit provider,model format.
-  // In strict project mode, skip this shortcut — the project Router is
-  // authoritative and must decide the target, not the client's explicit override.
-  if (req.body.model.includes(",") && !isStrictProject) {
-    const model = resolveConfiguredModel(req.body.model, providers, false, 'default', enableFallback, allowPromotion, isStrictProject);
-    if (model) {
-      return { model, scenarioType: 'default' };
-    }
-    req.log.warn(`Explicit model ${req.body.model} unavailable (fail pool), trying fallback`);
-    const fallbackResult = enableFallback
-      ? resolveScenarioFallbackModel('default', providers, undefined, globalFallback, undefined, isStrictProject)
-      : null;
-    if (fallbackResult) {
-      req.log.info(`Using fallback for explicit model: ${fallbackResult}`);
-      return { model: fallbackResult, scenarioType: 'default' };
-    }
-    req.log.warn(`No fallback available for explicit model ${req.body.model}, continuing through routing logic`);
-  }
-
+  // Routing precedence: model family first, then explicit "provider,model",
+  // then default/scenario routing. Family routing takes priority so an enabled
+  // family mapping always wins; only when no family matches do we honor a
+  // fully-qualified "provider,model" override from the client. Strict project
+  // mode still skips the explicit shortcut below (project Router authoritative).
+  //
   // Model family routing: extract opus/sonnet/haiku and use family-specific config
   const { family, extended: modelExtended, isCcrAlias } = extractModelFamily(req.body.model);
   const familyConfig = Router?.families?.[family || ''] as RouterFamilyConfig | undefined;
@@ -834,6 +821,25 @@ const getUseModel = async (
     if (familyResult) {
       return { model: familyResult.model, scenarioType: familyResult.scenarioType };
     }
+  }
+
+  // Handle explicit provider,model format (only when family routing did not match).
+  // In strict project mode, skip this shortcut — the project Router is
+  // authoritative and must decide the target, not the client's explicit override.
+  if (req.body.model.includes(",") && !isStrictProject) {
+    const model = resolveConfiguredModel(req.body.model, providers, false, 'default', enableFallback, allowPromotion, isStrictProject);
+    if (model) {
+      return { model, scenarioType: 'default' };
+    }
+    req.log.warn(`Explicit model ${req.body.model} unavailable (fail pool), trying fallback`);
+    const fallbackResult = enableFallback
+      ? resolveScenarioFallbackModel('default', providers, undefined, globalFallback, undefined, isStrictProject)
+      : null;
+    if (fallbackResult) {
+      req.log.info(`Using fallback for explicit model: ${fallbackResult}`);
+      return { model: fallbackResult, scenarioType: 'default' };
+    }
+    req.log.warn(`No fallback available for explicit model ${req.body.model}, continuing through routing logic`);
   }
 
   // ccr-opus/ccr-sonnet/ccr-haiku are aliases CCR injects for family routing.
@@ -1026,8 +1032,9 @@ export interface RouterFallbackConfig {
 
 export const router = async (req: any, _res: any, context: RouterContext) => {
   const { configService, event } = context;
-  // Save original request model before routing (for usage stats mapping)
-  req.originalModel = req.body.model;
+  // Preserve the model captured before any agent/router mutation so usage
+  // records always reflect what the client actually sent.
+  if (!req.originalModel && req.body.model) req.originalModel = req.body.model;
 
   // The adapter must run before project routing and token-threshold decisions so
   // all downstream logic consumes one client-specific request context.
@@ -1118,31 +1125,61 @@ export const router = async (req: any, _res: any, context: RouterContext) => {
       req.scenarioType = 'default';
     }
 
+    const { family: originalFamily } = extractModelFamily(
+      req.originalModel || req.body.model
+    );
+    const imageFamilyConfig = routerConfig?.enableFamilyRouting && originalFamily
+      ? routerConfig.families?.[originalFamily] as RouterFamilyConfig | undefined
+      : undefined;
+    const configuredImageModels = [
+      imageFamilyConfig?.image,
+      routerConfig?.image,
+    ].filter((value, index, values): value is string =>
+      !!value && values.indexOf(value) === index
+    );
+
     if (
-      routerConfig?.image &&
-      model !== routerConfig.image &&
+      configuredImageModels.length > 0 &&
       requestHasImages(req) &&
       !modelSupportsImages(model)
     ) {
-      const imageModel = resolveConfiguredModel(routerConfig.image, providers, false, 'image', enableFallback, !isStrictProject, isStrictProject);
-      if (imageModel) {
-        req.log.info(`Using image model fallback for ${model}`);
-        model = imageModel;
+      // If the resolved model is already one of the configured image targets
+      // (family image or global image), it must already support images by the
+      // outer guard's intent — only tag the scenario, never re-route. This
+      // preserves an explicit route to the global image when both family and
+      // global image models are configured.
+      if (configuredImageModels.includes(model)) {
         req.scenarioType = 'image';
       } else {
-        // Try project-aware fallback for image scenario
-        const imageFallback = enableFallback
-          ? resolveScenarioFallbackModel('image', providers, undefined, req.fallbackConfig, undefined, isStrictProject)
-          : null;
-        if (imageFallback) {
-          req.log.info(`Using image fallback model: ${imageFallback}`);
-          model = imageFallback;
+        const imageModel = configuredImageModels
+          .map((candidate) => resolveConfiguredModel(candidate, providers, false, 'image', enableFallback, !isStrictProject, isStrictProject))
+          .find((candidate): candidate is string => !!candidate);
+        if (imageModel) {
+          req.log.info(`Using image model fallback for ${model}`);
+          model = imageModel;
           req.scenarioType = 'image';
-        } else if (isStrictProject) {
-          throwStrictProjectError(req, routerConfig.image, providers, 'image');
         } else {
-          req.log.warn(`Image model ${routerConfig.image} unavailable (fail pool), keeping ${model}`);
-          req.scenarioType = 'image';
+          // Try project-aware family fallback first, then the global image fallback.
+          const imageFallback = enableFallback
+            ? resolveScenarioFallbackModel(
+                'image',
+                providers,
+                imageFamilyConfig?.fallback,
+                req.fallbackConfig,
+                originalFamily || undefined,
+                isStrictProject
+              )
+            : null;
+          if (imageFallback) {
+            req.log.info(`Using image fallback model: ${imageFallback}`);
+            model = imageFallback;
+            req.scenarioType = 'image';
+          } else if (isStrictProject) {
+            throwStrictProjectError(req, configuredImageModels[0], providers, 'image');
+          } else {
+            req.log.warn(`Image models ${configuredImageModels.join(', ')} unavailable (fail pool), keeping ${model}`);
+            req.scenarioType = 'image';
+          }
         }
       }
     }

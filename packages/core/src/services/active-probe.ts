@@ -32,6 +32,8 @@ export interface ActiveProbeConfig {
   quotaProbeIntervalMinutes?: number;
   /** Timeout in milliseconds for probe requests (default: 15000) */
   probeTimeoutMs?: number;
+  /** Latency threshold in milliseconds for slow-network warnings (default: 3000) */
+  slowThresholdMs?: number;
   /** Initial delay before starting first probe (default: 5000) */
   initialDelayMs?: number;
   /** Providers to exclude from active probing (e.g., providers without models endpoint) */
@@ -42,9 +44,43 @@ const DEFAULT_CONFIG: Required<ActiveProbeConfig> = {
   enabled: true,
   quotaProbeIntervalMinutes: 10,
   probeTimeoutMs: 15000,
+  slowThresholdMs: 3000,
   initialDelayMs: 5000,
   excludeProviders: [],
 };
+
+export type ProviderProbeStatus = 'healthy' | 'slow' | 'error' | 'timeout';
+export type ProviderProbeErrorKind = 'timeout' | 'network' | 'http';
+export type ProviderProbeSource = 'health' | 'manual' | 'rate-limit-headers';
+
+export interface ProviderProbeTelemetry {
+  provider: string;
+  latencyMs: number;
+  status: ProviderProbeStatus;
+  isSlow: boolean;
+  errorKind?: ProviderProbeErrorKind;
+  errorMessage?: string;
+  lastProbeAt: number;
+  lastSuccessAt?: number;
+  source: ProviderProbeSource;
+}
+
+interface ProbeResult {
+  success: boolean;
+  error?: string;
+  headers?: Headers;
+  latencyMs: number;
+  errorKind?: ProviderProbeErrorKind;
+}
+
+export interface ManualProbeResult {
+  success: boolean;
+  latencyMs: number;
+  status: ProviderProbeStatus;
+  isSlow: boolean;
+  errorKind?: ProviderProbeErrorKind;
+  error?: string;
+}
 
 function isConfigEnabled(value: any): boolean {
   return value === true || value === 'true' || value === 1 || value === '1';
@@ -112,12 +148,19 @@ async function probeProvider(
   provider: LLMProvider,
   timeoutMs: number,
   proxyUrl?: string
-): Promise<{ success: boolean; error?: string; headers?: Headers }> {
+): Promise<ProbeResult> {
+  const startedAt = performance.now();
+  const elapsed = () => Math.max(0, Math.round(performance.now() - startedAt));
   const modelsUrl = deriveModelsEndpoint(provider.baseUrl);
 
   if (!modelsUrl) {
     // Cannot derive endpoint, skip probe
-    return { success: false, error: 'Cannot derive models endpoint from baseUrl' };
+    return {
+      success: false,
+      error: 'Cannot derive models endpoint from baseUrl',
+      errorKind: 'network',
+      latencyMs: elapsed(),
+    };
   }
 
   try {
@@ -141,7 +184,7 @@ async function probeProvider(
     }
 
     if (response.ok) {
-      return { success: true, headers: response.headers };
+      return { success: true, headers: response.headers, latencyMs: elapsed() };
     }
 
     if (response.status === 429) {
@@ -150,13 +193,15 @@ async function probeProvider(
         success: false,
         error: `HTTP 429: ${errorText.slice(0, 100) || 'Rate limited'}`,
         headers: response.headers,
+        latencyMs: elapsed(),
+        errorKind: 'http',
       };
     }
 
     // Any non-rate-limit HTTP 4xx response means the server is reachable
     // and just rejected the request.
     if (response.status >= 400 && response.status < 500) {
-      return { success: true, headers: response.headers };
+      return { success: true, headers: response.headers, latencyMs: elapsed() };
     }
 
     const errorText = await response.text().catch(() => '');
@@ -164,10 +209,22 @@ async function probeProvider(
       success: false,
       error: `HTTP ${response.status}: ${errorText.slice(0, 100)}`,
       headers: response.headers,
+      latencyMs: elapsed(),
+      errorKind: 'http',
     };
   } catch (err: any) {
     const errorMessage = err?.message || err?.toString() || 'Unknown probe error';
-    return { success: false, error: errorMessage };
+    const isTimeout =
+      err?.name === 'TimeoutError' ||
+      err?.name === 'AbortError' ||
+      err?.code === 20 ||
+      err?.code === 'ABORT_ERR';
+    return {
+      success: false,
+      error: errorMessage,
+      latencyMs: elapsed(),
+      errorKind: isTimeout ? 'timeout' : 'network',
+    };
   }
 }
 
@@ -314,6 +371,9 @@ export class ActiveProbeService {
   private logger?: any;
   private getConfig?: (key: string) => any;
   private running = false;
+  // Latest reachability probe telemetry per provider. In-memory only: latency
+  // is a transient signal and stale values must not survive a restart.
+  private probeTelemetry: Map<string, ProviderProbeTelemetry> = new Map();
 
   constructor(
     getProviders: () => LLMProvider[],
@@ -327,6 +387,63 @@ export class ActiveProbeService {
     this.resolveProxyUrl = resolveProxyUrl;
     this.logger = logger;
     this.getConfig = getConfig;
+  }
+
+  /**
+   * Record the latest reachability probe result for a provider.
+   * Only /models-style reachability probes (health, manual, rate-limit header
+   * probes) should be recorded here; quota adapters, wake-up calls and
+   * rate-limit chat pings hit different endpoints and must not overwrite it.
+   */
+  private recordProbe(
+    providerName: string,
+    result: ProbeResult,
+    source: ProviderProbeSource
+  ): ProviderProbeTelemetry {
+    const now = Date.now();
+    const isSlow = result.success && result.latencyMs > this.config.slowThresholdMs;
+    let status: ProviderProbeStatus;
+    if (result.success) {
+      status = isSlow ? 'slow' : 'healthy';
+    } else {
+      status = result.errorKind === 'timeout' ? 'timeout' : 'error';
+    }
+
+    const previous = this.probeTelemetry.get(providerName);
+    const telemetry: ProviderProbeTelemetry = {
+      provider: providerName,
+      latencyMs: result.latencyMs,
+      status,
+      isSlow,
+      errorKind: result.errorKind,
+      errorMessage: result.error,
+      lastProbeAt: now,
+      lastSuccessAt: result.success ? now : previous?.lastSuccessAt,
+      source,
+    };
+    this.probeTelemetry.set(providerName, telemetry);
+
+    if (isSlow) {
+      this.logger?.warn?.(
+        `Slow network detected for provider ${providerName}: probe took ${result.latencyMs} ms (threshold ${this.config.slowThresholdMs} ms)`
+      );
+    }
+    return telemetry;
+  }
+
+  /**
+   * Read-only snapshot of the latest probe telemetry for all providers.
+   */
+  getProbeTelemetry(): ProviderProbeTelemetry[] {
+    return Array.from(this.probeTelemetry.values()).map(entry => ({ ...entry }));
+  }
+
+  /**
+   * Read-only snapshot of the latest probe telemetry for one provider.
+   */
+  getProviderProbeTelemetry(providerName: string): ProviderProbeTelemetry | undefined {
+    const entry = this.probeTelemetry.get(providerName);
+    return entry ? { ...entry } : undefined;
   }
 
   /**
@@ -503,7 +620,10 @@ export class ActiveProbeService {
           provider: provider.name,
           models,
           type: 'rate-limit-headers',
-          promise: probeProvider(provider, this.config.probeTimeoutMs, proxyUrl).then(() => undefined),
+          promise: probeProvider(provider, this.config.probeTimeoutMs, proxyUrl).then(result => {
+            // Same /models reachability probe — reuse it for latency telemetry.
+            this.recordProbe(provider.name, result, 'rate-limit-headers');
+          }),
         });
       }
     }
@@ -560,6 +680,7 @@ export class ActiveProbeService {
 
       if (result.status === 'fulfilled') {
         const probeResult = result.value;
+        this.recordProbe(provider.name, probeResult, 'health');
         if (probeResult.success) {
           let recoveredCount = 0;
           for (const m of models) {
@@ -602,6 +723,18 @@ export class ActiveProbeService {
           this.logger?.warn?.(`Health probe failed for ${provider.name}: ${probeResult.error}`);
         }
       } else {
+        // Defensive: probeProvider catches its own errors and never rejects,
+        // but keep telemetry consistent if that ever changes.
+        this.recordProbe(
+          provider.name,
+          {
+            success: false,
+            error: result.reason?.message || String(result.reason || 'Probe error'),
+            latencyMs: 0,
+            errorKind: 'network',
+          },
+          'health'
+        );
         for (const m of models) {
           healthStore.recordFailure(provider.name, m, result.reason?.message || 'Probe error');
         }
@@ -769,18 +902,30 @@ export class ActiveProbeService {
   /**
    * Trigger a manual probe for a specific provider
    */
-  async probeProviderManually(providerName: string): Promise<boolean> {
+  async probeProviderManually(providerName: string): Promise<ManualProbeResult> {
     const providers = this.getProviders();
     const provider = providers.find(p => p.name === providerName);
 
     if (!provider) {
       this.logger?.warn?.(`Provider ${providerName} not found for manual probe`);
-      return false;
+      return {
+        success: false,
+        latencyMs: 0,
+        status: 'error',
+        isSlow: false,
+        error: `Provider ${providerName} not found`,
+      };
     }
 
     if (provider.enabled === false) {
       this.logger?.warn?.(`Provider ${providerName} is disabled, skipping manual probe`);
-      return false;
+      return {
+        success: false,
+        latencyMs: 0,
+        status: 'error',
+        isSlow: false,
+        error: `Provider ${providerName} is disabled`,
+      };
     }
 
     const result = await probeProvider(
@@ -788,6 +933,7 @@ export class ActiveProbeService {
       this.config.probeTimeoutMs,
       this.resolveProxyUrl?.(provider)
     );
+    const telemetry = this.recordProbe(provider.name, result, 'manual');
 
     const models = Array.isArray(provider.models) ? provider.models : [];
 
@@ -801,7 +947,14 @@ export class ActiveProbeService {
       }
     }
 
-    return result.success;
+    return {
+      success: result.success,
+      latencyMs: result.latencyMs,
+      status: telemetry.status,
+      isSlow: telemetry.isSlow,
+      errorKind: result.errorKind,
+      error: result.error,
+    };
   }
 }
 
