@@ -49,7 +49,6 @@ export function SettingsPage() {
   const [isLoadingClients, setIsLoadingClients] = useState(false);
   const [isApplyingClients, setIsApplyingClients] = useState(false);
   const [restoringClientId, setRestoringClientId] = useState<ClientId | null>(null);
-  const lastClientsFetchRef = useRef(0);
   const tabFromUrl = new URLSearchParams(location.search).get("tab");
   const initialTab = ["general", "clients", "router", "projects", "usage", "tools"].includes(tabFromUrl || "")
     ? tabFromUrl || "general"
@@ -129,35 +128,31 @@ export function SettingsPage() {
     }
   }, [setConfig]);
 
+  // Keep a ref to the latest translator so loadClients itself can have a
+  // stable identity. Depending on `t` directly would recreate the callback on
+  // re-renders (its identity is not stable), re-triggering the mount effect
+  // and hammering /api/clients in a fetch → setState → re-render loop.
+  const tRef = useRef(t);
+  tRef.current = t;
+
   const loadClients = useCallback(async () => {
     setIsLoadingClients(true);
     try {
       const clientsResponse = await api.getClients();
       setClients(clientsResponse.clients || []);
       setSelectedClientIds((clientsResponse.clients || []).filter((client) => client.enabled || client.managed).map((client) => client.id));
-      lastClientsFetchRef.current = Date.now();
     } catch (error) {
-      setToast({ message: t("clients.load_failed") + ': ' + (error as Error).message, type: 'error' });
+      setToast({ message: tRef.current("clients.load_failed") + ': ' + (error as Error).message, type: 'error' });
     } finally {
       setIsLoadingClients(false);
     }
-  }, [t]);
+  }, []);
 
-  // Client takeover status refreshes on demand: once on mount, then again when
-  // the page becomes visible with data older than a minute. Enable/disable/
-  // restore actions reuse their server responses instead of polling.
+  // Client takeover status loads once on mount. Enable/disable/restore
+  // actions reuse their server responses, so no background polling or
+  // visibility-based refetch is needed.
   useEffect(() => {
     loadClients();
-  }, [loadClients]);
-
-  useEffect(() => {
-    const handleVisibility = () => {
-      if (document.visibilityState === "visible" && Date.now() - lastClientsFetchRef.current > 60_000) {
-        loadClients();
-      }
-    };
-    document.addEventListener("visibilitychange", handleVisibility);
-    return () => document.removeEventListener("visibilitychange", handleVisibility);
   }, [loadClients]);
 
   if (!config) {

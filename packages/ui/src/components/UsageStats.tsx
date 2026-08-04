@@ -24,6 +24,11 @@ import {
 // settle (no overlapping /api/usage requests).
 const USAGE_AUTO_REFRESH_MS = 30_000;
 
+// Initial time range: last 7 days. Matches the "7d" quick preset. Keeping a
+// bounded default prevents the 30s auto-refresh from issuing unbounded
+// full-table scans against the usage database.
+const DEFAULT_RANGE_HOURS = 168;
+
 interface UsageRecord {
   id: string;
   timestamp: string;
@@ -173,9 +178,14 @@ export function UsageStats() {
   const requestRefreshRef = useRef<() => void>(() => {});
 
   // Filters
-  const [startDate, setStartDate] = useState("");
-  const [endDate, setEndDate] = useState("");
-  const [activeRange, setActiveRange] = useState<number | null>(null);
+  // Default to the last 7 days: an unbounded query scans the whole
+  // usage table synchronously on the server's event loop, which stalls every
+  // other management API while the auto-refresh loop polls every 30s. Users
+  // can still opt into an unbounded scan via the "All" preset.
+  const [startDate, setStartDate] = useState(() =>
+    formatDateInput(new Date(Date.now() - DEFAULT_RANGE_HOURS * 60 * 60 * 1000)));
+  const [endDate, setEndDate] = useState(() => formatDateInput(new Date()));
+  const [activeRange, setActiveRange] = useState<number | null>(DEFAULT_RANGE_HOURS);
   const [filterModel, setFilterModel] = useState("");
   const [filterProvider, setFilterProvider] = useState("");
   const [filterScenario, setFilterScenario] = useState("");
@@ -580,33 +590,32 @@ export function UsageStats() {
                 {records.length === 0 ? (
                   <tr><td colSpan={13} className="text-center p-4 text-gray-400">{t("usage.no_data")}</td></tr>
                 ) : records.map((r) => {
-                  // Show the full mapping relationship in one consistent shape for
-                  // every client: "original [family/scenario] → routed (→ upstream)".
-                  // - family tag: the resolved model family (e.g. opus) when the
-                  //   request went through family routing; "explicit" when the client
-                  //   sent a fully-qualified "provider,model" route that bypasses
-                  //   family routing; "direct" otherwise. This keeps explicit routes
-                  //   and family-alias routes readable in the same shape.
-                  // - upstream: appended only when the provider silently returned a
-                  //   different model than the routed target.
-                  const sourceModel = r.originalModel || r.model || "unknown";
+                  // Model column shows the routing chain:
+                  //   请求模型 → ccr 路由模型 → 上游实际返回
+                  // The provider sits in its own column to the left, so the
+                  // middle leg only carries the model name. Adjacent equal legs
+                  // are de-duplicated so a request routed unchanged doesn't read
+                  // as "gpt-4o → gpt-4o". The route tag (family/scenario) lives
+                  // in the route column; the full annotated chain is in the tooltip.
+                  const requestModel = r.originalModel || r.model || "unknown";
+                  const routedModel = r.model || "unknown";
+                  const actualModel =
+                    r.upstreamModel && r.upstreamModel !== r.model ? r.upstreamModel : null;
+                  const modelDisplay = [requestModel, routedModel, actualModel]
+                    .filter((leg, i, arr) => leg != null && leg !== arr[i - 1])
+                    .join(" → ");
                   const familyTag = r.modelFamily
                     || (r.originalModel
                       ? (r.originalModel.includes(",") ? "explicit" : "direct")
                       : "unknown");
                   const routeTag = `${familyTag}/${r.scenarioType || "default"}`;
-                  const routedLeg = r.upstreamModel && r.upstreamModel !== r.model
-                    ? `${r.model} → ${r.upstreamModel}`
-                    : r.model;
-                  const modelDisplay = r.originalModel
-                    ? `${sourceModel} [${routeTag}] → ${routedLeg}`
-                    : `${sourceModel} [${routeTag}]${r.upstreamModel && r.upstreamModel !== r.model ? ` → ${r.upstreamModel}` : ""}`;
+                  const fullChain = `${requestModel} [${routeTag}] → ${routedModel}${actualModel ? ` → ${actualModel}` : ""}`;
                   return (
                   <tr key={r.id} className="border-b hover:bg-gray-50">
                     <td className="p-1.5 whitespace-nowrap">{formatTime(r.timestamp)}</td>
                     <td className="p-1.5">{clientDisplayName(r.clientType, t)}</td>
                     <td className="p-1.5">{r.provider}</td>
-                    <td className="p-1.5 max-w-[280px] truncate" title={modelDisplay}>{modelDisplay}</td>
+                    <td className="p-1.5 max-w-[280px] truncate" title={fullChain}>{modelDisplay}</td>
                     <td className="p-1.5">{r.modelFamily ? `${r.modelFamily}/${r.scenarioType}` : r.scenarioType}</td>
                     <td className="text-right p-1.5">{formatTokens(r.inputTokens)}</td>
                     <td className="text-right p-1.5">{formatTokens(r.outputTokens)}</td>
