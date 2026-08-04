@@ -1,15 +1,17 @@
 import { useTranslation } from "react-i18next";
-import { Pencil, RefreshCw, Trash2, Network } from "lucide-react";
+import { Pencil, RefreshCw, Trash2, Network, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import type { Provider, ProviderHealthState, ProviderQuotaUsage } from "@/types";
+import type { Provider, ProviderHealthState, ProviderProbeTelemetry, ProviderQuotaUsage } from "@/types";
 
 interface ProviderListProps {
   providers: Provider[];
   healthStates?: ProviderHealthState[];
   quotaUsages?: ProviderQuotaUsage[];
+  /** Latest reachability probe telemetry per provider (may be empty after restart). */
+  probeTelemetry?: ProviderProbeTelemetry[];
   onEdit: (index: number) => void;
   onRemove: (index: number) => void;
   onToggle?: (index: number, enabled: boolean) => void;
@@ -66,30 +68,91 @@ function getProviderHealth(providerName: string, healthStates?: ProviderHealthSt
   return { status: 'closed', hasFailure: false };
 }
 
+// Combined card status derived from the circuit breaker (model level) and
+// the latest reachability probe (provider level). Exported for unit testing.
+export type ProviderCardLevel =
+  | "disabled"
+  | "failed"
+  | "recovering"
+  | "unreachable"
+  | "slow"
+  | "healthy";
+
+export interface ProviderCardStatus {
+  level: ProviderCardLevel;
+  latencyMs?: number;
+}
+
+export function deriveProviderCardStatus(
+  isEnabled: boolean,
+  health: { status: "closed" | "open" | "half-open" | "unknown" },
+  probe?: ProviderProbeTelemetry
+): ProviderCardStatus {
+  if (!isEnabled) return { level: "disabled" };
+  // Circuit breaker states win: they reflect real request failures.
+  if (health.status === "open") return { level: "failed" };
+  if (health.status === "half-open") return { level: "recovering" };
+  if (!probe) return { level: "healthy" };
+  // Breaker healthy but the latest connectivity probe could not reach the
+  // provider (timeout/network/http error).
+  if (probe.status === "timeout" || probe.status === "error") {
+    return { level: "unreachable", latencyMs: probe.latencyMs };
+  }
+  // Reachable but slow — warn without treating the provider as failed.
+  if (probe.isSlow) return { level: "slow", latencyMs: probe.latencyMs };
+  return { level: "healthy" };
+}
+
 // Health indicator component
-function HealthIndicator({ status }: { status: 'closed' | 'open' | 'half-open' | 'unknown' }) {
-  const colors: Record<string, string> = {
-    closed: 'bg-green-500',
-    open: 'bg-red-500',
-    'half-open': 'bg-yellow-500',
-    unknown: 'bg-gray-400',
+function HealthIndicator({
+  level,
+  latencyMs,
+  t,
+}: {
+  level: ProviderCardLevel;
+  latencyMs?: number;
+  t: (key: string, options?: Record<string, unknown>) => string;
+}) {
+  const dotColors: Record<ProviderCardLevel, string> = {
+    healthy: "bg-green-500",
+    failed: "bg-red-500",
+    unreachable: "bg-red-500",
+    recovering: "bg-yellow-500",
+    slow: "bg-yellow-500",
+    disabled: "bg-gray-400",
   };
 
-  const labels: Record<string, string> = {
-    closed: 'Healthy',
-    open: 'Failed',
-    'half-open': 'Recovering',
-    unknown: 'Unknown',
+  const labels: Record<ProviderCardLevel, string> = {
+    healthy: t("providers.health_healthy"),
+    failed: t("providers.health_failed"),
+    unreachable: t("providers.health_unreachable"),
+    recovering: t("providers.health_recovering"),
+    slow: t("providers.health_slow", { latency: latencyMs ?? "?" }),
+    disabled: t("providers.health_unknown"),
   };
+
+  const showSlowIcon = level === "slow";
 
   return (
-    <div className="flex items-center gap-1">
-      <div
-        className={`w-3 h-3 rounded-full ${colors[status]} animate-pulse`}
-        title={labels[status]}
-      />
-      <span className="text-xs text-gray-500">{labels[status]}</span>
-    </div>
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <div className="flex items-center gap-1 cursor-default">
+            {showSlowIcon ? (
+              <TriangleAlert className="w-3.5 h-3.5 text-yellow-500" />
+            ) : (
+              <div className={`w-3 h-3 rounded-full ${dotColors[level]} animate-pulse`} />
+            )}
+            <span className="text-xs text-gray-500">{labels[level]}</span>
+          </div>
+        </TooltipTrigger>
+        <TooltipContent side="top" className="max-w-xs text-xs">
+          {level === "slow" || level === "unreachable"
+            ? t("providers.health_probe_tooltip")
+            : labels[level]}
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   );
 }
 
@@ -228,7 +291,7 @@ function QuotaProgressBar({
   );
 }
 
-export function ProviderList({ providers, healthStates, quotaUsages, onEdit, onRemove, onToggle, onProbe, probingProviders, proxyUrl, proxyGlobalEnabled, saving, onProxyToggle }: ProviderListProps) {
+export function ProviderList({ providers, healthStates, quotaUsages, probeTelemetry, onEdit, onRemove, onToggle, onProbe, probingProviders, proxyUrl, proxyGlobalEnabled, saving, onProxyToggle }: ProviderListProps) {
   const { t } = useTranslation();
 
   // Derive proxy state once for all cards
@@ -256,8 +319,10 @@ export function ProviderList({ providers, healthStates, quotaUsages, onEdit, onR
         const models = Array.isArray(provider.models) ? provider.models : [];
         const health = getProviderHealth(providerName, healthStates);
         const quota = quotaUsages?.find(q => q.provider === providerName);
+        const probe = probeTelemetry?.find(p => p.provider === providerName);
         const isProbing = probingProviders?.has(providerName) || false;
         const isEnabled = provider.enabled !== false;
+        const cardStatus = deriveProviderCardStatus(isEnabled, health, probe);
 
         return (
           <div key={index} className="flex items-start justify-between rounded-2xl border border-white/10 bg-white/5 p-5 transition-all hover:bg-white/10 hover:border-primary/30 group animate-in shadow-lg shadow-black/5 glass-card">
@@ -270,6 +335,24 @@ export function ProviderList({ providers, healthStates, quotaUsages, onEdit, onR
               {health.lastError && (
                 <div className="p-2 px-3 bg-red-500/10 border border-red-500/20 rounded-lg text-[11px] text-red-500 font-medium truncate max-w-md">
                   {health.lastError}
+                </div>
+              )}
+
+              {/* Slow-network warning: reachable but the connectivity probe took
+                  longer than the configured threshold. Informational only — it
+                  does not affect routing or the circuit breaker. */}
+              {cardStatus.level === "slow" && (
+                <div className="flex items-center gap-1.5 p-2 px-3 bg-yellow-500/10 border border-yellow-500/25 rounded-lg text-[11px] text-yellow-600 font-medium max-w-md">
+                  <TriangleAlert className="h-3.5 w-3.5 shrink-0" />
+                  <span className="truncate">
+                    {t("providers.slow_network_warning", { latency: cardStatus.latencyMs ?? "?" })}
+                  </span>
+                </div>
+              )}
+
+              {cardStatus.level === "unreachable" && probe?.errorMessage && (
+                <div className="p-2 px-3 bg-red-500/10 border border-red-500/20 rounded-lg text-[11px] text-red-500 font-medium truncate max-w-md">
+                  {t("providers.unreachable_warning", { error: probe.errorMessage })}
                 </div>
               )}
               
@@ -373,7 +456,7 @@ export function ProviderList({ providers, healthStates, quotaUsages, onEdit, onR
                   disabled={saving}
                 />
               </div>
-              <HealthIndicator status={isEnabled ? health.status : 'unknown'} />
+              <HealthIndicator level={cardStatus.level} latencyMs={cardStatus.latencyMs} t={t} />
               <div className="grid grid-cols-2 gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
                 <Button
                   variant="ghost"

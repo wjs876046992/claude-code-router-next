@@ -89,6 +89,30 @@ Use environment variables in your configuration:
 
 Both `$VAR_NAME` and `${VAR_NAME}` syntax are supported.
 
+### Provider Reachability Probes
+
+CCR runs lightweight background probes (`GET /v1/models`) against each provider
+to drive the circuit breaker, quota detection, and the UI health/quota panels.
+The web management endpoints (`GET /api/providers/health`,
+`GET /api/providers/quota`) only read cached in-memory state — they never reach
+the provider network on demand, so a slow panel is a local event-loop issue, not
+a slow upstream.
+
+The probe behavior is tuned with these settings:
+
+| Setting | Default | Description |
+| --- | --- | --- |
+| `ACTIVE_PROBE_ENABLED` | `true` | Enables background health/quota/rate-limit probing. |
+| `PROBE_TIMEOUT_MS` | `15000` | Hard timeout (ms) for a single probe HTTP request. |
+| `PROBE_SLOW_THRESHOLD_MS` | `3000` | Latency (ms) above which a probe is flagged slow. **UI only** — surfaces a yellow ⚠️ warning on the provider card and never affects routing or the circuit breaker. |
+| `QUOTA_PROBE_INTERVAL_MINUTES` | `10` | How often to refresh provider quota. |
+| `PROBE_INITIAL_DELAY_MS` | `5000` | Delay before the first probe after startup. |
+| `EXCLUDE_PROBE_PROVIDERS` | `[]` | Provider names to skip during probing. |
+
+The slow-network threshold is a heuristic for surfacing flaky providers in the
+UI; a slow-but-successful probe keeps the provider available for routing and
+does not open the circuit breaker.
+
 ### Proxy
 
 CCR can route its outbound API requests through an HTTP/HTTPS proxy. This is useful when your providers are only reachable via a proxy (e.g. in restricted network environments).

@@ -3,7 +3,6 @@ import Server from "../server";
 import { registerRequestPipeline, createCcrPreHandlerCallbacks } from "../ccr/request-pipeline";
 import { registerAdminRoutes } from "../ccr/admin-routes";
 import { sessionUsageCache } from "../utils/cache";
-import { startCodexTokenRefreshScheduler } from "../ccr/codex-accounts";
 
 // Build a runtime that mirrors createCcrServer without touching the real
 // ~/.claude-code-router config or starting background probes.
@@ -280,15 +279,5 @@ describe("runtime integration", () => {
     } finally {
       await server.app.close();
     }
-  });
-});
-
-describe("createCcrServer singleton guards", () => {
-  it("does not register duplicate Codex token refresh schedulers", () => {
-    const before = (startCodexTokenRefreshScheduler as any).toString().length;
-    startCodexTokenRefreshScheduler();
-    startCodexTokenRefreshScheduler();
-    // The function is idempotent; calling twice must not change its source.
-    expect((startCodexTokenRefreshScheduler as any).toString().length).toBe(before);
   });
 });

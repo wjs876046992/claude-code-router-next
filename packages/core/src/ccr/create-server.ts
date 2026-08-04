@@ -29,7 +29,6 @@ import {
 } from "@wengine-ai/claude-code-router-shared";
 import { initializeClaudeConfig } from "./claude-config-init";
 import { initDir, initConfig } from "./config";
-import { startCodexTokenRefreshScheduler, isRateLimitMessage, switchCodexAccountAfterRateLimit } from "./codex-accounts";
 import { startPinoLogRetention } from "./pino-retention";
 import { registerPluginsFromConfig } from "./plugin-registration";
 import { registerAdminRoutes } from "./admin-routes";
@@ -47,8 +46,6 @@ export async function createCcrServer(options: CcrRunOptions = {}) {
   await initializeClaudeConfig();
   await initDir();
   const config = await initConfig();
-
-  startCodexTokenRefreshScheduler();
 
   // Check if Providers is configured
   const providers = config.Providers || config.providers || [];
@@ -156,9 +153,6 @@ export async function createCcrServer(options: CcrRunOptions = {}) {
   serverInstance.recordUsage = (data: any) => {
     try {
       const clientType = data.req ? (data.req.clientType || detectClientType(data.req)) : "unknown";
-      if (clientType === "codex" && isRateLimitMessage(0, data.errorMessage)) {
-        void switchCodexAccountAfterRateLimit(data.errorMessage);
-      }
       appendUsage({
         id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         timestamp: new Date().toISOString(),
@@ -169,8 +163,6 @@ export async function createCcrServer(options: CcrRunOptions = {}) {
         modelFamily: data.modelFamily || "",
         scenarioType: data.scenarioType || "default",
         clientType,
-        codexAccountId: data.req?.codexAccountId,
-        codexAccountEmail: data.req?.codexAccountEmail,
         stream: data.stream ?? false,
         inputTokens: data.inputTokens || 0,
         outputTokens: 0,

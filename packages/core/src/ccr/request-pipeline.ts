@@ -5,7 +5,7 @@
  *   1. onRequest: request timing (requestStartTime)
  *   2. namespace preHandler: request normalize
  *   3. namespace preHandler: adapter
- *   4. global preHandler: auth/Codex
+ *   4. global preHandler: auth/client context
  *   5. global preHandler: agent mutation
  *   6. namespace preHandler: router
  *   7. namespace preHandler: provider model normalization
@@ -14,7 +14,7 @@
  *  10. onResponse: TTFT/speed/health/final usage record
  *
  * Fastify runs ancestor preHandler hooks before child plugin hooks. To enforce
- * adapter → auth/Codex → agent → router without relying on registration timing,
+ * adapter → auth/client → agent → router without relying on registration timing,
  * the namespace registers a single ordered dispatcher (see Server.registerNamespace)
  * whose phases invoke the global callbacks between adapter and router.
  *
@@ -39,12 +39,16 @@ import type { IAgent } from "./agents/type";
 import agentsManager from "./agents";
 import { apiKeyAuth } from "./auth";
 import { normalizeResponsesBody } from "../api/routes";
-import {
-  switchCodexAccountBeforeUsageLimit,
-  switchCodexAccountAfterRateLimit,
-  getCurrentCodexAccountForRequest,
-  isRateLimitMessage,
-} from "./codex-accounts";
+
+/**
+ * Classify rate-limit responses from any upstream provider. Used to isolate
+ * rate-limited models in the health store (time-based auto-recover) instead of
+ * applying the generic 3-failure breaker threshold.
+ */
+export function isRateLimitMessage(statusCode: number, message?: string): boolean {
+  return statusCode === 429 ||
+    Boolean(message && /rate[\s_]limit|too many|限流|频率限制|qps_limit|token_limit|quota exhausted|usage limit|limit reached/i.test(message));
+}
 
 const event = new EventEmitter();
 
@@ -116,7 +120,7 @@ function extractNonStreamMeta(payload: any): { usage?: any; model?: string } | u
  * Called by createCcrServer after admin routes are registered.
  */
 export interface CcrPreHandlerCallbacks {
-  authCodex(req: any, reply: any): Promise<void>;
+  authClient(req: any, reply: any): Promise<void>;
   agent(req: any, reply: any): Promise<void>;
 }
 
@@ -135,7 +139,7 @@ function normalizeCcrRequest(req: any): void {
   if (!req.originalModel && req.body.model) req.originalModel = req.body.model;
 }
 
-async function runAuthCodexPhase(req: any, reply: any, config: any): Promise<void> {
+async function runAuthClientPhase(req: any, reply: any, config: any): Promise<void> {
   // apiKeyAuth replies directly (reply.send) on auth-failure paths without
   // invoking the `done` callback. Relying solely on `done` to settle this
   // Promise would leave it pending forever on those paths, leaking the request
@@ -162,12 +166,6 @@ async function runAuthCodexPhase(req: any, reply: any, config: any): Promise<voi
       req.previousUsage = sessionUsageCache.get(usageCacheKey);
     }
   }
-  if ((req.pathname.endsWith("/v1/messages") || req.pathname.endsWith("/v1/responses")) && req.clientType === "codex") {
-    await switchCodexAccountBeforeUsageLimit();
-    const account = await getCurrentCodexAccountForRequest();
-    req.codexAccountId = account.id;
-    req.codexAccountEmail = account.email;
-  }
 }
 
 async function runAgentPhase(req: any, _reply: any, config: any): Promise<void> {
@@ -191,7 +189,7 @@ async function runAgentPhase(req: any, _reply: any, config: any): Promise<void> 
 
 export function createCcrPreHandlerCallbacks(config: any): CcrPreHandlerCallbacks {
   return {
-    authCodex: (req, reply) => runAuthCodexPhase(req, reply, config),
+    authClient: (req, reply) => runAuthClientPhase(req, reply, config),
     agent: (req, reply) => runAgentPhase(req, reply, config),
   };
 }
@@ -549,9 +547,6 @@ export function registerRequestPipeline(serverInstance: any, config: any): void 
         const isRateLimit = isRateLimitMessage(reply.statusCode, errorMessage);
         if (isRateLimit) {
           healthStore.markRateLimited(req.provider || "", model, 120, errorMessage);
-          if ((req.clientType || detectClientType(req)) === "codex") {
-            await switchCodexAccountAfterRateLimit(errorMessage);
-          }
         } else {
           healthStore.recordFailure(req.provider || "", model, errorMessage);
         }
@@ -610,8 +605,6 @@ export function registerRequestPipeline(serverInstance: any, config: any): void 
         modelFamily: req.modelFamily || "",
         scenarioType: req.scenarioType || "default",
         clientType: req.clientType || detectClientType(req),
-        codexAccountId: req.codexAccountId,
-        codexAccountEmail: req.codexAccountEmail,
         stream: req.body?.stream ?? false,
         inputTokens: rawInputTokens,
         outputTokens,

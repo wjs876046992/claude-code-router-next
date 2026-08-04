@@ -1,4 +1,4 @@
-import type { ClientApplyResponse, ClientId, ClientStatus, CodexAccountOperationResponse, CodexAccountsResponse, CodexRefreshTokenExportResponse, Config, ProjectConfigEntry, ProjectsResponse, ProviderQuotaResponse } from '@/types';
+import type { ClientApplyResponse, ClientId, ClientStatus, Config, ManualProbeResponse, ProjectConfigEntry, ProjectsResponse, ProviderHealthResponse, ProviderQuotaResponse } from '@/types';
 
 // API Client Class for handling requests with baseUrl and apikey authentication
 class ApiClient {
@@ -117,9 +117,10 @@ class ApiClient {
   }
 
   // GET request
-  async get<T>(endpoint: string): Promise<T> {
+  async get<T>(endpoint: string, timeoutMs?: number): Promise<T> {
     return this.apiFetch<T>(endpoint, {
       method: 'GET',
+      timeoutMs,
     });
   }
 
@@ -229,33 +230,6 @@ class ApiClient {
 
   async restoreClient(id: ClientId): Promise<ClientApplyResponse> {
     return this.post<ClientApplyResponse>(`/clients/${encodeURIComponent(id)}/restore`, {});
-  }
-
-  async getCodexAccounts(): Promise<CodexAccountsResponse> {
-    return this.get<CodexAccountsResponse>('/clients/codex/accounts');
-  }
-
-  async importCurrentCodexAccount(label?: string): Promise<CodexAccountOperationResponse> {
-    return this.post<CodexAccountOperationResponse>('/clients/codex/accounts/import-current', { label });
-  }
-
-  async importCodexAccountFromRefreshToken(refreshToken: string, label?: string): Promise<CodexAccountOperationResponse> {
-    return this.post<CodexAccountOperationResponse>('/clients/codex/accounts/import-rt', { refreshToken, label });
-  }
-
-  async activateCodexAccount(accountId: string): Promise<CodexAccountOperationResponse> {
-    return this.post<CodexAccountOperationResponse>(`/clients/codex/accounts/${encodeURIComponent(accountId)}/activate`, {});
-  }
-
-  async deleteCodexAccount(accountId: string): Promise<CodexAccountOperationResponse> {
-    return this.delete<CodexAccountOperationResponse>(`/clients/codex/accounts/${encodeURIComponent(accountId)}`);
-  }
-
-  async exportCodexRefreshToken(accountId?: string): Promise<CodexRefreshTokenExportResponse> {
-    const endpoint = accountId
-      ? `/clients/codex/accounts/${encodeURIComponent(accountId)}/export-rt`
-      : '/clients/codex/accounts/export-rt';
-    return this.post<CodexRefreshTokenExportResponse>(endpoint, {});
   }
 
   // ========== Project-Level Configuration API methods ==========
@@ -392,33 +366,43 @@ class ApiClient {
 
   // ========== Provider Health API methods ==========
 
-  // Get provider health status
-  async getProviderHealth(): Promise<{
-    states: Array<{
-      provider: string;
-      model: string;
-      status: 'closed' | 'open' | 'half-open';
-      failureCount: number;
-      successCount: number;
-      lastFailureTime: number;
-      lastError?: string;
-    }>;
-    timestamp: string;
-  }> {
-    return this.get('/providers/health');
+  // Local UI timeout for management reads. These endpoints serve cached data,
+  // so the cap only guards against a hung server; it is NOT the slow-network
+  // signal (that comes from the server-side probe telemetry).
+  private static readonly MANAGEMENT_READ_TIMEOUT_MS = 10_000;
+
+  // Get provider health status (circuit-breaker states + probe telemetry)
+  async getProviderHealth(): Promise<ProviderHealthResponse> {
+    return this.get<ProviderHealthResponse>(
+      '/providers/health',
+      ApiClient.MANAGEMENT_READ_TIMEOUT_MS,
+    );
   }
 
   // Get provider quota usage (5h and 7d windows)
   async getProviderQuota(): Promise<ProviderQuotaResponse> {
-    return this.get<ProviderQuotaResponse>('/providers/quota');
+    return this.get<ProviderQuotaResponse>(
+      '/providers/quota',
+      ApiClient.MANAGEMENT_READ_TIMEOUT_MS,
+    );
   }
 
-  async probeProvider(providerName: string): Promise<{ provider: string; success: boolean; timestamp: string }> {
-    return this.post<{ provider: string; success: boolean; timestamp: string }>('/providers/probe', { providerName });
+  async probeProvider(providerName: string): Promise<ManualProbeResponse> {
+    return this.post<ManualProbeResponse>('/providers/probe', { providerName });
   }
 
-  async probeAllProviders(): Promise<{ results: Array<{ provider: string; success: boolean }>; successCount: number; total: number; timestamp: string }> {
-    return this.post<{ results: Array<{ provider: string; success: boolean }>; successCount: number; total: number; timestamp: string }>('/providers/probe-all', {});
+  async probeAllProviders(): Promise<{
+    results: Array<Omit<ManualProbeResponse, 'timestamp'>>;
+    successCount: number;
+    total: number;
+    timestamp: string;
+  }> {
+    return this.post<{
+      results: Array<Omit<ManualProbeResponse, 'timestamp'>>;
+      successCount: number;
+      total: number;
+      timestamp: string;
+    }>('/providers/probe-all', {});
   }
 }
 
