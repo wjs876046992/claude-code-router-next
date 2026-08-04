@@ -791,25 +791,12 @@ const getUseModel = async (
     }
   }
 
-  // Handle explicit provider,model format.
-  // In strict project mode, skip this shortcut — the project Router is
-  // authoritative and must decide the target, not the client's explicit override.
-  if (req.body.model.includes(",") && !isStrictProject) {
-    const model = resolveConfiguredModel(req.body.model, providers, false, 'default', enableFallback, allowPromotion, isStrictProject);
-    if (model) {
-      return { model, scenarioType: 'default' };
-    }
-    req.log.warn(`Explicit model ${req.body.model} unavailable (fail pool), trying fallback`);
-    const fallbackResult = enableFallback
-      ? resolveScenarioFallbackModel('default', providers, undefined, globalFallback, undefined, isStrictProject)
-      : null;
-    if (fallbackResult) {
-      req.log.info(`Using fallback for explicit model: ${fallbackResult}`);
-      return { model: fallbackResult, scenarioType: 'default' };
-    }
-    req.log.warn(`No fallback available for explicit model ${req.body.model}, continuing through routing logic`);
-  }
-
+  // Routing precedence: model family first, then explicit "provider,model",
+  // then default/scenario routing. Family routing takes priority so an enabled
+  // family mapping always wins; only when no family matches do we honor a
+  // fully-qualified "provider,model" override from the client. Strict project
+  // mode still skips the explicit shortcut below (project Router authoritative).
+  //
   // Model family routing: extract opus/sonnet/haiku and use family-specific config
   const { family, extended: modelExtended, isCcrAlias } = extractModelFamily(req.body.model);
   const familyConfig = Router?.families?.[family || ''] as RouterFamilyConfig | undefined;
@@ -834,6 +821,25 @@ const getUseModel = async (
     if (familyResult) {
       return { model: familyResult.model, scenarioType: familyResult.scenarioType };
     }
+  }
+
+  // Handle explicit provider,model format (only when family routing did not match).
+  // In strict project mode, skip this shortcut — the project Router is
+  // authoritative and must decide the target, not the client's explicit override.
+  if (req.body.model.includes(",") && !isStrictProject) {
+    const model = resolveConfiguredModel(req.body.model, providers, false, 'default', enableFallback, allowPromotion, isStrictProject);
+    if (model) {
+      return { model, scenarioType: 'default' };
+    }
+    req.log.warn(`Explicit model ${req.body.model} unavailable (fail pool), trying fallback`);
+    const fallbackResult = enableFallback
+      ? resolveScenarioFallbackModel('default', providers, undefined, globalFallback, undefined, isStrictProject)
+      : null;
+    if (fallbackResult) {
+      req.log.info(`Using fallback for explicit model: ${fallbackResult}`);
+      return { model: fallbackResult, scenarioType: 'default' };
+    }
+    req.log.warn(`No fallback available for explicit model ${req.body.model}, continuing through routing logic`);
   }
 
   // ccr-opus/ccr-sonnet/ccr-haiku are aliases CCR injects for family routing.

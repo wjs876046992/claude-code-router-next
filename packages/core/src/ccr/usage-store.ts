@@ -572,11 +572,18 @@ export function append(record: UsageRecord): void {
   pruneExpiredRecords(db);
 }
 
+// Hard ceiling for a single usage page; the UI requests 20 rows at a time.
+const MAX_PAGE_SIZE = 200;
+
 export function query(filters: UsageQueryFilters): UsageQueryResult {
   const db = getDb();
   const where = buildWhereClause(filters);
   const page = Number.isFinite(filters.page) && filters.page! > 0 ? Math.floor(filters.page!) : 1;
-  const pageSize = Number.isFinite(filters.pageSize) && filters.pageSize! > 0 ? Math.floor(filters.pageSize!) : 50;
+  // Cap the page size: usage rows are wide (response bodies included) and an
+  // unbounded LIMIT would let a single request materialize the whole table.
+  const pageSize = Number.isFinite(filters.pageSize) && filters.pageSize! > 0
+    ? Math.min(Math.floor(filters.pageSize!), MAX_PAGE_SIZE)
+    : 50;
   const offset = (page - 1) * pageSize;
 
   const totalRow = db
