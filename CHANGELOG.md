@@ -9,17 +9,19 @@ All notable changes to this project will be documented in this file.
 ### Added
 
 - **供应商网络慢探测与黄色 ⚠️ 告警**: `ActiveProbeService` 现在为每次供应商 `/models` 可达性探测记录延迟与状态（healthy/slow/error/timeout），存于内存中按 provider 维护（不持久化，重启后等下次探测自然填充）。延迟超过 `PROBE_SLOW_THRESHOLD_MS`（默认 3000ms）判为 slow，`GET /api/providers/health` 追加 `probes` 字段，手动探测 `POST /api/providers/probe` 与 `probe-all` 返回 `latencyMs/status/isSlow/errorKind`。慢但成功的探测只告警、不打开熔断器，不影响路由。新增配置项 `PROBE_SLOW_THRESHOLD_MS` 与已有的 `PROBE_TIMEOUT_MS`（默认 15s）配合。Provider 卡片状态派生优先级：disabled → breaker open → half-open → 探测 timeout/error → 探测 slow（黄色 ⚠️）→ healthy。
-- **用量模型列显示完整路由链**: Usage 页所有客户端的模型列统一为 `原始模型 [模型族/场景] → 路由模型 → 实际上游模型`，上游未偷换时自动省略最后一段。
+- **用量模型列显示完整路由链**: Usage 页模型列统一为 `请求模型 → ccr 路由模型 → 上游实际返回`，相邻相同段自动去重、上游未偷换时省略末段；provider 单列展示，路由标签（family/场景）独立成列并在 tooltip 给出完整注解链。
 
 ### Changed
 
-- **UI 刷新循环重做，杜绝请求重叠**: Providers 的 health/quota 此前为固定 30s `setInterval`，慢响应会重叠堆积；改为前一次 settled 后才排下一次的 60s 自调度 single-flight（in-flight + pending flag 合并并发触发），health/quota 用 `Promise.allSettled` 互不影响并保留各自上次成功数据，页面隐藏暂停、重新可见且数据超过 30s 立即刷新。Usage 自动刷新改为 30s **串行队列**：同一时刻最多 1 个 `/api/usage` 在途，筛选/翻页/手动刷新触发时若在途只置 pending、settle 后用最新参数补发一次，stale 响应按 generation 守卫丢弃。`/api/clients` 取消 30s 固定轮询，改为按需刷新（mount、enable/disable/restore/apply 后、可见且超过 60s）。
+- **路由优先级：模型族优先于 explicit `provider,model`**: 开启 family routing 时，请求先走模型族映射（`extractModelFamily` 命中 opus/sonnet/haiku），命中即用；只有 family 未命中时才解析客户端显式指定的 `provider,model`，最后才落默认/scenario 路由。此前 explicit 格式无条件最高优先级、绕过 family。strict project 模式行为不变（explicit 本就被跳过）。
+- **UI 刷新循环重做，杜绝请求重叠**: Providers 的 health/quota 此前为固定 30s `setInterval`，慢响应会重叠堆积；改为前一次 settled 后才排下一次的 60s 自调度 single-flight（in-flight + pending flag 合并并发触发），health/quota 用 `Promise.allSettled` 互不影响并保留各自上次成功数据，页面隐藏暂停、重新可见且数据超过 30s 立即刷新。Usage 自动刷新改为 30s **串行队列**：同一时刻最多 1 个 `/api/usage` 在途，筛选/翻页/手动刷新触发时若在途只置 pending、settle 后用最新参数补发一次，stale 响应按 generation 守卫丢弃。`/api/clients` 取消 30s 固定轮询，改为按需刷新（仅 mount，enable/disable/restore/apply 直接复用响应）；可见且超过 60s 的补拉已一并移除，停留或切回 Settings 页都不再触发请求。
 - **移除已弃用的 Codex 多账号管理**: 删除账号列表、导入、切换、后台自动维护、请求热路径切号及其 API（7 个 `/api/clients/codex/accounts*`）、CLI 子命令（`ccr clients codex ...`）、UI tab/handlers/types/i18n。`auth/Codex` 管道阶段更名为 `auth/client`。Codex 仍作为普通 provider/client 完整支持：客户端检测、`/v1/responses` 归一化、Responses transformer、takeover 配置注入、`client_type:"codex"` 用量归属全部保留。历史数据保留策略：`~/.claude-code-router/codex-accounts/`、SQLite 遗留列与 `~/.codex/auth.json` 不做迁移、不清除、不再读写。
 
 ### Fixed
 
 - **Image 路由按客户端原始模型，不再丢失 originalModel**: image agent 此前在路由前把 `req.body.model` 改写为 `Router.image`，导致用量记录把客户端真实模型（如 Pi 的 `ccr-opus`）误记为 `Router.image`、`scenario_type` 误记为 default，并绕过 family image 路由。现按 `req.originalModel` 识别 family，优先 family image 路由、不可用时回退全局 image，且 family default 与 image 同模型时也正确标记 image 场景；force-agent 内部调用仍用全局 `Router.image` 避免二次路由丢 family。同时修复 `promoteToolResultImages()` 与 `reqHandler` tool_result 分支把所有数组型 `tool_result.content` 整体替换为占位字符串、丢失纯文本/结构化内容的问题——现在只提取并提升 image block，保留其余内容。
 - **用量汇总下推 SQL 聚合，解除 event loop 随机阻塞**: `query()`/`querySummary()` 此前用 `readFilteredRecords`（`SELECT *` 全量）+ `computeSummary`（JS 逐行聚合），better-sqlite3 同步调用阻塞 event loop，是 health/quota 随机卡顿的共享根因。新增 `computeSummarySQL`/`readSummaryBuckets` 用 `COUNT/SUM/AVG/GROUP BY` 只返回小结果集，语义严格对齐旧实现（token 只计 success 行、byFamily 用 `family/scenario` key 且仅非空、byClient 把空/NULL 归为 unknown、AVG 取整无数据置 null）。
+- **用量查询 pageSize 加上限**: `query()` 此前接受任意 `pageSize`，单次请求可 `LIMIT` 整张 usage 表（行很宽、含 response body）；现强制上限 `MAX_PAGE_SIZE=200`（UI 每页 20 行），防止无界查询物化全表。
 
 
 ## [2.3.238] - 2026-07-28
