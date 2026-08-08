@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [2.3.2391] - 2026-08-08
+
+### Fixed
+
+- **用量按日统计按本地时区分组**: `byDay` 此前用 `substr(timestamp,1,10)` 取 UTC 日期，本地 0:00–8:00 的请求（UTC 仍是昨天）被归到前一天——表现为"过了零点后昨天的消耗还在涨、今天的偏少"。改用 `date(timestamp,'localtime')` 按进程时区分组。聚合在查询时实时计算，历史记录无需迁移即自动按本地日期重新归类。
+
 ## [2.3.239] - 2026-08-03
 
 ### Added
