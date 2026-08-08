@@ -4,7 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-## [2.3.2391] - 2026-08-08
+## [2.3.2392] - 2026-08-08
+
+> 注：2.3.2391 发布时未重新构建，实际发出的是 2.3.239 的代码（缺少本修复、版本号错位，导致更新检查持续提示新版本）；此版本为正确重建后的重新发布。
 
 ### Fixed
 
