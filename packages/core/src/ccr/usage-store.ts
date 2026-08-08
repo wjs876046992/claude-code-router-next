@@ -555,7 +555,13 @@ function computeSummarySQL(db: Database.Database, filters: UsageQueryFilters): U
       "model_family || '/' || scenario_type",
       "model_family IS NOT NULL AND model_family != ''"
     ),
-    byDay: readSummaryBuckets(db, where, "substr(timestamp, 1, 10)"),
+    // Group by local-time calendar day. timestamp is stored as UTC ISO, so a
+    // plain substr(…,1,10) bucket uses the UTC date and mis-files requests in
+    // the local 0:00–8:00 window (whose UTC instant is still "yesterday") into
+    // the previous day. date(timestamp,'localtime') converts to the process
+    // timezone first. Aggregation is computed at query time, so historical rows
+    // are re-bucketed correctly once this ships — no data migration needed.
+    byDay: readSummaryBuckets(db, where, "date(timestamp, 'localtime')"),
     byClient: readSummaryBuckets(
       db,
       where,
