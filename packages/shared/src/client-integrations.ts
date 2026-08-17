@@ -459,7 +459,15 @@ function hasExtendedContext(familyConfig: any): boolean {
   return familyConfig?.enableExtendedContext === true;
 }
 
+// A family is only authoritative when family routing has not been explicitly
+// disabled AND the entry is a supported alias family. When enableFamilyRouting is
+// explicitly false the runtime bypasses family routing entirely, so a stale
+// families.<x>.enableExtendedContext must NOT keep the managed window above
+// 200000 — the request would fall through to a non-extended top-level route and
+// overflow. An undefined enableFamilyRouting preserves the existing takeover
+// behavior (families present ⇒ emit aliases), matching applyClaudeModelFamilies.
 function getSupportedClaudeFamilyNames(config: Record<string, any>): string[] {
+  if (config.Router?.enableFamilyRouting === false) return [];
   if (!hasFamiliesConfig(config)) return [];
 
   const families = config.Router.families;

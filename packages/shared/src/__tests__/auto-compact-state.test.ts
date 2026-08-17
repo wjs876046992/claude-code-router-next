@@ -180,6 +180,27 @@ describe("auto-compact window state guard", () => {
     expect(standardSettings.env.ANTHROPIC_MODEL).toBeUndefined();
   });
 
+  it("ignores stale family enableExtendedContext when family routing is disabled", () => {
+    // enableFamilyRouting=false means the runtime bypasses family routing and
+    // falls through to a non-extended top-level route. A leftover
+    // families.opus.enableExtendedContext=true must NOT keep the managed window
+    // above 200000, or the request would overflow once context passes 200k.
+    const projectPath = createProject();
+    const config = makeConfig(400000, {
+      enableFamilyRouting: false,
+      default: "provider,default",
+      families: {
+        opus: { default: "provider,opus", enableExtendedContext: true },
+      },
+    });
+    const settings = makeSettings();
+
+    applyCcrProjectTakeover(settings, config, projectPath);
+
+    expect(settings.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe("200000");
+    expect(settings.env.ANTHROPIC_MODEL).toBeUndefined();
+  });
+
   it("updates a previously managed extended window when the project disables extended context", () => {
     const projectPath = createProject();
     const config = makeConfig(400000, {
