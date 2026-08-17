@@ -1,8 +1,22 @@
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  getClaudeProjectId,
+  getClaudeSettingsLocalPath,
+  getProjectConfigDir,
+  setCcrTakeover,
+  writeProjectConfig,
+} from "@wengine-ai/claude-code-router-shared";
 import Server from "../server";
 import { registerAdminRoutes } from "../ccr/admin-routes";
 import { sessionUsageCache } from "../utils/cache";
 import { closeProxyDispatchers } from "../services/proxy";
+
+const { readConfigFileMock } = vi.hoisted(() => ({
+  readConfigFileMock: vi.fn(),
+}));
 
 // POST /api/config normally persists to ~/.claude-code-router/config.json.
 // Keep this route test hermetic so accepted payloads can never overwrite a
@@ -12,6 +26,7 @@ vi.mock("../ccr/config", async (importOriginal) => {
   return {
     ...actual,
     backupConfigFile: vi.fn().mockResolvedValue(null),
+    readConfigFile: readConfigFileMock,
     writeConfigFile: vi.fn().mockResolvedValue(undefined),
   };
 });
@@ -48,9 +63,15 @@ async function buildAdminRuntime() {
 
 describe("POST /api/config proxy URL validation", () => {
   let server: Server;
+  const projectPaths: string[] = [];
 
   afterEach(async () => {
     sessionUsageCache.delete("claude-code:session:proxy-config-save");
+    readConfigFileMock.mockReset();
+    for (const projectPath of projectPaths.splice(0)) {
+      rmSync(getProjectConfigDir(projectPath), { recursive: true, force: true });
+      rmSync(projectPath, { recursive: true, force: true });
+    }
     await closeProxyDispatchers();
     if (server) {
       await server.app.close();
@@ -143,5 +164,52 @@ describe("POST /api/config proxy URL validation", () => {
       // it passed (write/reload errors are tolerated and surface as 200).
       expect(res.statusCode, `proxyUrl=${proxyUrl}`).not.toBe(400);
     }
+  });
+
+  it("refreshes Claude Code takeover after saving a non-empty project Router", async () => {
+    ({ server } = await buildAdminRuntime());
+    const projectPath = mkdtempSync(join(tmpdir(), "ccr-project-route-save-"));
+    projectPaths.push(projectPath);
+    const globalConfig = {
+      APIKEY: "global-key",
+      PORT: 4567,
+      ContextWindow: 400000,
+      Providers: [],
+      Router: {
+        families: {
+          opus: {
+            default: "provider,global-opus",
+            extendedContext: "provider,global-extended",
+            enableExtendedContext: true,
+          },
+        },
+      },
+    };
+    readConfigFileMock.mockResolvedValue(globalConfig);
+
+    await writeProjectConfig(projectPath, { Router: {} });
+    await setCcrTakeover(projectPath, true, globalConfig);
+    expect(
+      JSON.parse(readFileSync(getClaudeSettingsLocalPath(projectPath), "utf8")).env
+        .CLAUDE_CODE_AUTO_COMPACT_WINDOW
+    ).toBe("400000");
+
+    const projectRouter = {
+      enableFamilyRouting: true,
+      families: {
+        opus: { default: "provider,project-opus" },
+      },
+    };
+    const res = await server.app.inject({
+      method: "PUT",
+      url: `/api/projects/${getClaudeProjectId(projectPath)}`,
+      payload: { Router: projectRouter },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const settings = JSON.parse(readFileSync(getClaudeSettingsLocalPath(projectPath), "utf8"));
+    expect(settings.env.ANTHROPIC_MODEL).toBe("ccr-opus");
+    expect(settings.env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe("ccr-opus");
+    expect(settings.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe("200000");
   });
 });

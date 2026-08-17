@@ -459,6 +459,33 @@ function hasExtendedContext(familyConfig: any): boolean {
   return familyConfig?.enableExtendedContext === true;
 }
 
+function getSupportedClaudeFamilyNames(config: Record<string, any>): string[] {
+  if (!hasFamiliesConfig(config)) return [];
+
+  const families = config.Router.families;
+  return Object.keys(families).filter(
+    (family) => ["opus", "sonnet", "haiku"].includes(family) && isObject(families[family])
+  );
+}
+
+function getDefaultClaudeFamily(config: Record<string, any>): string | null {
+  const familyNames = getSupportedClaudeFamilyNames(config);
+  if (familyNames.includes("opus")) return "opus";
+  return familyNames[0] || null;
+}
+
+function getClaudeTakeoverContextWindow(config: Record<string, any>): number {
+  const contextWindow = getContextWindow(config);
+  const defaultFamily = getDefaultClaudeFamily(config);
+  const extendedContextEnabled = defaultFamily
+    ? hasExtendedContext(config.Router.families[defaultFamily])
+    : hasExtendedContext(config.Router);
+
+  return extendedContextEnabled
+    ? contextWindow
+    : Math.min(contextWindow, DEFAULT_CONTEXT_WINDOW);
+}
+
 function applyClaudeModelFamilies(settings: Record<string, any>, config: Record<string, any>): void {
   if (!isObject(settings.env)) settings.env = {};
 
@@ -471,10 +498,9 @@ function applyClaudeModelFamilies(settings: Record<string, any>, config: Record<
   if (!hasFamiliesConfig(config)) return;
 
   const families = config.Router.families;
-  const familyNames = Object.keys(families);
-  let primaryFamily: string | null = null;
+  const supportedFamilyNames = getSupportedClaudeFamilyNames(config);
 
-  for (const family of familyNames) {
+  for (const family of supportedFamilyNames) {
     const familyConfig = families[family];
     const extendedSuffix = hasExtendedContext(familyConfig) ? "[1m]" : "";
     const ccrModel = `ccr-${family}${extendedSuffix}`;
@@ -482,35 +508,29 @@ function applyClaudeModelFamilies(settings: Record<string, any>, config: Record<
     switch (family) {
       case "opus":
         settings.env.ANTHROPIC_DEFAULT_OPUS_MODEL = ccrModel;
-        if (!primaryFamily) primaryFamily = "opus";
         break;
       case "sonnet":
         settings.env.ANTHROPIC_DEFAULT_SONNET_MODEL = ccrModel;
-        if (!primaryFamily) primaryFamily = "sonnet";
         break;
       case "haiku":
         settings.env.ANTHROPIC_DEFAULT_HAIKU_MODEL = ccrModel;
-        if (!primaryFamily) primaryFamily = "haiku";
         break;
     }
   }
 
-  const defaultFamily = families.opus ? "opus" : primaryFamily;
+  const defaultFamily = getDefaultClaudeFamily(config);
   if (defaultFamily) {
     const defaultConfig = families[defaultFamily];
     const extendedSuffix = hasExtendedContext(defaultConfig) ? "[1m]" : "";
     settings.env.ANTHROPIC_MODEL = `ccr-${defaultFamily}${extendedSuffix}`;
   }
 
-  const thinkFamily = familyNames.find((family) => families[family]?.think);
-  if (thinkFamily) {
-    const thinkConfig = families[thinkFamily];
-    const extendedSuffix = hasExtendedContext(thinkConfig) ? "[1m]" : "";
-    settings.env.ANTHROPIC_REASONING_MODEL = `ccr-${thinkFamily}${extendedSuffix}`;
-  } else if (primaryFamily) {
-    const primaryConfig = families[primaryFamily];
-    const extendedSuffix = hasExtendedContext(primaryConfig) ? "[1m]" : "";
-    settings.env.ANTHROPIC_REASONING_MODEL = `ccr-${primaryFamily}${extendedSuffix}`;
+  const thinkFamily = supportedFamilyNames.find((family) => families[family]?.think);
+  const reasoningFamily = thinkFamily || defaultFamily;
+  if (reasoningFamily) {
+    const reasoningConfig = families[reasoningFamily];
+    const extendedSuffix = hasExtendedContext(reasoningConfig) ? "[1m]" : "";
+    settings.env.ANTHROPIC_REASONING_MODEL = `ccr-${reasoningFamily}${extendedSuffix}`;
   }
 }
 
@@ -530,6 +550,7 @@ function applyClaudeAutoCompactSettings(
   settings: Record<string, any>,
   config: Record<string, any>,
   state?: ManagedStateAccess,
+  managedContextWindow?: number,
 ): void {
   settings.autoCompactEnabled = true;
   if (!isObject(settings.env)) settings.env = {};
@@ -553,7 +574,7 @@ function applyClaudeAutoCompactSettings(
   // the displaced old value is recorded into `previousAutoCompactWindow` for
   // audit/recovery. With a present state, a divergent value is still treated as
   // a user customization and left untouched (the original v2.3.22 guarantee).
-  const managedWindow = String(getContextWindow(config));
+  const managedWindow = String(managedContextWindow ?? getContextWindow(config));
   const currentWindow = settings.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
   const lastWrittenWindow = state?.read().autoCompactWindow;
   const isManaged =
@@ -781,7 +802,12 @@ export function applyCcrProjectTakeover(
   settings.env.ANTHROPIC_BASE_URL = getCcrBaseUrl(config);
   settings.env.ANTHROPIC_AUTH_TOKEN = config.APIKEY || "test";
   applyClaudeModelFamilies(settings, config);
-  applyClaudeAutoCompactSettings(settings, config, projectStateAccess(projectPath));
+  applyClaudeAutoCompactSettings(
+    settings,
+    config,
+    projectStateAccess(projectPath),
+    getClaudeTakeoverContextWindow(config),
+  );
   applyClaudeAttributionHeader(settings, config);
 
   if (config?.StatusLine?.enabled) {
@@ -824,7 +850,7 @@ export function removeCcrProjectTakeover(
     // Always clear the recorded state for this project afterward.
     const lastWrittenWindow = state?.read().autoCompactWindow;
     const currentWindow = settings.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
-    const managedWindow = config ? String(getContextWindow(config)) : undefined;
+    const managedWindow = config ? String(getClaudeTakeoverContextWindow(config)) : undefined;
     const shouldRemove =
       currentWindow === lastWrittenWindow ||
       (lastWrittenWindow === undefined && managedWindow !== undefined && currentWindow === managedWindow);
