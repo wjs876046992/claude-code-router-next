@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [2.3.2393] - 2026-08-18
+
+### Fixed
+
+- **项目接管按项目 Router 计算上下文窗口，未启用扩展上下文时封顶 200k**: 项目级 Claude Code 接管此前写 `.claude/settings.local.json` 只读全局 Router 与全局 `ContextWindow`，从不参考项目自己的权威 Router。当全局默认 family 启用 `[1m]` 且 `ContextWindow > 200000`、而项目 Router 未启用扩展上下文时，项目仍带着 `[1m]` alias 与超过 200k 的 auto-compact 窗口；上下文超过 200k 后严格项目路由又不能逃逸到全局扩展模型，最终无可用模型。现在接管使用「全局连接/界面参数 + 项目 Router」的有效配置：默认 family（opus 优先，`enableFamilyRouting` 显式为 false 时忽略 family、回退顶层开关）或顶层 `enableExtendedContext` 未启用时，CCR 管理的 `CLAUDE_CODE_AUTO_COMPACT_WINDOW` 封顶为 `min(ContextWindow, 200000)`，启用时保留全局值；family 未启用扩展时同时移除陈旧 `[1m]` alias。用户手写的 divergent 窗口继续保留，`ccr-state.json` 管理与 `previousAutoCompactWindow` 审计行为不变。保存非空项目 Router（`PUT /api/projects/:id`）与全局配置保存（`syncGlobalProjectTakeovers`）现在都会刷新自定义 Router 项目的 Claude Code 接管，全局连接/上下文变更得以传递，且不把全局 Router 泄漏进项目、不扩大到 pi/qwen/opencode 的项目语义。
+- **opencode go 缓存命中从 0% 恢复（保留 cache_control + DeepSeek 风格用量映射）**: opencode zen 上游的提示词缓存以显式 `cache_control` 标记为前提（直连实测：无标记时 ~16k token 相同前缀连发永不缓存；带标记第 2 次起命中 15616/15885 ≈ 98%），而 `OpenCodeTransformer` 此前把所有 `cache_control` 剥除（依据「GLM/OpenAI 兼容 API 不支持该字段」，对 zen 后端不成立），导致上游永远收不到标记、永不缓存。现在 transformer 保留 `cache_control`，仅继续清理 Anthropic 特有的 `image_url.media_type`。同时 `AnthropicTransformer` 的用量映射在 `prompt_tokens_details.cached_tokens` 缺失时兜底读取 DeepSeek 风格的 `prompt_cache_hit_tokens`（流式 `message_delta` 合并与非流式 OpenAI→Anthropic 转换两处），DeepSeek 风格上游的缓存读取量得以正确计入 `cache_read_input_tokens`。
+
 ## [2.3.2392] - 2026-08-08
 
 > 注：2.3.2391 发布时未重新构建，实际发出的是 2.3.239 的代码（缺少本修复、版本号错位，导致更新检查持续提示新版本）；此版本为正确重建后的重新发布。
