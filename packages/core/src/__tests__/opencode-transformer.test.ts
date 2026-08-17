@@ -58,7 +58,7 @@ describe("OpenCodeTransformer", () => {
     expect((OpenCodeTransformer as any).TransformerName).toBe("opencode");
   });
 
-  it("should clean cache_control from messages in transformRequestIn", async () => {
+  it("should preserve cache_control markers in transformRequestIn (opencode zen gates its prompt cache on them)", async () => {
     const t = new OpenCodeTransformer();
     const request = makeRequest({
       messages: [
@@ -74,10 +74,40 @@ describe("OpenCodeTransformer", () => {
     const result = await t.transformRequestIn(request, makeProvider("https://opencode.ai"), {});
     const msg = result.messages[0];
     if (Array.isArray(msg.content)) {
-      msg.content.forEach((item: any) => {
-        expect(item.cache_control).toBeUndefined();
-      });
+      const textItem = (msg.content as any[]).find((i: any) => i.type === "text");
+      expect(textItem.cache_control).toEqual({ type: "ephemeral" });
     }
+  });
+
+  it("should preserve cache_control through the Anthropic→Unified→OpenCode chain", async () => {
+    // The full chain: Claude Code sends Anthropic format with cache_control on
+    // system blocks; anthropic.transformer converts to unified; opencode must
+    // not strip the markers on the way to the upstream.
+    const anthropicTransformer = new AnthropicTransformer();
+    const anthropicRequest = {
+      model: "glm-5.2",
+      max_tokens: 4096,
+      stream: true,
+      system: [
+        { type: "text", text: "system prompt", cache_control: { type: "ephemeral" } },
+      ],
+      messages: [{ role: "user", content: "Hello" }],
+    };
+
+    const unified = await anthropicTransformer.transformRequestOut(anthropicRequest as any);
+    const t = new OpenCodeTransformer();
+    const processed = await t.transformRequestIn(
+      unified,
+      makeProvider("https://opencode.ai/zen/go/v1/chat/completions"),
+      {}
+    );
+
+    const sysMsg = processed.messages.find((m) => m.role === "system");
+    expect(sysMsg).toBeDefined();
+    const block = Array.isArray(sysMsg!.content)
+      ? (sysMsg!.content as any[]).find((i: any) => i.type === "text")
+      : null;
+    expect(block?.cache_control).toEqual({ type: "ephemeral" });
   });
 
   it("should clean media_type from image_url in transformRequestIn", async () => {
@@ -204,5 +234,65 @@ describe("End-to-end: Anthropic request → OpenCode provider tools format", () 
     // Verify the old Anthropic format fields are NOT present at top level
     expect(parsed.tools[0].name).toBeUndefined();
     expect(parsed.tools[0].input_schema).toBeUndefined();
+  });
+});
+
+describe("OpenAI-compatible usage cache mapping", () => {
+  // convertOpenAIResponseToAnthropic reads context.req.id and this.logger.debug.
+  const ctx = { req: { id: "test-req" } } as any;
+  const noopLogger = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} };
+
+  function makeTransformer(): AnthropicTransformer {
+    const t = new AnthropicTransformer();
+    t.logger = noopLogger;
+    return t;
+  }
+  // anthropic.transformer maps upstream OpenAI-style usage to Anthropic
+  // semantics. Cache reads arrive as prompt_tokens_details.cached_tokens OR
+  // DeepSeek-style prompt_cache_hit_tokens; both must surface as
+  // cache_read_input_tokens with input_tokens net of cache.
+  function makeNonStreamingResponse(usage: any): Response {
+    return new Response(
+      JSON.stringify({
+        id: "chatcmpl-1",
+        model: "deepseek-v4-flash",
+        choices: [
+          {
+            index: 0,
+            message: { role: "assistant", content: "ok" },
+            finish_reason: "stop",
+          },
+        ],
+        usage,
+      }),
+      { headers: { "Content-Type": "application/json" } }
+    );
+  }
+
+  it("maps prompt_tokens_details.cached_tokens (non-streaming)", async () => {
+    const t = makeTransformer();
+    const res = makeNonStreamingResponse({
+      prompt_tokens: 1000,
+      completion_tokens: 5,
+      prompt_tokens_details: { cached_tokens: 800 },
+    });
+    const out = await t.transformResponseIn(res, ctx);
+    const data = await (out as Response).json();
+    expect(data.usage.cache_read_input_tokens).toBe(800);
+    expect(data.usage.input_tokens).toBe(200);
+  });
+
+  it("maps DeepSeek-style prompt_cache_hit_tokens when cached_tokens is absent (non-streaming)", async () => {
+    const t = makeTransformer();
+    const res = makeNonStreamingResponse({
+      prompt_tokens: 1000,
+      completion_tokens: 5,
+      prompt_cache_hit_tokens: 600,
+      prompt_cache_miss_tokens: 400,
+    });
+    const out = await t.transformResponseIn(res, ctx);
+    const data = await (out as Response).json();
+    expect(data.usage.cache_read_input_tokens).toBe(600);
+    expect(data.usage.input_tokens).toBe(400);
   });
 });
