@@ -50,6 +50,7 @@ import {
   deleteProjectConfig,
   getClaudeProjectId,
   getProjectConfigPath,
+  refreshCcrProjectTakeover,
   refreshProjectTakeovers,
   syncGlobalProjectTakeovers,
   getProjectTakeoverClients,
@@ -482,10 +483,11 @@ export async function registerAdminRoutes(server: any, config: any): Promise<any
       }
 
       await writeProjectConfig(existing.path, { Router });
-      const usesGlobalRouter = Object.keys(Router).length === 0;
-      if (usesGlobalRouter) {
-        const config = await readConfigFile();
+      const config = await readConfigFile();
+      if (Object.keys(Router).length === 0) {
         await refreshProjectTakeovers(existing.path, config);
+      } else {
+        await refreshCcrProjectTakeover(existing.path, config, Router);
       }
       const ccrTakeoverClients = await getProjectTakeoverClients(existing.path);
       return {

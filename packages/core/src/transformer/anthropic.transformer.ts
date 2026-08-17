@@ -567,7 +567,13 @@ export class AnthropicTransformer implements Transformer {
 
                 const choice = chunk.choices?.[0];
                 if (chunk.usage) {
-                  const cachedTokens = chunk.usage?.prompt_tokens_details?.cached_tokens || 0;
+                  // OpenAI-compatible upstreams report cache reads in either
+                  // prompt_tokens_details.cached_tokens or the DeepSeek-style
+                  // prompt_cache_hit_tokens; accept whichever is present.
+                  const cachedTokens =
+                    chunk.usage?.prompt_tokens_details?.cached_tokens ??
+                    chunk.usage?.prompt_cache_hit_tokens ??
+                    0;
                   const promptTokens = chunk.usage?.prompt_tokens || 0;
                   // Keep Anthropic protocol semantics for Claude Code: input_tokens is net of cache reads.
                   const inputTokens = promptTokens - cachedTokens;
@@ -1143,7 +1149,9 @@ export class AnthropicTransformer implements Transformer {
         });
       }
       const cachedTokens =
-        openaiResponse.usage?.prompt_tokens_details?.cached_tokens || 0;
+        openaiResponse.usage?.prompt_tokens_details?.cached_tokens ??
+        openaiResponse.usage?.prompt_cache_hit_tokens ??
+        0;
       const inputTokens =
         (openaiResponse.usage?.prompt_tokens || 0) - cachedTokens;
       const result = {

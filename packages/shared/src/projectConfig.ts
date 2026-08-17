@@ -45,6 +45,27 @@ function isUsingGlobalRouter(router: Record<string, any> | undefined): boolean {
   return Object.keys(router || {}).length === 0;
 }
 
+function buildProjectTakeoverConfig(
+  config: Record<string, any>,
+  projectRouter: Record<string, any> | undefined,
+): Record<string, any> {
+  if (isUsingGlobalRouter(projectRouter)) return config;
+  return { ...config, Router: projectRouter };
+}
+
+async function resolveProjectTakeoverConfig(
+  projectPath: string,
+  config: Record<string, any>,
+  projectRouter?: Record<string, any>,
+): Promise<Record<string, any>> {
+  if (projectRouter !== undefined) {
+    return buildProjectTakeoverConfig(config, projectRouter);
+  }
+
+  const projectConfig = await readProjectConfig(projectPath);
+  return buildProjectTakeoverConfig(config, projectConfig?.Router);
+}
+
 /**
  * Read the project-level config for a given project path.
  * Returns null if no project-level config has been created yet.
@@ -190,6 +211,7 @@ function getCcrTakeoverBackupPath(projectPath: string): string {
 export async function setCcrTakeover(projectPath: string, enabled: boolean, config: Record<string, any>): Promise<void> {
   const settingsPath = getClaudeSettingsLocalPath(projectPath);
   const backupPath = getCcrTakeoverBackupPath(projectPath);
+  const takeoverConfig = await resolveProjectTakeoverConfig(projectPath, config);
   let settings = await readClaudeSettingsLocal(projectPath);
 
   if (enabled) {
@@ -202,7 +224,7 @@ export async function setCcrTakeover(projectPath: string, enabled: boolean, conf
     } catch {
       // No usable backup, start from the current settings.
     }
-    applyCcrProjectTakeover(settings, config, projectPath);
+    applyCcrProjectTakeover(settings, takeoverConfig, projectPath);
   } else {
     // Snapshot the pre-removal active state, then strip ccr-managed fields
     // (including the auto-compact window CCR owns) before backing up. The backup
@@ -212,7 +234,7 @@ export async function setCcrTakeover(projectPath: string, enabled: boolean, conf
     // avoids a stale managed window being restored later and mistaken for a user
     // value (which would freeze it and stop ContextWindow changes from applying).
     const wasActive = isCcrProjectTakeoverActive(settings);
-    removeCcrProjectTakeover(settings, projectPath, config);
+    removeCcrProjectTakeover(settings, projectPath, takeoverConfig);
     if (wasActive) {
       await fs.mkdir(path.dirname(backupPath), { recursive: true });
       await fs.writeFile(backupPath, JSON.stringify(settings, null, 2), "utf-8");
@@ -228,13 +250,18 @@ export async function setCcrTakeover(projectPath: string, enabled: boolean, conf
  * from the current global config. Returns false when the project is not
  * currently under ccr takeover.
  */
-export async function refreshCcrProjectTakeover(projectPath: string, config: Record<string, any>): Promise<boolean> {
+export async function refreshCcrProjectTakeover(
+  projectPath: string,
+  config: Record<string, any>,
+  projectRouter?: Record<string, any>,
+): Promise<boolean> {
   const settings = await readClaudeSettingsLocal(projectPath);
   if (!isCcrProjectTakeoverActive(settings)) {
     return false;
   }
 
-  applyCcrProjectTakeover(settings, config, projectPath);
+  const takeoverConfig = await resolveProjectTakeoverConfig(projectPath, config, projectRouter);
+  applyCcrProjectTakeover(settings, takeoverConfig, projectPath);
   const settingsPath = getClaudeSettingsLocalPath(projectPath);
   await fs.mkdir(path.dirname(settingsPath), { recursive: true });
   await fs.writeFile(settingsPath, JSON.stringify(settings, null, 2), "utf-8");
@@ -321,26 +348,21 @@ export async function refreshProjectTakeovers(
 }
 
 /**
- * Refresh `.claude/settings.local.json` for projects that are both:
- * - following the global Router (`Router: {}` in their project config), and
- * - currently under ccr takeover.
- *
- * This keeps client-side managed fields (model aliases, auto-compact window,
- * statusline, proxy URL/token) aligned after the global config changes without
- * touching projects that have local Router overrides or disabled takeover.
+ * Refresh project-scoped takeover settings after the global config changes.
+ * Projects following the global Router refresh every active client. Projects
+ * with an authoritative local Router refresh only Claude Code, so global
+ * connection/context settings propagate without leaking global model aliases
+ * into the project or changing other clients' existing project semantics.
  */
 export async function syncGlobalProjectTakeovers(config: Record<string, any>): Promise<ProjectTakeoverSyncResult> {
   const result: ProjectTakeoverSyncResult = { updated: 0, skipped: 0, failed: [] };
   const projects = await listProjectConfigs();
 
   for (const project of projects) {
-    if (!isUsingGlobalRouter(project.Router)) {
-      result.skipped++;
-      continue;
-    }
-
     try {
-      const updated = await refreshProjectTakeovers(project.path, config);
+      const updated = isUsingGlobalRouter(project.Router)
+        ? await refreshProjectTakeovers(project.path, config)
+        : await refreshCcrProjectTakeover(project.path, config, project.Router);
       if (!updated) {
         result.skipped++;
         continue;
