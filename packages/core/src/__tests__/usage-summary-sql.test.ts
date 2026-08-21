@@ -181,3 +181,46 @@ describe("SQL usage summary", () => {
     expect(result.summary.byProvider.providerB).toBeUndefined();
   });
 });
+
+describe("non-stream ttft/tps semantics", () => {
+  // Non-streaming responses arrive as one payload: TTFT is meaningless and
+  // must stay null; speed is tokens over total duration (no decode-phase
+  // subtraction, no 1s-clamp inflation).
+  it("keeps ttft null for non-stream records and computes tps over total duration", () => {
+    const records = query({ provider: "providerNS" });
+    const before = records.total;
+    const summaryBefore = querySummary();
+
+    append(makeRecord({
+      id: "ns-1",
+      provider: "providerNS",
+      stream: false,
+      ttft: null,
+      outputTokens: 100,
+      durationMs: 50000,
+    }));
+    append(makeRecord({
+      id: "ns-2",
+      provider: "providerNS",
+      stream: false,
+      // Simulate a stale writer that still reports duration-as-TTFT for
+      // non-stream requests — normalization must not let it clamp the
+      // decode window to 1s and report 100 tok/s.
+      ttft: 50000,
+      outputTokens: 100,
+      durationMs: 50000,
+    }));
+
+    const rows = query({ provider: "providerNS", page: 1, pageSize: 10 });
+    expect(rows.total - before).toBe(2);
+    expect(rows.records.filter((r: any) => r.id === "ns-1")[0].ttft).toBeNull();
+    expect(rows.records.filter((r: any) => r.id === "ns-1")[0].tokensPerSecond).toBe(2);
+    // Stale duration-as-TTFT input on a non-stream record is stripped to null.
+    expect(rows.records.filter((r: any) => r.id === "ns-2")[0].ttft).toBeNull();
+    expect(rows.records.filter((r: any) => r.id === "ns-2")[0].tokensPerSecond).toBe(2);
+
+    // avgTtft ignores non-stream rows; only pre-seeded stream rows count.
+    const after = querySummary();
+    expect(after.avgTtft).toBe(summaryBefore.avgTtft);
+  });
+});
