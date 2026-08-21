@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **严格项目路由：熔断目标改为照发请求而非 503**: 项目配置的目标进入 health fail-pool（连续 3 次失败熔断）后，严格项目模式此前直接拒绝请求（503 `model_unhealthy`），请求永远到不了供应商——会话陷入重试死循环，且熔断器因收不到真实请求记录成功而永不恢复。现在 `throwStrictProjectError` 判定诊断为 `model_unhealthy` 时（供应商与模型均真实存在、仅被熔断，属非配置错误），跳过健康检查重试项目自己配置的同一目标：上游真挂时客户端看到真实供应商错误，已恢复时成功请求经 `recordSuccess` 自然闭合熔断器。未更换任何模型、不逃逸项目边界，严格语义不变。配置错误类（`provider_not_found`/`provider_disabled`/`model_not_found`/`invalid_model_format`/`quota_exhausted`）仍照常拒绝。
+- **非流式请求的 TTFT 与 token 速率统计失真**: 非流式响应整包一次性返回，不存在可观测的首 token 时刻。此前 token-speed 插件把总时长记为非流式 TTFT，usage 落库时 decode 窗口（时长−TTFT）塌缩到 1 秒下限，导致每条非流式记录的 `tokens_per_second` 等于输出 token 总数（实测 109 秒的请求被记成 3674 tok/s），且假 TTFT 污染 `avgTtft` 聚合。现在非流式记录 TTFT 一律记 null（UI 显示 \`-\`），速率为输出 token 数 ÷ 总时长；`normalizeUsageRecord` 对 `stream=false` 记录强制剥离 TTFT（覆盖 jsonl 迁移等所有写入路径），`avgTtft` 仅聚合真实流式 TTFT。
+
 ## [2.3.2393] - 2026-08-18
 
 ### Fixed
