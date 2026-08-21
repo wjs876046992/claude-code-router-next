@@ -7,9 +7,19 @@ const mockPromotionGet = vi.fn<(provider: string, model: string, scenario: strin
 const mockPromotionClear = vi.fn();
 const mockPromotionPromote = vi.fn();
 
+// Health store availability is controllable per-test: by default everything is
+// available; tests for fail-pool behavior flip specific keys to false.
+const mockHealthUnavailable = new Set<string>();
+function setHealthUnavailable(provider: string, model: string, unavailable: boolean) {
+  const key = `${provider},${model}`;
+  if (unavailable) mockHealthUnavailable.add(key);
+  else mockHealthUnavailable.delete(key);
+}
+
 vi.mock("../services/provider-health", () => ({
   getHealthStore: () => ({
-    isAvailable: () => true,
+    isAvailable: (provider: string, model: string) =>
+      !mockHealthUnavailable.has(`${provider},${model}`),
     recordSuccess: vi.fn(),
     recordFailure: vi.fn(),
     markRateLimited: vi.fn(),
@@ -140,6 +150,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockPromotionGet.mockReturnValue(null);
   mockPromotionPromote.mockClear();
+  mockHealthUnavailable.clear();
 });
 
 // ---------------------------------------------------------------------------
@@ -388,6 +399,59 @@ describe("strict project routing — healthy provider resolves normally", () => 
 
     await router(req, undefined, { configService: config });
     expect(req.body.model).toBe("active-provider,my-model");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Strict project routing: fail-pool target is retried, not 503'd
+// ---------------------------------------------------------------------------
+
+describe("strict project routing — fail-pool target retried instead of 503", () => {
+  const sessionId = "strict-unhealthy";
+
+  beforeEach(() => {
+    setupProjectRouter(sessionId, {
+      default: "active-provider,my-model",
+      enableFallback: false,
+      enableFamilyRouting: false,
+    });
+  });
+
+  it("still routes to the configured target when it is only circuit-broken (model_unhealthy)", async () => {
+    setHealthUnavailable("active-provider", "my-model", true);
+    const config = makeConfig([
+      { name: "active-provider", enabled: true, models: ["my-model"] },
+    ]);
+    const req = makeRequest(sessionId, "ccr-opus");
+
+    // Must NOT reject — the request goes out to the configured provider so the
+    // client sees the real upstream error instead of a CCR-side 503.
+    await expect(router(req, undefined, { configService: config })).resolves.toBeUndefined();
+    expect(req.body.model).toBe("active-provider,my-model");
+  });
+
+  it("still rejects with provider_disabled when the provider is disabled (not a fail-pool case)", async () => {
+    const config = makeConfig([
+      { name: "active-provider", enabled: false, models: ["my-model"] },
+    ]);
+    const req = makeRequest(sessionId, "ccr-opus");
+
+    await expect(router(req, undefined, { configService: config })).rejects.toMatchObject({
+      code: "provider_disabled",
+      statusCode: 503,
+    });
+  });
+
+  it("still rejects with model_not_found when the model is missing (not a fail-pool case)", async () => {
+    const config = makeConfig([
+      { name: "active-provider", enabled: true, models: ["other-model"] },
+    ]);
+    const req = makeRequest(sessionId, "ccr-opus");
+
+    await expect(router(req, undefined, { configService: config })).rejects.toMatchObject({
+      code: "model_not_found",
+      statusCode: 404,
+    });
   });
 });
 
