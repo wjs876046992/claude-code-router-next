@@ -66,8 +66,26 @@ function throwStrictProjectError(
   configuredModel: string,
   providers: any[],
   scenarioType: string
-): never {
+): string | never {
   const diagnosis = diagnoseResolutionFailure(configuredModel, providers);
+
+  // A fail-pool hit is NOT a configuration error: the provider and model are
+  // both real and configured by the project — the model is just circuit-broken
+  // after recent failures. Rejecting with 503 traps the session (CC keeps
+  // retrying, the fail-pool never recovers because active probes may also be
+  // failing). Instead, honor the project's own configured target and send the
+  // request anyway, letting the client see the real upstream error. This does
+  // not violate strict project routing — no other model is involved.
+  if (diagnosis.code === "model_unhealthy") {
+    const lastResort = resolveConfiguredModel(configuredModel, providers, true);
+    if (lastResort) {
+      req.log.warn(
+        `Strict project target ${configuredModel} is in the health fail-pool; retrying it anyway (no fallback available). scenario=${scenarioType}`
+      );
+      return lastResort;
+    }
+  }
+
   const sessionId = req.sessionId || req.clientContext?.stableSessionId;
   const statusCode = PROJECT_ROUTING_STATUS_CODES[diagnosis.code] || 502;
   throw new ProjectRoutingError(
@@ -650,7 +668,12 @@ function resolveFamilyModel(
 
     // Strict project mode: scenario triggered but target unavailable and no
     // project fallback → throw instead of falling through to other scenarios.
-    if (isStrictProject) throwStrictProjectError(req, familyConfig.extendedContext, providers, 'extendedContext');
+    // (model_unhealthy targets are retried as a last resort by
+    // throwStrictProjectError itself.)
+    if (isStrictProject) {
+      const lastResort = throwStrictProjectError(req, familyConfig.extendedContext, providers, 'extendedContext');
+      if (lastResort) return { model: lastResort, scenarioType: 'extendedContext', isFallback: false };
+    }
     req.log.warn(`Family: extendedContext model unavailable (fail pool), skipping`);
   }
 
@@ -676,7 +699,10 @@ function resolveFamilyModel(
       return { model: fallbackResult, scenarioType: 'longContext', isFallback: true };
     }
 
-    if (isStrictProject && familyConfig.longContext) throwStrictProjectError(req, familyConfig.longContext, providers, 'longContext');
+    if (isStrictProject && familyConfig.longContext) {
+      const lastResort = throwStrictProjectError(req, familyConfig.longContext, providers, 'longContext');
+      if (lastResort) return { model: lastResort, scenarioType: 'longContext', isFallback: false };
+    }
     // No healthy longContext model available - fall through to other scenarios
     req.log.warn(`Family: no healthy longContext model available, falling through to other scenarios`);
   }
@@ -699,7 +725,10 @@ function resolveFamilyModel(
       return { model: fallbackResult, scenarioType: 'webSearch', isFallback: true };
     }
 
-    if (isStrictProject) throwStrictProjectError(req, familyConfig.webSearch, providers, 'webSearch');
+    if (isStrictProject) {
+      const lastResort = throwStrictProjectError(req, familyConfig.webSearch, providers, 'webSearch');
+      if (lastResort) return { model: lastResort, scenarioType: 'webSearch', isFallback: false };
+    }
     req.log.warn(`Family: webSearch model unavailable (fail pool), skipping`);
   }
 
@@ -717,7 +746,10 @@ function resolveFamilyModel(
       return { model: fallbackResult, scenarioType: 'think', isFallback: true };
     }
 
-    if (isStrictProject) throwStrictProjectError(req, familyConfig.think, providers, 'think');
+    if (isStrictProject) {
+      const lastResort = throwStrictProjectError(req, familyConfig.think, providers, 'think');
+      if (lastResort) return { model: lastResort, scenarioType: 'think', isFallback: false };
+    }
     req.log.warn(`Family: think model unavailable (fail pool), skipping`);
   }
 
@@ -735,7 +767,10 @@ function resolveFamilyModel(
       return { model: fallbackResult, scenarioType: 'default', isFallback: true };
     }
 
-    if (isStrictProject) throwStrictProjectError(req, familyConfig.default, providers, 'default');
+    if (isStrictProject) {
+      const lastResort = throwStrictProjectError(req, familyConfig.default, providers, 'default');
+      if (lastResort) return { model: lastResort, scenarioType: 'default', isFallback: false };
+    }
     req.log.warn(`Family: default model unavailable (fail pool), skipping`);
   }
 
@@ -862,7 +897,12 @@ const getUseModel = async (
       return { model: fallbackResult, scenarioType: 'modelMapping' };
     }
     // Strict: mapped model is a configured target; if it fails + no fallback, throw
-    if (isStrictProject) throwStrictProjectError(req, mappedModel, providers, 'modelMapping');
+    // (model_unhealthy targets are retried as a last resort by
+    // throwStrictProjectError itself.)
+    if (isStrictProject) {
+      const lastResort = throwStrictProjectError(req, mappedModel, providers, 'modelMapping');
+      if (lastResort) return { model: lastResort, scenarioType: 'modelMapping' };
+    }
     req.log.warn(`Mapped model ${mappedModel} unavailable (fail pool), skipping`);
   }
 
@@ -890,7 +930,10 @@ const getUseModel = async (
     if (fallbackResult) {
       return { model: fallbackResult, scenarioType: 'extendedContext' };
     }
-    if (isStrictProject) throwStrictProjectError(req, Router.extendedContext, providers, 'extendedContext');
+    if (isStrictProject) {
+      const lastResort = throwStrictProjectError(req, Router.extendedContext, providers, 'extendedContext');
+      if (lastResort) return { model: lastResort, scenarioType: 'extendedContext' };
+    }
   }
 
   // if tokenCount is greater than the configured threshold, use the long context model
@@ -911,7 +954,10 @@ const getUseModel = async (
     if (fallbackResult) {
       return { model: fallbackResult, scenarioType: 'longContext' };
     }
-    if (isStrictProject) throwStrictProjectError(req, Router.longContext, providers, 'longContext');
+    if (isStrictProject) {
+      const lastResort = throwStrictProjectError(req, Router.longContext, providers, 'longContext');
+      if (lastResort) return { model: lastResort, scenarioType: 'longContext' };
+    }
   }
 
   // Subagent model override (original priority position: after longContext,
@@ -939,7 +985,10 @@ const getUseModel = async (
     if (fallbackResult) {
       return { model: fallbackResult, scenarioType: 'background' };
     }
-    if (isStrictProject) throwStrictProjectError(req, Router.background, providers, 'background');
+    if (isStrictProject) {
+      const lastResort = throwStrictProjectError(req, Router.background, providers, 'background');
+      if (lastResort) return { model: lastResort, scenarioType: 'background' };
+    }
     req.log.warn(`Background model ${Router.background} unavailable (fail pool), falling through`);
   }
   // The priority of websearch must be higher than thinking.
@@ -959,7 +1008,10 @@ const getUseModel = async (
     if (fallbackResult) {
       return { model: fallbackResult, scenarioType: 'webSearch' };
     }
-    if (isStrictProject) throwStrictProjectError(req, Router.webSearch, providers, 'webSearch');
+    if (isStrictProject) {
+      const lastResort = throwStrictProjectError(req, Router.webSearch, providers, 'webSearch');
+      if (lastResort) return { model: lastResort, scenarioType: 'webSearch' };
+    }
   }
   // if extended thinking is enabled, use the think model
   if (req.body.thinking?.type === "enabled" && Router?.think) {
@@ -975,7 +1027,10 @@ const getUseModel = async (
     if (fallbackResult) {
       return { model: fallbackResult, scenarioType: 'think' };
     }
-    if (isStrictProject) throwStrictProjectError(req, Router.think, providers, 'think');
+    if (isStrictProject) {
+      const lastResort = throwStrictProjectError(req, Router.think, providers, 'think');
+      if (lastResort) return { model: lastResort, scenarioType: 'think' };
+    }
   }
   // Default routing with health check
   if (Router?.default) {
@@ -990,22 +1045,23 @@ const getUseModel = async (
     if (fallbackResult) {
       return { model: fallbackResult, scenarioType: 'default' };
     }
-    // Last resort (non-strict only): no fallback (or none available) and the
-    // default model is only unavailable due to the fail-pool circuit breaker.
-    // In strict project-routing mode this last-resort bypass is disabled.
-    if (!isStrictProject) {
-      const unhealthyDefault = resolveConfiguredModel(Router.default, providers, true, 'default', enableFallback, allowPromotion, isStrictProject);
-      if (unhealthyDefault) {
-        req.log.warn(`No fallback available; retrying default model ${Router.default} despite fail-pool state`);
-        return { model: unhealthyDefault, scenarioType: 'default' };
-      }
+    // Last resort: no fallback (or none available) and the default model is
+    // only unavailable due to the fail-pool circuit breaker. Applies to both
+    // modes now — in strict mode this only happens when the target resolves
+    // (same model, no boundary escape), so the retry honors strict semantics.
+    const unhealthyDefault = resolveConfiguredModel(Router.default, providers, true, 'default', enableFallback, allowPromotion, isStrictProject);
+    if (unhealthyDefault) {
+      req.log.warn(`No fallback available; retrying default model ${Router.default} despite fail-pool state (strict=${isStrictProject})`);
+      return { model: unhealthyDefault, scenarioType: 'default' };
     }
   }
   // Strict project routing: the project Router is authoritative. If no model
   // could be resolved after exhausting all configured scenarios, surface a
-  // clear error instead of returning undefined.
+  // clear error instead of returning undefined. (model_unhealthy targets are
+  // retried as a last resort by throwStrictProjectError itself.)
   if (isStrictProject) {
-    throwStrictProjectError(req, Router?.default || req.body.model, providers, 'default');
+    const lastResort = throwStrictProjectError(req, Router?.default || req.body.model, providers, 'default');
+    if (lastResort) return { model: lastResort, scenarioType: 'default' };
   }
   return { model: undefined, scenarioType: 'default' };
 };
@@ -1175,7 +1231,11 @@ export const router = async (req: any, _res: any, context: RouterContext) => {
             model = imageFallback;
             req.scenarioType = 'image';
           } else if (isStrictProject) {
-            throwStrictProjectError(req, configuredImageModels[0], providers, 'image');
+            const lastResort = throwStrictProjectError(req, configuredImageModels[0], providers, 'image');
+            if (lastResort) {
+              model = lastResort;
+              req.scenarioType = 'image';
+            }
           } else {
             req.log.warn(`Image models ${configuredImageModels.join(', ')} unavailable (fail pool), keeping ${model}`);
             req.scenarioType = 'image';
