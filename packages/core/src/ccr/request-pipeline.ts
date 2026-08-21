@@ -610,7 +610,11 @@ export function registerRequestPipeline(serverInstance: any, config: any): void 
         outputTokens,
         cacheReadInputTokens,
         cacheCreationInputTokens: usage?.cache_creation_input_tokens || 0,
-        ttft: isFailedRequest ? null : speedStats.ttft,
+        // TTFT is only meaningful for streaming requests — a non-streaming
+        // response arrives as one payload, so "first token" equals total
+        // duration. Keep non-stream TTFT null so it neither pollutes the
+        // per-record display nor the avgTtft aggregate.
+        ttft: isFailedRequest || !req.body?.stream ? null : speedStats.ttft,
         tokensPerSecond: isFailedRequest ? null : speedStats.tokensPerSecond,
         durationMs: req.requestStartTime
           ? Math.round(performance.now() - req.requestStartTime)

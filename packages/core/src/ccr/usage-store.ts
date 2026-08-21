@@ -305,7 +305,11 @@ function normalizeUsageRecord(record: UsageRecord): UsageRecord {
   const outputTokens = Number(record.outputTokens) || 0;
   const rawDurationMs = Number(record.durationMs);
   const durationMs = Number.isFinite(rawDurationMs) ? rawDurationMs : null;
-  const ttft = parseNumericTokenSpeedValue(record.ttft);
+  // TTFT is only meaningful for streaming requests: a non-streaming response
+  // arrives as one payload where "first token" equals total duration. Force
+  // non-stream TTFT to null regardless of what the caller supplied, so it
+  // cannot pollute per-record display or the avgTtft aggregate.
+  const ttft = record.stream ? parseNumericTokenSpeedValue(record.ttft) : null;
 
   return {
     ...record,
