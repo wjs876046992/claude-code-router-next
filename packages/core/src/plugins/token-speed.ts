@@ -402,9 +402,12 @@ export const tokenSpeedPlugin: CCRPlugin = {
 
       // Only output stats if token count was available
       if (hasTokenCount) {
-        const ttft = Math.round(endTime - startTime);
         const totalDuration = endTime - startTime;
 
+        // Non-streaming responses deliver the whole payload at once, so there
+        // is no observable first-token moment — reporting total duration as
+        // TTFT would be misleading. Leave TTFT unset; compute speed as
+        // tokens over total duration (no decode-phase subtraction).
         const stats: TokenStats = {
           requestId,
           sessionId,
@@ -412,7 +415,6 @@ export const tokenSpeedPlugin: CCRPlugin = {
           lastTokenTime: endTime,
           tokenCount,
           tokensPerSecond: calculateFinalTokensPerSecond(tokenCount, totalDuration),
-          timeToFirstToken: ttft,
           stream: false
         };
 
