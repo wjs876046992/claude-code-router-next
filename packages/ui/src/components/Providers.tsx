@@ -29,6 +29,7 @@ import { Combobox } from "@/components/ui/combobox";
 import { ComboInput } from "@/components/ui/combo-input";
 import { api } from "@/lib/api";
 import { getConfiguredProxyUrl, isGlobalProxyEnabled } from "@/utils/proxy";
+import { parseParamValue, formatParamValue } from "@/utils/params";
 import { Toast } from "@/components/ui/toast";
 import type { Provider, ProviderHealthState, ProviderProbeTelemetry, ProviderQuotaUsage } from "@/types";
 
@@ -596,22 +597,24 @@ export function Providers() {
         if (transformerArray.length > 1 && typeof transformerArray[1] === 'object' && transformerArray[1] !== null) {
           // Update the existing parameters object
           const existingParams = transformerArray[1] as Record<string, unknown>;
-          const paramsObj: Record<string, unknown> = { ...existingParams, [paramName]: paramValue };
+          // Parse JSON/boolean/number literals so nested objects survive the
+          // round trip to config.json (a raw string would not deep-merge).
+          const paramsObj: Record<string, unknown> = { ...existingParams, [paramName]: parseParamValue(paramValue) };
           transformerArray[1] = paramsObj;
         } else if (transformerArray.length > 1) {
           // If there are other elements, add the parameters object
-          const paramsObj = { [paramName]: paramValue };
+          const paramsObj = { [paramName]: parseParamValue(paramValue) };
           transformerArray.splice(1, transformerArray.length - 1, paramsObj);
         } else {
           // Add a new parameters object
-          const paramsObj = { [paramName]: paramValue };
+          const paramsObj = { [paramName]: parseParamValue(paramValue) };
           transformerArray.push(paramsObj);
         }
         
         updatedProvider.transformer.use[transformerIndex] = transformerArray as string | (string | Record<string, unknown> | { max_tokens: number })[];
       } else {
         // Convert to array format with parameters
-        const paramsObj = { [paramName]: paramValue };
+        const paramsObj = { [paramName]: parseParamValue(paramValue) };
         updatedProvider.transformer.use[transformerIndex] = [targetTransformer as string, paramsObj];
       }
     }
@@ -674,22 +677,24 @@ export function Providers() {
         if (transformerArray.length > 1 && typeof transformerArray[1] === 'object' && transformerArray[1] !== null) {
           // Update the existing parameters object
           const existingParams = transformerArray[1] as Record<string, unknown>;
-          const paramsObj: Record<string, unknown> = { ...existingParams, [paramName]: paramValue };
+          // Parse JSON/boolean/number literals so nested objects survive the
+          // round trip to config.json (a raw string would not deep-merge).
+          const paramsObj: Record<string, unknown> = { ...existingParams, [paramName]: parseParamValue(paramValue) };
           transformerArray[1] = paramsObj;
         } else if (transformerArray.length > 1) {
           // If there are other elements, add the parameters object
-          const paramsObj = { [paramName]: paramValue };
+          const paramsObj = { [paramName]: parseParamValue(paramValue) };
           transformerArray.splice(1, transformerArray.length - 1, paramsObj);
         } else {
           // Add a new parameters object
-          const paramsObj = { [paramName]: paramValue };
+          const paramsObj = { [paramName]: parseParamValue(paramValue) };
           transformerArray.push(paramsObj);
         }
         
         updatedProvider.transformer[model].use[transformerIndex] = transformerArray as string | (string | Record<string, unknown> | { max_tokens: number })[];
       } else {
         // Convert to array format with parameters
-        const paramsObj = { [paramName]: paramValue };
+        const paramsObj = { [paramName]: parseParamValue(paramValue) };
         updatedProvider.transformer[model].use[transformerIndex] = [targetTransformer as string, paramsObj];
       }
     }
@@ -1329,7 +1334,7 @@ export function Providers() {
                                   {Object.entries(params).map(([key, value]) => (
                                     <div key={key} className="flex items-center justify-between bg-gray-50 rounded p-2">
                                       <div className="text-sm">
-                                        <span className="font-medium">{key}:</span> {String(value)}
+                                        <span className="font-medium">{key}:</span> {formatParamValue(value)}
                                       </div>
                                       <Button 
                                         variant="ghost" 
@@ -1483,7 +1488,7 @@ export function Providers() {
                                           {Object.entries(params).map(([key, value]) => (
                                             <div key={key} className="flex items-center justify-between bg-gray-50 rounded p-2">
                                               <div className="text-sm">
-                                                <span className="font-medium">{key}:</span> {String(value)}
+                                                <span className="font-medium">{key}:</span> {formatParamValue(value)}
                                               </div>
                                               <Button 
                                                 variant="ghost" 
