@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [2.3.2395] - 2026-08-22
+
+### Fixed
+
+- **UI 转换器参数支持嵌套 JSON / 布尔 / 数字类型**: Providers 页的转换器参数值此前一律按字符串保存，导致结构化参数在 UI 里根本配不了——输入 `{"reasoning":{"enabled":true,"effort":"max"}}` 存进 config.json 的是字符串，`customparams` 的 deep merge 无法应用（已有对象字段被保留、`enabled` 仍是 false），强制 reasoning 的端点（如 OpenRouter `stealth/ox-alpha`）在 UI 配置后依旧 400。现在参数值按类型解析：`true`/`false` → 布尔、数字字面量 → 数字、`{`/`[` 开头 → JSON 解析（畸形 JSON 保留原字符串，不会静默损坏配置），其余保持字符串；参数回显改用 `formatParamValue`，对象不再显示 `[object Object]`。provider 级与 model 级共 5 处参数写入路径全部接入。
+
 ## [2.3.2394] - 2026-08-21
 
 ### Fixed
