@@ -110,6 +110,83 @@ describe("OpenCodeTransformer", () => {
     expect(block?.cache_control).toEqual({ type: "ephemeral" });
   });
 
+  it("should convert assistant thinking to reasoning_content for multi-turn cache continuity", async () => {
+    const t = new OpenCodeTransformer();
+    const request = makeRequest({
+      reasoning: { enabled: true, effort: "high" },
+      messages: [
+        {
+          role: "assistant",
+          content: "I will inspect the file.",
+          thinking: {
+            content: "The file likely contains the relevant implementation.",
+            signature: "sig-123",
+          },
+          tool_calls: [
+            {
+              id: "call-1",
+              type: "function",
+              function: { name: "Read", arguments: '{"path":"a.ts"}' },
+            },
+          ],
+        },
+      ],
+    });
+
+    const result = await t.transformRequestIn(request);
+    const assistant = result.messages[0] as any;
+    expect(assistant.reasoning_content).toBe(
+      "The file likely contains the relevant implementation."
+    );
+    expect(assistant.reasoning_content_signature).toBe("sig-123");
+    expect(assistant.thinking).toBeUndefined();
+  });
+
+  it("should add empty reasoning_content to thinking-mode assistant tool calls", async () => {
+    const t = new OpenCodeTransformer();
+    const request = makeRequest({
+      reasoning: { enabled: true, effort: "high" },
+      messages: [
+        {
+          role: "assistant",
+          content: "",
+          tool_calls: [
+            {
+              id: "call-1",
+              type: "function",
+              function: { name: "Read", arguments: '{"path":"a.ts"}' },
+            },
+          ],
+        },
+      ],
+    });
+
+    const result = await t.transformRequestIn(request);
+    expect((result.messages[0] as any).reasoning_content).toBe(" ");
+  });
+
+  it("should not add reasoning_content when thinking mode is disabled", async () => {
+    const t = new OpenCodeTransformer();
+    const request = makeRequest({
+      messages: [
+        {
+          role: "assistant",
+          content: "",
+          tool_calls: [
+            {
+              id: "call-1",
+              type: "function",
+              function: { name: "Read", arguments: '{"path":"a.ts"}' },
+            },
+          ],
+        },
+      ],
+    });
+
+    const result = await t.transformRequestIn(request);
+    expect((result.messages[0] as any).reasoning_content).toBeUndefined();
+  });
+
   it("should clean media_type from image_url in transformRequestIn", async () => {
     const t = new OpenCodeTransformer();
     const request = makeRequest({

@@ -1,5 +1,6 @@
 import { UnifiedChatRequest } from "@/types/llm";
 import { Transformer, TransformerOptions } from "../types/transformer";
+import { parseResponseJson } from "./response-body";
 import { v4 as uuidv4 } from "uuid";
 
 /**
@@ -21,6 +22,8 @@ import { v4 as uuidv4 } from "uuid";
  *   versions stripped them on the assumption the backend ignored the field.
  * - Cleans Anthropic-specific image_url media_type fields that GLM
  *   does not understand.
+ * - Replays Claude Code thinking blocks as reasoning_content (including the
+ *   signature) so multi-turn thinking requests remain valid and cacheable.
  * - Converts reasoning_content in streaming/non-streaming responses to the
  *   thinking format expected by Claude Code.
  * - Replaces purely-numeric tool_call IDs with UUID-based IDs to avoid
@@ -35,12 +38,16 @@ export class OpenCodeTransformer implements Transformer {
   async transformRequestIn(
     request: UnifiedChatRequest
   ): Promise<UnifiedChatRequest> {
+    const hasThinking =
+      request.reasoning?.enabled ||
+      request.messages.some((message) => message.thinking?.content);
+
     // Clean Anthropic-specific media_type from image_url parts. cache_control
     // markers are deliberately PRESERVED: the opencode zen backend gates its
     // prompt cache on them (see class doc).
-    request.messages.forEach((msg) => {
-      if (Array.isArray(msg.content)) {
-        msg.content.forEach((item: any) => {
+    request.messages.forEach((message) => {
+      if (Array.isArray(message.content)) {
+        message.content.forEach((item: any) => {
           if (item.type === "image_url") {
             if (!item.image_url.url.startsWith("http")) {
               item.image_url.url = `data:${item.media_type};base64,${item.image_url.url}`;
@@ -48,6 +55,40 @@ export class OpenCodeTransformer implements Transformer {
             delete item.media_type;
           }
         });
+      }
+
+      // OpenCode Go's DeepSeek thinking models require reasoning_content from
+      // previous assistant turns to be replayed verbatim. AnthropicTransformer
+      // exposes those blocks as message.thinking; convert them back before the
+      // OpenAI-compatible request is sent upstream. Leaving the unsupported
+      // `thinking` object in the request both causes 400 responses and prevents
+      // the upstream prefix cache from matching beyond the first thinking turn.
+      if (message.role === "assistant") {
+        const thinkingContent = message.thinking?.content;
+        const thinkingSignature = message.thinking?.signature;
+
+        if (
+          thinkingContent &&
+          typeof thinkingContent === "string" &&
+          thinkingContent.trim()
+        ) {
+          (message as any).reasoning_content = thinkingContent;
+          if (thinkingSignature) {
+            (message as any).reasoning_content_signature = thinkingSignature;
+          }
+        } else if (
+          hasThinking &&
+          message.tool_calls?.length &&
+          !(message as any).reasoning_content
+        ) {
+          // Thinking-mode tool call messages must carry the field even when the
+          // model emitted no visible reasoning for that turn.
+          (message as any).reasoning_content = " ";
+        }
+
+        if (message.thinking) {
+          delete message.thinking;
+        }
       }
     });
 
@@ -59,7 +100,7 @@ export class OpenCodeTransformer implements Transformer {
   async transformResponseOut(response: Response): Promise<Response> {
     // Handle non-streaming JSON response
     if (response.headers.get("Content-Type")?.includes("application/json")) {
-      const jsonResponse = await response.json();
+      const jsonResponse = await parseResponseJson(response);
 
       // Convert reasoning_content to thinking format
       if (jsonResponse.choices?.[0]?.message?.reasoning_content) {

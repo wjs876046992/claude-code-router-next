@@ -23,6 +23,10 @@ import { getHealthStore } from "@/services/provider-health";
 import { captureRateLimitHeaders } from "@/services/rate-limit";
 import { getFallbackPromotionStore } from "@/utils/fallback-promotion";
 import { OpenAIResponsesTransformer } from "../transformer/openai.responses.transformer";
+import {
+  isEventStreamResponse,
+  parseResponseJson,
+} from "../transformer/response-body";
 import { router, findProviderModel, ProjectRoutingError } from "@/utils/router";
 import { resolveProviderProxyUrl } from "@/services/proxy";
 
@@ -1246,14 +1250,17 @@ async function processResponseTransformers(
  * Format and return response
  * Handle HTTP status codes, format streaming and regular responses
  */
-function formatResponse(response: any, reply: FastifyReply, body: any, fastify?: FastifyInstance) {
+function formatResponse(response: any, reply: FastifyReply, _body: any, fastify?: FastifyInstance) {
   // Set HTTP status code
   if (!response.ok) {
     reply.code(response.status);
   }
 
-  // Handle streaming response
-  const isStream = body.stream === true;
+  // Decide streaming from the upstream response's Content-Type, not the
+  // request body: some providers answer a stream:true request with a JSON
+  // error body, or answer a non-stream request with an SSE payload (e.g.
+  // OpenRouter error responses starting with ": OPENROUTER PROCESSING").
+  const isStream = isEventStreamResponse(response);
   if (isStream) {
     reply.header("Content-Type", "text/event-stream");
     reply.header("Cache-Control", "no-cache");
@@ -1269,8 +1276,9 @@ function formatResponse(response: any, reply: FastifyReply, body: any, fastify?:
 
     return reply.send(response.body);
   } else {
-    // Handle regular JSON response
-    return response.json();
+    // Handle regular JSON response. Parse leniently so a non-JSON upstream
+    // body surfaces as a descriptive error instead of a raw SyntaxError.
+    return parseResponseJson(response);
   }
 }
 

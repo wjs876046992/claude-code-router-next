@@ -1,5 +1,6 @@
 import { MessageContent, TextContent, UnifiedChatRequest } from "@/types/llm";
 import { Transformer } from "../types/transformer";
+import { parseResponseJson } from "./response-body";
 import { v4 as uuidv4 } from "uuid"
 
 export class GroqTransformer implements Transformer {
@@ -27,7 +28,7 @@ export class GroqTransformer implements Transformer {
 
   async transformResponseOut(response: Response): Promise<Response> {
     if (response.headers.get("Content-Type")?.includes("application/json")) {
-      const jsonResponse = await response.json();
+      const jsonResponse = await parseResponseJson(response);
       return new Response(JSON.stringify(jsonResponse), {
         status: response.status,
         statusText: response.statusText,

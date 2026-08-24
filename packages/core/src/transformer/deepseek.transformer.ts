@@ -1,5 +1,6 @@
 import { UnifiedChatRequest } from "../types/llm";
 import { Transformer } from "../types/transformer";
+import { parseResponseJson } from "./response-body";
 
 export class DeepseekTransformer implements Transformer {
   name = "deepseek";
@@ -69,7 +70,7 @@ export class DeepseekTransformer implements Transformer {
 
   async transformResponseOut(response: Response): Promise<Response> {
     if (response.headers.get("Content-Type")?.includes("application/json")) {
-      const jsonResponse = await response.json();
+      const jsonResponse = await parseResponseJson(response);
       // Handle non-streaming response if needed
       return new Response(JSON.stringify(jsonResponse), {
         status: response.status,

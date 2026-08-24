@@ -13,6 +13,7 @@ import {
 import { v4 as uuidv4 } from "uuid";
 import { getThinkLevel } from "@/utils/thinking";
 import { createApiError } from "@/api/middleware";
+import { parseResponseJson } from "./response-body";
 import { formatBase64 } from "@/utils/image";
 import { convertToAnthropic } from "@/utils/converter";
 
@@ -294,7 +295,7 @@ export class AnthropicTransformer implements Transformer {
         },
       });
     } else {
-      const data = (await response.json()) as any;
+      const data = (await parseResponseJson(response)) as any;
       const anthropicResponse = this.convertOpenAIResponseToAnthropic(
         data,
         context!

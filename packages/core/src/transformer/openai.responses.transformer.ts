@@ -1,5 +1,6 @@
 import { UnifiedChatRequest, MessageContent } from "@/types/llm";
 import { Transformer } from "@/types/transformer";
+import { parseResponseJson } from "./response-body";
 
 interface ResponsesAPIOutputItem {
   type: string;
@@ -269,7 +270,7 @@ export class OpenAIResponsesTransformer implements Transformer {
     const contentType = response.headers.get("Content-Type") || "";
 
     if (contentType.includes("application/json")) {
-      const jsonResponse: any = await response.json();
+      const jsonResponse: any = await parseResponseJson(response);
 
       // Check if this is a Responses API format JSON response from an upstream
       // provider that natively speaks the Responses API (e.g. OpenAI o-series).
@@ -827,7 +828,7 @@ export class OpenAIResponsesTransformer implements Transformer {
     }
     // Non-stream: assume OpenAI Chat JSON → wrap in Responses API shape
     try {
-      const json = await response.json();
+      const json = await parseResponseJson(response);
       return new Response(JSON.stringify(this.wrapChatInResponses(json)), {
         headers: { "Content-Type": "application/json" },
       });

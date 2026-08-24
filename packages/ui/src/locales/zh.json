@@ -173,7 +173,8 @@
     "proxy_tooltip_global": "全局代理已开启，关闭全局后可单独设置",
     "proxy_tooltip_no_url": "请先在通用设置中配置代理地址",
     "proxy_tooltip_on": "代理已开启",
-    "proxy_tooltip_off": "直连（未启用代理）"
+    "proxy_tooltip_off": "直连（未启用代理）",
+    "edit_parameter": "编辑参数"
   },
   "router": {
     "title": "路由",

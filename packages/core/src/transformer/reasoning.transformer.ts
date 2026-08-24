@@ -1,5 +1,6 @@
 import { UnifiedChatRequest } from "@/types/llm";
 import { Transformer, TransformerOptions } from "../types/transformer";
+import { parseResponseJson } from "./response-body";
 
 export class ReasoningTransformer implements Transformer {
   static TransformerName = "reasoning";
@@ -33,7 +34,7 @@ export class ReasoningTransformer implements Transformer {
   async transformResponseOut(response: Response): Promise<Response> {
     if (!this.enable) return response;
     if (response.headers.get("Content-Type")?.includes("application/json")) {
-      const jsonResponse = await response.json();
+      const jsonResponse = await parseResponseJson(response);
       if (jsonResponse.choices[0]?.message.reasoning_content) {
         jsonResponse.thinking = {
           content: jsonResponse.choices[0]?.message.reasoning_content

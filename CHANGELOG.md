@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [2.3.2396] - 2026-08-24
+
+### Fixed
+
+- **OpenRouter 流式响应不再被错误当作 JSON 解析**: CCR 此前根据客户端请求里的 `stream` 判断最终响应类型，并在多个 transformer 的 `application/json` 分支直接调用 `response.json()`。当上游实际返回 SSE（例如以 `: OPENROUTER PROCESSING` 开头）或返回 Content-Type 与请求预期不一致的错误体时，会抛出无上下文的 `Unexpected token ':' ... is not valid JSON`。现在最终响应按实际 `Content-Type: text/event-stream` 判断流式转发；所有相关 transformer 使用统一的安全 JSON 解析器，兼容 BOM/首尾空白，并在非 JSON 响应时携带 HTTP 状态和截断后的原始 body 预览，方便定位真实上游错误。
+- **OpenCode Go 多轮 thinking 请求恢复完整缓存前缀**: `OpenCodeTransformer` 此前把上游 `reasoning_content` 转成 Claude Code 的 `thinking` 后，下一轮请求没有把历史 assistant `thinking.content`/`signature` 转回 `reasoning_content`/`reasoning_content_signature`，导致上游只能匹配到首个 thinking turn 之前的前缀（长会话常固定命中约 64k），并可能返回 `The reasoning_content in the thinking mode must be passed back to the API`。现在完整回放 reasoning 内容与签名，thinking 模式下无显式 reasoning 的 assistant tool-call 也补兼容占位值；直连同一 181,211-token 请求两次验证上游可命中 180,992 tokens（约 99.88%），证明问题位于 CCR 转换链而非上游限制。
+- **转换器自定义参数支持直接编辑**: Providers 页已有参数此前只能查看或删除，修改嵌套 JSON（如 `reasoning: {"enabled":true,"effort":"max"}`）必须删除后重新输入。现在 provider 级和 model 级参数行新增编辑按钮，点击后以 key/value 形式回填输入框；对象、数组、布尔和数字通过既有格式化/解析逻辑无损往返，同名 key 保存时覆盖原值。
+
 ## [2.3.2395] - 2026-08-22
 
 ### Fixed
