@@ -295,7 +295,56 @@ export class AnthropicTransformer implements Transformer {
         },
       });
     } else {
-      const data = (await parseResponseJson(response)) as any;
+      // Some upstreams (Codex relay, OpenRouter error responses) label an SSE
+      // body with an application/json Content-Type. Parse would throw on the
+      // leading "event:" / ": OPENROUTER PROCESSING" line. Peek the body: if it
+      // actually looks like an SSE stream, route it through the stream
+      // converter instead of failing.
+      const [peek, body] = response.body
+        ? response.body.tee()
+        : [null, null];
+      let firstChunk = "";
+      if (peek) {
+        const reader = peek.getReader();
+        try {
+          const { value, done } = await reader.read();
+          if (!done && value) {
+            firstChunk = new TextDecoder().decode(value);
+          }
+        } finally {
+          reader.releaseLock();
+        }
+        peek.cancel().catch(() => {});
+      }
+      // Detect an SSE body mislabeled as JSON. Match only at line start so a
+      // JSON body containing an "event":"..." field is not falsely treated as
+      // a stream (JSON starts with "{" or "[").
+      const bodyIsSSE =
+        /^\s*(event:|data:|:\s*[A-Z])/m.test(firstChunk) ||
+        firstChunk.startsWith("data:");
+      if (bodyIsSSE && body) {
+        const convertedStream = await this.convertOpenAIStreamToAnthropic(
+          body,
+          context!
+        );
+        return new Response(convertedStream, {
+          headers: {
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            Connection: "keep-alive",
+          },
+        });
+      }
+      // Reconstruct a Response with the unread body so parseResponseJson can
+      // consume it (peek already drained the original body).
+      const textResponse = body
+        ? new Response(body, {
+            status: response.status,
+            statusText: response.statusText,
+            headers: response.headers,
+          })
+        : response;
+      const data = (await parseResponseJson(textResponse)) as any;
       const anthropicResponse = this.convertOpenAIResponseToAnthropic(
         data,
         context!

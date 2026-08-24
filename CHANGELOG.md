@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [2.3.2397] - 2026-08-24
+
+### Fixed
+
+- **Anthropic 兼容上游把 SSE 响应误标 application/json 时不再丢失内容**: 部分上游（Codex 中转、OpenRouter 错误响应）对流式请求返回的响应体实为 SSE（`event: message_start\ndata:...` 或 `: OPENROUTER PROCESSING`），却带 `application/json` Content-Type。`AnthropicTransformer.transformResponseIn` 此前仅按 Content-Type 判断流式，遇此情形走进非流式分支对 SSE 文本调 JSON 解析，抛出 `Upstream returned a non-JSON response` 并令客户端收到空响应或触发无谓 fallback。现在非流式分支先 peek 响应体首块，若实际以 `event:`/`data:`/`: ` 开头则按流式走 `convertOpenAIStreamToAnthropic`，仅在确为 JSON 时才解析；检测只匹配行首，不影响含 `event` 字段的正常 JSON 响应。
+
 ## [2.3.2396] - 2026-08-24
 
 ### Fixed
