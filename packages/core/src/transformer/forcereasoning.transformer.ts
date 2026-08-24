@@ -1,5 +1,6 @@
 import { UnifiedChatRequest } from "../types/llm";
 import { Transformer } from "../types/transformer";
+import { parseResponseJson } from "./response-body";
 
 const PROMPT = `Always think before answering. Even if the problem seems simple, always write down your reasoning process explicitly.
 
@@ -71,7 +72,7 @@ export class ForceReasoningTransformer implements Transformer {
     const reasonStopTag = "</reasoning_content>";
 
     if (response.headers.get("Content-Type")?.includes("application/json")) {
-      const jsonResponse: any = await response.json();
+      const jsonResponse: any = await parseResponseJson(response);
       if (jsonResponse.choices[0]?.message.content) {
         const regex = /<reasoning_content>(.*?)<\/reasoning_content>/s;
         const match = jsonResponse.choices[0]?.message.content.match(regex);

@@ -1,5 +1,6 @@
 import { UnifiedChatRequest } from "@/types/llm";
 import { Transformer, TransformerOptions } from "../types/transformer";
+import { parseResponseJson } from "./response-body";
 import { v4 as uuidv4 } from "uuid";
 
 export class VercelTransformer implements Transformer {
@@ -49,7 +50,7 @@ export class VercelTransformer implements Transformer {
 
   async transformResponseOut(response: Response): Promise<Response> {
     if (response.headers.get("Content-Type")?.includes("application/json")) {
-      const jsonResponse = await response.json();
+      const jsonResponse = await parseResponseJson(response);
       return new Response(JSON.stringify(jsonResponse), {
         status: response.status,
         statusText: response.statusText,

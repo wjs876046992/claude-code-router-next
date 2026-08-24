@@ -1,5 +1,6 @@
 import { UnifiedChatRequest } from "../types/llm";
 import { Transformer } from "../types/transformer";
+import { parseResponseJson } from "./response-body";
 
 /**
  * Kimi (Moonshot AI) Transformer
@@ -177,7 +178,7 @@ export class KimiTransformer implements Transformer {
 
     // Handle non-streaming response
     if (contentType?.includes("application/json")) {
-      const jsonResponse = await response.json();
+      const jsonResponse = await parseResponseJson(response);
 
       // Convert reasoning_content to thinking format
       if (jsonResponse.choices?.[0]?.message?.reasoning_content) {

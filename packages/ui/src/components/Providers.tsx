@@ -14,7 +14,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { X, Trash2, Plus, Eye, EyeOff, Search, XCircle, HelpCircle, RefreshCw } from "lucide-react";
+import { X, Trash2, Plus, Eye, EyeOff, Search, XCircle, HelpCircle, RefreshCw, Pencil } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
@@ -1333,22 +1333,42 @@ export function Providers() {
                                 <div className="space-y-1">
                                   {Object.entries(params).map(([key, value]) => (
                                     <div key={key} className="flex items-center justify-between bg-gray-50 rounded p-2">
-                                      <div className="text-sm">
+                                      <div className="text-sm break-all">
                                         <span className="font-medium">{key}:</span> {formatParamValue(value)}
                                       </div>
-                                      <Button 
-                                        variant="ghost" 
-                                        size="sm"
-                                        className="h-6 w-6 p-0"
-                                        onClick={() => {
-                                          if (editingProviderIndex !== null) {
-                                            // We need a function to remove parameters from a specific transformer
-                                            removeProviderTransformerParameterAtIndex(editingProviderIndex, transformerIndex, key);
-                                          }
-                                        }}
-                                      >
-                                        <X className="h-3 w-3" />
-                                      </Button>
+                                      <div className="flex shrink-0">
+                                        <Button
+                                          variant="ghost"
+                                          size="sm"
+                                          className="h-6 w-6 p-0"
+                                          title={t("providers.edit_parameter")}
+                                          onClick={() => {
+                                            // Load the stored pair back into the
+                                            // name/value inputs so it can be edited
+                                            // in place; saving overwrites the key.
+                                            const inputKey = `provider-${editingProviderIndex}-transformer-${transformerIndex}`;
+                                            setProviderParamInputs(prev => ({
+                                              ...prev,
+                                              [inputKey]: { name: key, value: formatParamValue(value) }
+                                            }));
+                                          }}
+                                        >
+                                          <Pencil className="h-3 w-3" />
+                                        </Button>
+                                        <Button
+                                          variant="ghost"
+                                          size="sm"
+                                          className="h-6 w-6 p-0"
+                                          onClick={() => {
+                                            if (editingProviderIndex !== null) {
+                                              // We need a function to remove parameters from a specific transformer
+                                              removeProviderTransformerParameterAtIndex(editingProviderIndex, transformerIndex, key);
+                                            }
+                                          }}
+                                        >
+                                          <X className="h-3 w-3" />
+                                        </Button>
+                                      </div>
                                     </div>
                                   ))}
                                 </div>
@@ -1487,22 +1507,42 @@ export function Providers() {
                                         <div className="space-y-1">
                                           {Object.entries(params).map(([key, value]) => (
                                             <div key={key} className="flex items-center justify-between bg-gray-50 rounded p-2">
-                                              <div className="text-sm">
+                                              <div className="text-sm break-all">
                                                 <span className="font-medium">{key}:</span> {formatParamValue(value)}
                                               </div>
-                                              <Button 
-                                                variant="ghost" 
-                                                size="sm"
-                                                className="h-6 w-6 p-0"
-                                                onClick={() => {
-                                                  if (editingProviderIndex !== null) {
-                                                    // We need a function to remove parameters from a specific transformer
-                                                    removeModelTransformerParameterAtIndex(editingProviderIndex, model, transformerIndex, key);
-                                                  }
-                                                }}
-                                              >
-                                                <X className="h-3 w-3" />
-                                              </Button>
+                                              <div className="flex shrink-0">
+                                                <Button
+                                                  variant="ghost"
+                                                  size="sm"
+                                                  className="h-6 w-6 p-0"
+                                                  title={t("providers.edit_parameter")}
+                                                  onClick={() => {
+                                                    // Load the stored pair back into the
+                                                    // name/value inputs so it can be edited
+                                                    // in place; saving overwrites the key.
+                                                    const inputKey = `model-${editingProviderIndex}-${model}-transformer-${transformerIndex}`;
+                                                    setModelParamInputs(prev => ({
+                                                      ...prev,
+                                                      [inputKey]: { name: key, value: formatParamValue(value) }
+                                                    }));
+                                                  }}
+                                                >
+                                                  <Pencil className="h-3 w-3" />
+                                                </Button>
+                                                <Button
+                                                  variant="ghost"
+                                                  size="sm"
+                                                  className="h-6 w-6 p-0"
+                                                  onClick={() => {
+                                                    if (editingProviderIndex !== null) {
+                                                      // We need a function to remove parameters from a specific transformer
+                                                      removeModelTransformerParameterAtIndex(editingProviderIndex, model, transformerIndex, key);
+                                                    }
+                                                  }}
+                                                >
+                                                  <X className="h-3 w-3" />
+                                                </Button>
+                                              </div>
                                             </div>
                                           ))}
                                         </div>

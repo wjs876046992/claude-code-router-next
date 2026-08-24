@@ -1,12 +1,13 @@
 import { Transformer } from "@/types/transformer";
 import { parseToolArguments } from "@/utils/toolArgumentsParser";
+import { parseResponseJson } from "./response-body";
 
 export class EnhanceToolTransformer implements Transformer {
   name = "enhancetool";
 
   async transformResponseOut(response: Response): Promise<Response> {
     if (response.headers.get("Content-Type")?.includes("application/json")) {
-      const jsonResponse = await response.json();
+      const jsonResponse = await parseResponseJson(response);
       if (jsonResponse?.choices?.[0]?.message?.tool_calls?.length) {
         // 处理非流式的工具调用参数解析
         for (const toolCall of jsonResponse.choices[0].message.tool_calls) {
