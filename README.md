@@ -93,6 +93,7 @@ npm install -g @wengine-ai/claude-code-router-next@latest && ccr restart
 
 | 版本 | 发布内容 |
 | --- | --- |
+| **v2.3.2397** | <ul><li>**修复 SSE 响应被误标 application/json 时丢失内容**: Codex 中转/OpenRouter 错误响应把 SSE body 标成 `application/json` 时，Anthropic transformer 此前按 Content-Type 当非流式 JSON 解析并抛错；现在先 peek body 实际内容，确为 SSE（`event:`/`data:`/`: ` 开头）则走流式转换，仅确为 JSON 才解析，行首匹配不误伤含 `event` 字段的 JSON。</li></ul> |
 | **v2.3.2396** | <ul><li>**修复 OpenRouter SSE 被当作 JSON 解析**: 最终响应改为按实际 Content-Type 判断流式/非流式，并为 transformer 的 JSON 解析增加原始响应预览，`stealth/ox-alpha` 等返回 `: OPENROUTER PROCESSING` 时不再只报 `Unexpected token ':'`。</li><li>**修复 OpenCode Go 多轮 thinking 缓存断点**: 历史 assistant `thinking` 现在会回放为 `reasoning_content` + signature，避免缓存只能命中到首个 thinking turn 前（常见约 64k）及 `reasoning_content must be passed back` 400；直连 181k 请求验证上游可命中 99.88%。</li><li>**自定义 transformer 参数可直接编辑**: 参数行新增编辑按钮，以 key/value 回填输入框；嵌套 JSON/布尔/数字可修改后按同名 key 覆盖，无需删除重输。</li></ul> |
 | **v2.3.2395** | <ul><li>**UI 转换器参数支持嵌套 JSON/布尔/数字**: 参数值此前一律按字符串保存，`customparams` 的 deep merge 无法应用字符串参数，结构化参数（如强制 reasoning 端点的 `{"enabled":true,"effort":"max"}`）在 UI 里配了也无效；现在按类型解析（畸形 JSON 保留原文），参数回显不再显示 `[object Object]`。</li></ul> |
 | **v2.3.2394** | <ul><li>**严格项目路由不再因熔断目标返回 503**: 项目目标仅因 health fail-pool 不可用且无备用模型时，CCR 跳过健康检查继续请求项目配置的同一模型，让客户端收到真实上游结果；供应商/模型缺失、禁用、格式或额度错误仍拒绝，不逃逸项目边界。</li><li>**修复非流式 TTFT 与 token 速率统计**: 非流式响应不再把总耗时冒充 TTFT（显示 `-`），速率改为输出 token ÷ 总耗时，并阻止假 TTFT 污染平均值。</li></ul> |
