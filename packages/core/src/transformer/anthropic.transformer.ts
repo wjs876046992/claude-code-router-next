@@ -13,7 +13,11 @@ import {
 import { v4 as uuidv4 } from "uuid";
 import { getThinkLevel } from "@/utils/thinking";
 import { createApiError } from "@/api/middleware";
-import { parseResponseJson } from "./response-body";
+import {
+  parseResponseJson,
+  peekBodyForSSE,
+  readBodyForSSE,
+} from "./response-body";
 import { formatBase64 } from "@/utils/image";
 import { convertToAnthropic } from "@/utils/converter";
 
@@ -300,31 +304,11 @@ export class AnthropicTransformer implements Transformer {
       // leading "event:" / ": OPENROUTER PROCESSING" line. Peek the body: if it
       // actually looks like an SSE stream, route it through the stream
       // converter instead of failing.
-      const [peek, body] = response.body
-        ? response.body.tee()
-        : [null, null];
-      let firstChunk = "";
-      if (peek) {
-        const reader = peek.getReader();
-        try {
-          const { value, done } = await reader.read();
-          if (!done && value) {
-            firstChunk = new TextDecoder().decode(value);
-          }
-        } finally {
-          reader.releaseLock();
-        }
-        peek.cancel().catch(() => {});
-      }
-      // Detect an SSE body mislabeled as JSON. Match only at line start so a
-      // JSON body containing an "event":"..." field is not falsely treated as
-      // a stream (JSON starts with "{" or "[").
-      const bodyIsSSE =
-        /^\s*(event:|data:|:\s*[A-Z])/m.test(firstChunk) ||
-        firstChunk.startsWith("data:");
-      if (bodyIsSSE && body) {
+      const peeked = await peekBodyForSSE(response);
+      const bodyIsSSE = peeked?.isSSE ?? false;
+      if (bodyIsSSE && peeked?.body) {
         const convertedStream = await this.convertOpenAIStreamToAnthropic(
-          body,
+          peeked.body,
           context!
         );
         return new Response(convertedStream, {
@@ -336,14 +320,34 @@ export class AnthropicTransformer implements Transformer {
         });
       }
       // Reconstruct a Response with the unread body so parseResponseJson can
-      // consume it (peek already drained the original body).
-      const textResponse = body
-        ? new Response(body, {
-            status: response.status,
-            statusText: response.statusText,
-            headers: response.headers,
-          })
-        : response;
+      // consume it (peek already drained the original body). When peek could
+      // not run (body absent/locked), drain the full body as text and
+      // reclassify — an SSE body mislabeled as JSON still needs the stream
+      // path in that case.
+      let textResponse: Response;
+      if (peeked?.body) {
+        textResponse = new Response(peeked.body, {
+          status: response.status,
+          statusText: response.statusText,
+          headers: response.headers,
+        });
+      } else {
+        const drained = await readBodyForSSE(response);
+        if (drained.isSSE) {
+          const convertedStream = await this.convertOpenAIStreamToAnthropic(
+            drained.response.body!,
+            context!
+          );
+          return new Response(convertedStream, {
+            headers: {
+              "Content-Type": "text/event-stream",
+              "Cache-Control": "no-cache",
+              Connection: "keep-alive",
+            },
+          });
+        }
+        textResponse = drained.response;
+      }
       const data = (await parseResponseJson(textResponse)) as any;
       const anthropicResponse = this.convertOpenAIResponseToAnthropic(
         data,
