@@ -269,6 +269,52 @@ export class OpenAIResponsesTransformer implements Transformer {
   async transformResponseOut(response: Response): Promise<Response> {
     const contentType = response.headers.get("Content-Type") || "";
 
+    // Some upstreams (Codex relay) label an SSE body with an application/json
+    // Content-Type. Peek the first chunk: when the body actually looks like
+    // SSE, re-dispatch as a stream so the SSE pass-through below handles it,
+    // instead of failing JSON parse with "Upstream returned a non-JSON
+    // response".
+    if (
+      contentType.includes("application/json") &&
+      response.body &&
+      !response.body.locked
+    ) {
+      const [peek, body] = response.body.tee();
+      const reader = peek.getReader();
+      let firstChunk = "";
+      try {
+        const { value, done } = await reader.read();
+        if (!done && value) {
+          firstChunk = new TextDecoder().decode(value);
+        }
+      } finally {
+        reader.releaseLock();
+      }
+      peek.cancel().catch(() => {});
+
+      if (/^\s*(event:|data:|:\s*[A-Z])/m.test(firstChunk)) {
+        // Body is SSE mislabeled as JSON — rebuild with the untouched tee'd
+        // body (first chunk still in it) and a corrected Content-Type, then
+        // recurse once into this method to take the SSE path.
+        const rebuilt = new Response(body, {
+          status: response.status,
+          statusText: response.statusText,
+          headers: new Headers({
+            ...Object.fromEntries(response.headers.entries()),
+            "content-type": "text/event-stream",
+          }),
+        });
+        return this.transformResponseOut(rebuilt);
+      }
+
+      // Genuine JSON (or at least not SSE) — put the unread body back.
+      response = new Response(body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+      });
+    }
+
     if (contentType.includes("application/json")) {
       const jsonResponse: any = await parseResponseJson(response);
 
