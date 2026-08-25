@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [2.3.2400] - 2026-08-25
+
+### Fixed
+
+- **SSE 误标 application/json 的多层彻底修复(心跳/分片/空首块)**: v2.3.2397–2399 修复了 `AnthropicTransformer`、`OpenAIResponsesTransformer` 与 `formatResponse` 对 SSE body 标 JSON 头的识别,但三层校验都依赖"单次 read 首 chunk"判断。当上游首块是空 buffer、SSE 注释心跳(`: ping`)或分片(`ev`|`ent:`)时,SSE 识别失败,响应被误当 JSON 处理仍报 `non-JSON`/`malformed` 错误。本次将识别逻辑改为**累积多 chunk 再判定**(最多 8 次读取),并新增 `peekBodyForSSE`/`readBodyForSSE`/`looksLikeSSE` 共享工具,统一应用于: (1) `formatResponse` 兜底;(2) 两个 transformer 的 peek;(3) `sendRequestToProvider` 的 hidden-error-check(之前会把误标 SSE 的 200 响应 JSON.parse 失败误判为"empty or malformed response" 抛 400);(4) `validateStreamingResponse` 的 SSE data-lines 校验(之前首块只有心跳时误判"no SSE data lines"抛 400)。隔离实例 + mock(空首块/心跳/分片三种形态,stream:true/false 两种请求)端到端验证全部 HTTP 200 + SSE 完整透传,0 错误。
+
 ## [2.3.2399] - 2026-08-25
 
 ### Fixed

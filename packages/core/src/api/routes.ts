@@ -25,7 +25,10 @@ import { getFallbackPromotionStore } from "@/utils/fallback-promotion";
 import { OpenAIResponsesTransformer } from "../transformer/openai.responses.transformer";
 import {
   isEventStreamResponse,
+  looksLikeSSE,
   parseResponseJson,
+  peekBodyForSSE,
+  readBodyForSSE,
 } from "../transformer/response-body";
 import { router, findProviderModel, ProjectRoutingError } from "@/utils/router";
 import { resolveProviderProxyUrl } from "@/services/proxy";
@@ -426,8 +429,29 @@ async function validateStreamingResponse(
   }
 
   const reader = finalResponse.body.getReader();
-  const firstResult = await reader.read();
-  if (firstResult.done) {
+  const decoder = new TextDecoder();
+  // Accumulate across chunks before judging: the first chunk may be empty, an
+  // SSE comment heartbeat (": ping"), or a partial "ev" fragment of the first
+  // event. A single read would misjudge a healthy stream as data-less.
+  const firstChunks: Uint8Array[] = [];
+  let accText = "";
+  for (let i = 0; i < 8; i++) {
+    const result = await reader.read();
+    if (result.done) {
+      break;
+    }
+    if (result.value) {
+      firstChunks.push(result.value);
+      accText += decoder.decode(result.value, { stream: true });
+    }
+    // Stop once we have a real data line to judge on.
+    if (accText.split("\n").some((line) => line.startsWith("data:"))) {
+      break;
+    }
+  }
+  accText += decoder.decode();
+
+  if (firstChunks.length === 0) {
     reader.releaseLock();
     throw createApiError(
       `Provider returned empty streaming response from ${providerName}`,
@@ -436,10 +460,9 @@ async function validateStreamingResponse(
     );
   }
 
-  const firstChunkText = new TextDecoder().decode(firstResult.value);
-  if (firstChunkText.includes("event: error")) {
+  if (accText.includes("event: error")) {
     reader.releaseLock();
-    const errMsg = firstChunkText.length < 500 ? firstChunkText : firstChunkText.slice(0, 500);
+    const errMsg = accText.length < 500 ? accText : accText.slice(0, 500);
     throw createApiError(
       `Provider ${providerName} returned error in SSE stream: ${errMsg}`,
       400,
@@ -447,12 +470,12 @@ async function validateStreamingResponse(
     );
   }
 
-  const dataLines = firstChunkText.split('\n').filter(
+  const dataLines = accText.split('\n').filter(
     (line: string) => line.startsWith('data:') && line.trim().length > 5
   );
   if (dataLines.length === 0) {
     reader.releaseLock();
-    const preview = firstChunkText.length < 500 ? firstChunkText : firstChunkText.slice(0, 500);
+    const preview = accText.length < 500 ? accText : accText.slice(0, 500);
     throw createApiError(
       `Provider ${providerName} returned streaming response with no SSE data lines: ${preview}`,
       400,
@@ -462,7 +485,9 @@ async function validateStreamingResponse(
 
   const remainingStream = new ReadableStream({
     start: (controller) => {
-      controller.enqueue(firstResult.value!);
+      for (const chunk of firstChunks) {
+        controller.enqueue(chunk);
+      }
       const pump = () => {
         reader.read().then(({ done, value }) => {
           if (done) {
@@ -1105,6 +1130,16 @@ async function sendRequestToProvider(
         if (!bodyText || bodyText.trim() === "") {
           throw new SyntaxError("Empty JSON body");
         }
+        // An SSE stream mislabeled as application/json (Codex relay) is not a
+        // hidden error — JSON.parse below would throw SyntaxError and kill a
+        // perfectly good streaming response. Let it flow: formatResponse's
+        // peek reclassifies it as a stream downstream.
+        if (looksLikeSSE(bodyText)) {
+          fastify.log.info(
+            `[hidden-error-check] body is SSE mislabeled as ${contentType}, skipping JSON validation`
+          );
+          return response;
+        }
         const bodyJson = JSON.parse(bodyText);
         // Check if the response contains an error object
         if (bodyJson && typeof bodyJson === 'object' && bodyJson.error) {
@@ -1264,41 +1299,37 @@ async function formatResponse(response: any, reply: FastifyReply, _body: any, fa
 
   // Bypass-mode providers skip the transformer chain entirely, so a body that
   // is actually SSE but labeled application/json (Codex relay) reaches this
-  // point uncorrected and would fail JSON parse below. Peek the first chunk:
-  // when it looks like SSE, stream it through instead.
+  // point uncorrected and would fail JSON parse below. Peek the first
+  // meaningful content: when it looks like SSE, stream it through instead.
+  // The peek accumulates across chunks because the first event may be split,
+  // or preceded by an empty buffer / SSE heartbeat (": ping") before the real
+  // "event:"/"data:" line — a single read would miss it and misclassify the
+  // body as JSON.
   if (
     !isStream &&
-    response.body &&
-    !response.body.locked &&
     (response.headers?.get?.("Content-Type") || "").includes("application/json")
   ) {
-    const [peek, body] = response.body.tee();
-    const reader = peek.getReader();
-    let firstChunk = "";
-    try {
-      const { value, done } = await reader.read();
-      if (!done && value) {
-        firstChunk = new TextDecoder().decode(value);
+    const peeked = await peekBodyForSSE(response);
+    if (peeked) {
+      if (peeked.isSSE) {
+        isStream = true;
       }
-    } finally {
-      reader.releaseLock();
-    }
-    peek.cancel().catch(() => {});
-
-    if (/^\s*(event:|data:|:\s*[A-Z])/m.test(firstChunk)) {
-      isStream = true;
-      response = new Response(body, {
+      response = new Response(peeked.body, {
         status: response.status,
         statusText: response.statusText,
         headers: response.headers,
       });
     } else {
-      // Genuine JSON — put the unread body back for parsing below.
-      response = new Response(body, {
-        status: response.status,
-        statusText: response.statusText,
-        headers: response.headers,
-      });
+      // Body absent or already locked (e.g. consumed by an earlier reader),
+      // so tee-based peek is impossible. Drain the full body as text and
+      // reclassify: an SSE stream mislabeled as JSON still shows up here when
+      // the body was null/locked when peekBodyForSSE ran. Wrap it as a stream
+      // when it is SSE, otherwise leave it for JSON parsing below.
+      const drained = await readBodyForSSE(response);
+      response = drained.response;
+      if (drained.isSSE) {
+        isStream = true;
+      }
     }
   }
 
