@@ -4,93 +4,125 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Claude Code Router is a tool that routes Claude Code requests to different LLM providers. It uses a Monorepo architecture with four main packages:
+Claude Code Router (`ccr`) is a proxy that routes Claude Code / Codex requests to different LLM providers with request/response transformation, fallback, health monitoring, and a web management UI.
 
-- **cli** (`@wengine-ai/claude-code-router-cli`): Command-line tool providing the `ccr` command
-- **server** (`@wengine-ai/claude-code-router-server`): Core server handling API routing and transformations
-- **shared** (`@wengine-ai/claude-code-router-shared`): Shared constants, utilities, and preset management
-- **ui** (`@wengine-ai/claude-code-router-ui`): Web management interface (React + Vite)
+## Monorepo Structure & Dependency Chain
+
+```
+cli → core → shared
+server (facade over core, re-exports everything)
+ui (standalone React + Vite, bundled to single index.html)
+docs (Docusaurus site)
+```
+
+| Package | npm name | Role |
+|---------|----------|------|
+| `packages/core` | `@wengine-ai/llms` | **All runtime logic** — Fastify server, routing, transformers, agents, config, health, quota, proxy. This is where real work happens. |
+| `packages/cli` | `@wengine-ai/claude-code-router-next` | CLI entry (`ccr` command). Bundles core via esbuild; no server runtime of its own. |
+| `packages/server` | `@wengine-ai/claude-code-router-server` | Thin facade — re-exports everything from `@wengine-ai/llms`. **Never add logic here.** |
+| `packages/shared` | `@wengine-ai/claude-code-router-shared` | Constants, preset system, shared utilities. |
+| `packages/ui` | `@wengine-ai/claude-code-router-ui` | React + Vite web UI. Private (not published). Bundled to single `index.html` via `vite-plugin-singlefile`. |
+
+## Build & Dev Commands
+
+```bash
+# Build everything (order: shared → core → server → cli → ui)
+pnpm build
+
+# Build individual packages (use root scripts, NOT package-level pnpm build)
+pnpm build:shared
+pnpm build:core
+pnpm build:server
+pnpm build:cli      # also rebuilds shared + core + UI internally
+pnpm build:ui       # also copies index.html to cli/dist and core/dist
+
+# Dev servers
+pnpm dev:core       # same as dev:server — both run @wengine-ai/llms
+pnpm dev:ui         # Vite dev server for UI
+pnpm dev:cli        # ts-node for CLI
+```
+
+**Build order matters**: `shared` must build before `core`. `core` must build before `server` or `cli`. `build:cli` is self-contained (builds shared + core + UI internally), so don't use it if you only changed core — use `build:core` instead.
+
+**CLI bundles core via esbuild alias**: `@wengine-ai/llms` is aliased to `../core/dist/cjs/server.cjs`. The CLI always uses the CJS output of core.
+
+## Testing
+
+Tests use **vitest** in `core` and `shared` only. No tests exist for cli, server, or ui packages.
+
+```bash
+pnpm --filter @wengine-ai/llms test                    # core tests
+pnpm --filter @wengine-ai/claude-code-router-shared test # shared tests
+```
+
+Both packages have a `globalSetup` that creates a temp `CCR_CONFIG_DIR` so tests never touch `~/.claude-code-router`. Tests live at `src/__tests__/**/*.test.ts`.
+
+**CI only runs `pnpm build`** — there is no test or lint step in the GitHub Actions workflow. Run tests locally before pushing.
 
 ## Core Architecture
 
-### 1. Routing System (packages/server/src/utils/router.ts)
+### Request Pipeline (deterministic hook order)
 
-The routing logic determines which model a request should be sent to:
+The pipeline is registered in `packages/core/src/ccr/request-pipeline.ts` and executed via Fastify hooks in `Server.registerNamespace()`:
 
-- **Default routing**: Uses `Router.default` configuration
-- **Project-level routing**: Checks `~/.claude/projects/<project-id>/claude-code-router.json`
-- **Custom routing**: Loads custom JavaScript router function via `CUSTOM_ROUTER_PATH`
-- **Built-in scenario routing**:
-  - `background`: Background tasks (typically lightweight models)
-  - `think`: Thinking-intensive tasks (Plan Mode)
-  - `longContext`: Long context (exceeds `longContextThreshold` tokens)
-  - `webSearch`: Web search tasks
-  - `image`: Image-related tasks
+1. **request-normalize**: Normalize body, set defaults (`stream: false`)
+2. **adapter**: `applyClientAdapter()` detects client type (Claude Code, Codex, pi, qwen-code, opencode) and adjusts request format
+3. **auth-client**: API key auth + client context injection
+4. **agent**: Agent mutation (e.g., imageAgent tool injection)
+5. **router**: Scenario-based model selection (default/background/think/longContext/webSearch/image)
+6. **provider-model-normalize**: Split `provider,model` string, set `req.provider` and `req.model`
+7. **handler**: `handleTransformerEndpoint` — applies transformers, forwards to upstream provider
+8. **onSend**: Agent tool rewrite, usage/upstream-model capture
+9. **onResponse**: TTFT/speed/health recording, final usage append
 
-Token calculation uses `tiktoken` (cl100k_base) to estimate request size.
+### Routing System (`packages/core/src/utils/router.ts`)
 
-### 2. Transformer System
+Routing priority (highest to lowest):
+1. **Family routing** (`enableFamilyRouting`): Maps model tiers (opus/sonnet/haiku) to provider-specific models
+2. **Project-level routing**: `~/.claude/projects/<project-id>/claude-code-router.json` — strict mode: failures throw `ProjectRoutingError` instead of falling back to global
+3. **Custom router**: `CUSTOM_ROUTER_PATH` — external JS module exporting `async function router(req, config)`
+4. **Scenario routing**: `background`, `think`, `longContext` (token threshold), `webSearch`, `image`
+5. **Default routing**: `Router.default`
 
-The project uses the `@wengine-ai/llms` package (external dependency) to handle request/response transformations. Transformers adapt to different provider API differences:
+Token calculation uses `tiktoken` (cl100k_base) for request size estimation and `@huggingface/tokenizers` for the tokenizer service.
 
-- Built-in transformers: `anthropic`, `deepseek`, `gemini`, `openrouter`, `groq`, `maxtoken`, `tooluse`, `reasoning`, `enhancetool`, etc.
-- Custom transformers: Load external plugins via `transformers` array in `config.json`
+### Transformer System (`packages/core/src/services/transformer.ts`)
 
-Transformer configuration supports:
-- Global application (provider level)
-- Model-specific application
-- Option passing (e.g., `max_tokens` parameter for `maxtoken`)
+Transformers adapt requests/responses to different provider APIs. Provided by `@wengine-ai/llms` with built-in transformers: `anthropic`, `deepseek`, `gemini`, `openrouter`, `groq`, `maxtoken`, `tooluse`, `reasoning`, `enhancetool`, `cleancache`, `vertex-gemini`, etc.
 
-### 3. Agent System (packages/server/src/agents/)
+Configuration supports global (provider-level) and model-specific application, plus option passing via nested arrays.
 
-Agents are pluggable feature modules that can:
-- Detect whether to handle a request (`shouldHandle`)
-- Modify requests (`reqHandler`)
-- Provide custom tools (`tools`)
+### Agent System (`packages/core/src/ccr/agents/`)
 
-Built-in agents:
-- **imageAgent**: Handles image-related tasks
+Pluggable modules with `shouldHandle`, `reqHandler`, and `tools` methods. Built-in: `imageAgent`. Agent tool calls are intercepted in the `onSend` hook, executed, and new LLM requests are initiated to stream results back.
 
-Agent tool call flow:
-1. Detect and mark agents in `preHandler` hook
-2. Add agent tools to the request
-3. Intercept tool call events in `onSend` hook
-4. Execute agent tool and initiate new LLM request
-5. Stream results back
+### SSE Stream Processing (`packages/core/src/utils/sse/`)
 
-### 4. SSE Stream Processing
+- `SSEParserTransform`: Parses SSE text → event objects
+- `SSESerializerTransform`: Serializes event objects → SSE text
+- `rewriteStream`: Intercepts/modifies stream data (agent tool calls)
 
-The server uses custom Transform streams to handle Server-Sent Events:
-- `SSEParserTransform`: Parses SSE text stream into event objects
-- `SSESerializerTransform`: Serializes event objects into SSE text stream
-- `rewriteStream`: Intercepts and modifies stream data (for agent tool calls)
+### Health & Fallback (`packages/core/src/services/provider-health.ts`)
 
-### 5. Configuration Management
+Health states: `closed` (healthy) → `open` (failed, auto-skip) → `half-open` (recovering). After 3 consecutive failures, model enters `open` state. Fallback promotion temporarily "promotes" a working fallback model (TTL 10 min). Auto-recovery probe runs every 5 minutes.
 
-Configuration file location: `~/.claude-code-router/config.json`
+### Configuration (`packages/core/src/ccr/config.ts`)
 
-Key features:
-- Supports environment variable interpolation (`$VAR_NAME` or `${VAR_NAME}`)
-- JSON5 format (supports comments)
-- Automatic backups (keeps last 3 backups)
-- Hot reload requires service restart (`ccr restart`)
+Location: `~/.claude-code-router/config.json` (JSON5 with env var interpolation `$VAR_NAME`/`${VAR_NAME}`). Automatic backups (last 3). Hot reload requires `ccr restart`.
 
-Configuration validation:
-- If `Providers` are configured, both `HOST` and `APIKEY` must be set
-- Otherwise listens on `0.0.0.0` without authentication
+### Logging
 
-### 6. Logging System
+Two systems:
+- **Server-level** (pino): `~/.claude-code-router/logs/ccr-*.log` — HTTP requests, API calls
+- **Application-level**: `~/.claude-code-router/claude-code-router.log` — routing decisions, business logic
 
-Two separate logging systems:
+### Client Adapters (`packages/core/src/clients/adapters.ts`)
 
-**Server-level logs** (pino):
-- Location: `~/.claude-code-router/logs/ccr-*.log`
-- Content: HTTP requests, API calls, server events
-- Configuration: `LOG_LEVEL` (fatal/error/warn/info/debug/trace)
+Runtime adapter layer that normalizes differences between Claude Code, Codex, pi, qwen-code, and opencode clients. Each adapter defines `transformRequest`, `transformResponse`, and `usageScope`.
 
-**Application-level logs**:
-- Location: `~/.claude-code-router/claude-code-router.log`
-- Content: Routing decisions, business logic events
+### Services (`packages/core/src/services/`)
+
+Key services: `ConfigService`, `ProviderService`, `TransformerService`, `TokenizerService`, `ActiveProbeService` (health/quota probing), `ProxyService` (per-provider proxy control), `RateLimitService`, `QuotaStore`.
 
 ## Subagent Routing
 
@@ -102,118 +134,49 @@ Please help me analyze this code...
 
 ## Preset System
 
-The preset system allows users to save, share, and reuse configurations easily.
-
-### Preset Structure
-
-Presets are stored in `~/.claude-code-router/presets/<preset-name>/manifest.json`
-
-Each preset contains:
-- **Metadata**: name, version, description, author, keywords, etc.
-- **Configuration**: Providers, Router, transformers, and other settings
-- **Dynamic Schema** (optional): Input fields for collecting required information during installation
-- **Required Inputs** (optional): Fields that need to be filled during installation (e.g., API keys)
-
-### Core Functions
-
-Located in `packages/shared/src/preset/`:
-
-- **export.ts**: Export current configuration as a preset directory
-  - `exportPreset(presetName, config, options)`: Creates preset directory with manifest.json
-  - Automatically sanitizes sensitive data (api_key fields become `{{field}}` placeholders)
-
-- **install.ts**: Install and manage presets
-  - `installPreset(preset, config, options)`: Install preset to config
-  - `loadPreset(source)`: Load preset from directory
-  - `listPresets()`: List all installed presets
-  - `isPresetInstalled(presetName)`: Check if preset is installed
-  - `validatePreset(preset)`: Validate preset structure
-
-- **merge.ts**: Merge preset configuration with existing config
-  - Handles conflicts using different strategies (ask, overwrite, merge, skip)
-
-- **sensitiveFields.ts**: Identify and sanitize sensitive fields
-  - Detects api_key, password, secret fields automatically
-  - Replaces sensitive values with environment variable placeholders
-
-### Preset File Format
-
-**manifest.json** (in preset directory):
-```json
-{
-  "name": "my-preset",
-  "version": "1.0.0",
-  "description": "My configuration",
-  "author": "Author Name",
-  "keywords": ["openai", "production"],
-  "Providers": [...],
-  "Router": {...},
-  "schema": [
-    {
-      "id": "apiKey",
-      "type": "password",
-      "label": "OpenAI API Key",
-      "prompt": "Enter your OpenAI API key"
-    }
-  ]
-}
-```
-
-### CLI Integration
-
-The CLI layer (`packages/cli/src/utils/preset/`) handles:
-- User interaction and prompts
-- File operations
-- Display formatting
-
-Key files:
-- `commands.ts`: Command handlers for `ccr preset` subcommands
-- `export.ts`: CLI wrapper for export functionality
-- `install.ts`: CLI wrapper for install functionality
+Presets stored in `~/.claude-code-router/presets/<preset-name>/manifest.json`. Core logic in `packages/shared/src/preset/` (export, install, merge, sensitiveFields, schema). CLI wrappers in `packages/cli/src/utils/preset/`.
 
 ## Development Notes
 
-1. **CCR service management**: Always use `ccr restart` instead of `ccr stop` followed by `ccr start`. Stopping the service interrupts all active LLM routing, making the current Claude Code session unusable. Restarting minimizes downtime.
-2. **Node.js version**: Requires >= 18.0.0
-2. **Package manager**: Uses pnpm (monorepo depends on workspace protocol)
-3. **TypeScript**: All packages use TypeScript, but UI package is ESM module
-4. **Build tools**:
-   - cli/server/shared: esbuild
-   - ui: Vite + TypeScript
-5. **@wengine-ai/llms**: This is an external dependency package providing the core server framework and transformer functionality, type definitions in `packages/server/src/types.d.ts`
-6. **Code comments**: All comments in code MUST be written in English
-7. **Documentation**: When implementing new features, add documentation to the docs project instead of creating standalone md files
+1. **CCR service management**: Always use `ccr restart` instead of `ccr stop` + `ccr start`. Stopping interrupts all active LLM routing.
+2. **Node.js version**: Requires >= 20.0.0
+3. **Package manager**: pnpm (workspace protocol for inter-package deps)
+4. **TypeScript**: All packages use TS; UI is ESM module. Shared tsconfig at `tsconfig.base.json` (target ES2022, module CommonJS).
+5. **Path alias `@/`**: Maps to `src/` in both `core` (via esbuild plugin) and `ui` (via Vite resolve alias).
+6. **Code comments**: All comments MUST be written in English.
+7. **Documentation**: Add to `docs/` project, not standalone md files.
+8. **No lint/format in CI**: Individual packages have lint scripts but they're not wired into CI. No unified format command.
+9. **`workspace:*` protocol**: Used for inter-package deps. Release script rewrites to real version ranges before publishing.
 
 ## Changelog & Release Notes Convention
 
-When releasing a new version, keep changelog records in three places consistent:
+Three places must stay consistent:
 
-1. **`CHANGELOG.md`**: The complete, detailed changelog (Keep a Changelog style, `Added`/`Changed`/`Fixed`). Every released version is recorded here permanently — never trim it.
-2. **`README.md` / `README_en.md` changelog tables**: A bilingual, concise release-summary table that keeps **only the latest 10 versions**. Add the new version as the top row when releasing.
-3. **`CHANGELOG-archive.md`**: When a README table would exceed 10 versions, move the oldest summary rows out of the README and into this archive (it has a `中文` section and an `English` section mirroring the two READMEs). This file holds the overflow summaries only; the full history still lives in `CHANGELOG.md`.
+1. **`CHANGELOG.md`**: Complete, detailed changelog (Keep a Changelog style). Every version recorded permanently — never trim.
+2. **`README.md` / `README_en.md` changelog tables**: Bilingual summary, keeps **only latest 10 versions**.
+3. **`CHANGELOG-archive.md`**: Overflow when README exceeds 10 rows.
 
-Release checklist: bump the `version` in all 6 `package.json` files (root + 5 packages) to the same value, prepend a new section to `CHANGELOG.md`, add the new top row to both README tables, and if either table now exceeds 10 rows move the oldest rows into `CHANGELOG-archive.md`.
+**Release checklist**: Bump `version` in all 6 `package.json` files (root + 5 packages) to same value, prepend section to `CHANGELOG.md`, add top row to both README tables, move oldest to archive if >10 rows.
 
-**Automated gate**: `scripts/release.sh` runs `validate_release_docs` before publishing anything (all modes, including dry-run). It aborts the release unless: all 6 `package.json` versions equal the version being released, `CHANGELOG.md` has a non-empty `## [<version>]` section, both README tables have a `| **v<version>** |` row, and the version is strictly greater than the latest published on npm (numeric per-segment compare; skipped with a warning if the registry is unreachable).
+**Automated gate**: `scripts/release.sh` validates before publishing (including dry-run): all 6 versions match, CHANGELOG has section, READMEs have row, version > npm latest (numeric compare).
 
 ### Version numbering
 
-Daily/minor iterations may extend the patch segment with an extra digit (e.g. `2.3.23` → `2.3.231` → `2.3.232`) to keep headline version numbers from inflating. Rules (enforced by the release gate's monotonic check):
-
-- Patch segments compare **numerically**, so once a `2.3.23x` version ships, `2.3.24` would be a downgrade (`24 < 231`) and is rejected. The next "feature" version after `2.3.23x` is `2.3.240` (then `2.3.241`… for its dailies), or bump the minor to `2.4.0` for a clean number.
-- Stable releases must never carry a pre-release suffix. Pre-release validation versions (`2.3.x-beta.0`, published manually with `npm publish --tag beta`) must NOT go through `scripts/release.sh`: both the release gate and the CLI's update check (`compareVersions` in `packages/cli/src/utils/update.ts`) do plain numeric segment comparison and do not understand suffixes.
+Daily iterations extend patch segment with extra digit (`2.3.23` → `2.3.231` → `2.3.232`). Patch compares numerically, so `2.3.24` after `2.3.231` is a downgrade and rejected. Next feature version: `2.3.240` or `2.4.0`. Stable releases must not carry pre-release suffixes.
 
 ## Update System & API Conventions
 
-- The UI `ApiClient` in `packages/ui/src/lib/api.ts` uses `/api` as its `baseUrl`. Endpoint arguments must be relative paths such as `/update/check` and `/update/perform`; adding another `/api` prefix creates `/api/api/...` and returns 404.
-- The CLI registers the update routes as `GET /api/update/check` and `POST /api/update/perform` in `packages/cli/src/utils/index.ts`. Any new update endpoint must be verified against both the server route and the UI client's final URL.
-- `checkForUpdates` must return a non-empty changelog whenever a newer version is available. It reads the target version summary from the published npm package README first and falls back to the GitHub `CHANGELOG.md`; changes to npm package `files` or README changelog formatting must preserve this data path.
-- After changing update or release logic, verify end to end: update checking reports `hasUpdate` with a non-empty changelog, the update action reaches the server with HTTP 200 rather than 404, and the UI dialog renders actual release content instead of only the fallback "no changelog available" message.
-- `packages/cli/README.md` and `packages/core/README.md` are release-time copies generated by `scripts/release.sh` from the root `README.md`. Treat the root `README.md` and `CHANGELOG.md` as the source of truth and do not include generated README copies in release commits.
+- UI `ApiClient` (`packages/ui/src/lib/api.ts`) uses `/api` as `baseUrl`. Endpoint args must be relative (`/update/check`, not `/api/update/check`).
+- CLI registers update routes as `GET /api/update/check` and `POST /api/update/perform` in `packages/cli/src/utils/index.ts`.
+- `checkForUpdates` must return non-empty changelog when newer version available (reads from published npm README, falls back to GitHub CHANGELOG.md).
+- `packages/cli/README.md` and `packages/core/README.md` are release-time copies generated by `scripts/release.sh`. Treat root `README.md` and `CHANGELOG.md` as source of truth.
 
-## Agent Workflow
-- **Parallel execution**: For development tasks, default to dispatching multiple developer subAgents in parallel (e.g., `voltagent-core-dev:backend-developer`, `voltagent-lang:java-architect`) to maximize efficiency
-- After code completion: call `code-reviewer` for review
-- For security-sensitive code: call `security-auditor`
-- For core architecture changes: call `architect-reviewer`
+## .mimocode Directory
 
+The `.mimocode/` directory contains configuration for the mimocode AI assistant plugin (`@mimo-ai/plugin`). It is not part of the application source.
+
+**Contents:**
+- `command/create-agents-md.md` — Command template for generating/updating `AGENTS.md`. Describes the investigation methodology (read manifests → build config → CI workflows → existing instruction files → representative code) and writing rules (high-signal, repo-specific only; exclude generic advice).
+- `plans/1784703009846-clever-star.md` — A draft implementation plan for **Named Configuration Profiles** (multi-profile support with `ccr profile` CLI commands, per-profile `CCR_CONFIG_DIR` isolation, concurrent server execution on different ports). This feature has **not been implemented** yet.
+- `.cron-lock` — Tracks a running mimocode cron process (PID + start time).
+- `package.json` — Declares `@mimo-ai/plugin` dependency.

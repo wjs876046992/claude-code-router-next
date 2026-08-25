@@ -12,3 +12,4 @@ tmp/
 # Documentation build output
 docs/build
 docs/.docusaurus
+.mimocode/
