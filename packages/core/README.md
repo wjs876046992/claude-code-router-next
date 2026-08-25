@@ -93,7 +93,7 @@ npm install -g @wengine-ai/claude-code-router-next@latest && ccr restart
 
 | 版本 | 发布内容 |
 | --- | --- |
-| **v2.3.2401** | <ul><li>**formatResponse SSE 识别放宽**: 之前仅对 `application/json` 头 peek,上游用非标准 Content-Type(`text/plain`/空)返回 SSE 仍会报 non-JSON;现对任何非流式响应都先 peek 判 SSE。</li></ul> |
+| **v2.3.2402** | <ul><li>**formatResponse SSE 识别放宽**: 之前仅对 `application/json` 头 peek,上游用非标准 Content-Type(`text/plain`/空)返回 SSE 仍会报 non-JSON;现对任何非流式响应都先 peek 判 SSE。</li></ul> |
 | **v2.3.2400** | <ul><li>**SSE 误标 JSON 的多层彻底修复**: v2.3.2397–2399 只看首个 chunk,遇空首块/心跳(`: ping`)/分片(`ev`/`ent:`)仍误判报错;现改为累积多 chunk 判定,并统一修复 formatResponse、两个 transformer、hidden-error-check 与 validateStreamingResponse 四处,误标 SSE 全部按流式透传。</li></ul> |
 | **v2.3.2399** | <ul><li>**bypass 模式下 SSE 误标 application/json 兜底修复**: bypass 的 provider 跳过 transformer 链后，SSE body + JSON 头的响应直达 formatResponse 仍会抛 non-JSON；现在 formatResponse 先 peek body 实际内容，SSE 按流式透传，作为该问题的最后一层兜底。</li></ul> |
 | **v2.3.2398** | <ul><li>**修复 Codex 中转 SSE 被误标 application/json 时丢失内容**: 补齐 v2.3.2397 漏掉的 `OpenAIResponsesTransformer` 同类问题——上游返回 SSE body 但 Content-Type 标 `application/json` 时不再抛 `non-JSON` 错误，改为 peek body 实际内容后按 SSE 透传。</li></ul> |
