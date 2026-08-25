@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [2.3.2401] - 2026-08-25
+
+### Fixed
+
+- **formatResponse SSE 识别条件放宽至所有非流式响应**: 之前 peek 仅在 Content-Type 含 `application/json` 时触发,导致上游用非标准 Content-Type(如 `text/plain`、空 Content-Type)返回的 SSE body 绕过 peek、直接走 JSON 解析抛 `non-JSON` 错误。现在对任何 `!isStream` 响应都先 peek 判 SSE,覆盖 codex 中转及各类网关返回非标准头带 SSE body 的形态。隔离实例验证 `text/plain` Content-Type + SSE body(stream:true/false)全部 HTTP 200 透传、0 错误。
+
 ## [2.3.2400] - 2026-08-25
 
 ### Fixed

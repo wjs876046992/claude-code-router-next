@@ -1298,17 +1298,18 @@ async function formatResponse(response: any, reply: FastifyReply, _body: any, fa
   let isStream = isEventStreamResponse(response);
 
   // Bypass-mode providers skip the transformer chain entirely, so a body that
-  // is actually SSE but labeled application/json (Codex relay) reaches this
-  // point uncorrected and would fail JSON parse below. Peek the first
-  // meaningful content: when it looks like SSE, stream it through instead.
+  // is actually SSE but mislabeled (Codex relay labels it application/json, and
+  // some relays return a non-standard Content-Type like text/plain or an empty
+  // one with an SSE body) reaches this point uncorrected and would fail JSON
+  // parse below. Peek the first meaningful content for ANY non-stream
+  // response: when it looks like SSE, stream it through instead. Restricting
+  // the peek to application/json left non-standard Content-Types hitting the
+  // JSON parse path and throwing "non-JSON response" on a healthy SSE body.
   // The peek accumulates across chunks because the first event may be split,
   // or preceded by an empty buffer / SSE heartbeat (": ping") before the real
   // "event:"/"data:" line — a single read would miss it and misclassify the
   // body as JSON.
-  if (
-    !isStream &&
-    (response.headers?.get?.("Content-Type") || "").includes("application/json")
-  ) {
+  if (!isStream) {
     const peeked = await peekBodyForSSE(response);
     if (peeked) {
       if (peeked.isSSE) {
