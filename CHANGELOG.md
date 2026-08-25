@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [2.3.2399] - 2026-08-25
+
+### Fixed
+
+- **bypass 模式下 SSE 响应误标 application/json 时不再报错（formatResponse 兜底）**: v2.3.2397/2398 分别修复了 `AnthropicTransformer` 与 `OpenAIResponsesTransformer` 的同类问题，但 bypass 模式的 provider（单一 transformer 与主 transformer 匹配，如 codex 的 `["Anthropic"]`）会跳过整条 transformer 链，SSE body + `application/json` 头的响应直达 `formatResponse`，仍按 Content-Type 走 JSON 解析并抛 `non-JSON` 错误。现在 `formatResponse` 在非流式分支先 peek 首块：body 实际为 SSE 时按流式透传；真 JSON 则恢复未读 body 照常解析。这是该问题的最后一层兜底，覆盖所有 provider 形态。
+
 ## [2.3.2398] - 2026-08-25
 
 ### Fixed

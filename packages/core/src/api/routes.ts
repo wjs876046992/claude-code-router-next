@@ -1250,7 +1250,7 @@ async function processResponseTransformers(
  * Format and return response
  * Handle HTTP status codes, format streaming and regular responses
  */
-function formatResponse(response: any, reply: FastifyReply, _body: any, fastify?: FastifyInstance) {
+async function formatResponse(response: any, reply: FastifyReply, _body: any, fastify?: FastifyInstance) {
   // Set HTTP status code
   if (!response.ok) {
     reply.code(response.status);
@@ -1260,7 +1260,48 @@ function formatResponse(response: any, reply: FastifyReply, _body: any, fastify?
   // request body: some providers answer a stream:true request with a JSON
   // error body, or answer a non-stream request with an SSE payload (e.g.
   // OpenRouter error responses starting with ": OPENROUTER PROCESSING").
-  const isStream = isEventStreamResponse(response);
+  let isStream = isEventStreamResponse(response);
+
+  // Bypass-mode providers skip the transformer chain entirely, so a body that
+  // is actually SSE but labeled application/json (Codex relay) reaches this
+  // point uncorrected and would fail JSON parse below. Peek the first chunk:
+  // when it looks like SSE, stream it through instead.
+  if (
+    !isStream &&
+    response.body &&
+    !response.body.locked &&
+    (response.headers?.get?.("Content-Type") || "").includes("application/json")
+  ) {
+    const [peek, body] = response.body.tee();
+    const reader = peek.getReader();
+    let firstChunk = "";
+    try {
+      const { value, done } = await reader.read();
+      if (!done && value) {
+        firstChunk = new TextDecoder().decode(value);
+      }
+    } finally {
+      reader.releaseLock();
+    }
+    peek.cancel().catch(() => {});
+
+    if (/^\s*(event:|data:|:\s*[A-Z])/m.test(firstChunk)) {
+      isStream = true;
+      response = new Response(body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+      });
+    } else {
+      // Genuine JSON — put the unread body back for parsing below.
+      response = new Response(body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+      });
+    }
+  }
+
   if (isStream) {
     reply.header("Content-Type", "text/event-stream");
     reply.header("Cache-Control", "no-cache");
