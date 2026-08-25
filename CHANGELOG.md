@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [2.3.2398] - 2026-08-25
+
+### Fixed
+
+- **Codex 中转 SSE 响应误标 application/json 时不再丢失内容**: v2.3.2397 修复了 `AnthropicTransformer.transformResponseIn` 的同类问题，但 `OpenAIResponsesTransformer.transformResponseOut`（codex 客户端场景必经）仍只按 Content-Type 判断——上游（如 Codex 中转）返回 SSE body 却标 `application/json` 时，走进 JSON 分支抛 `Upstream returned a non-JSON response (HTTP 200): event: message_start...`，客户端拿到空响应。现在该 transformer 入口先 peek 首块：body 实际为 SSE（`event:`/`data:`/`: ` 行首）时重建为 `text/event-stream` 并走原有 SSE 分支；真 JSON 则恢复未读 body 照常解析。行首匹配不影响含 `event` 字段的正常 JSON。
+
 ## [2.3.2397] - 2026-08-24
 
 ### Fixed
