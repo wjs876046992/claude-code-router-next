@@ -1,5 +1,6 @@
 import { UnifiedChatRequest } from "../types/llm";
 import { Transformer } from "../types/transformer";
+import { parseResponseJson } from "./response-body";
 
 export class TooluseTransformer implements Transformer {
   name = "tooluse";
@@ -41,7 +42,7 @@ Examples:
 
   async transformResponseOut(response: Response): Promise<Response> {
     if (response.headers.get("Content-Type")?.includes("application/json")) {
-      const jsonResponse = await response.json();
+      const jsonResponse = await parseResponseJson(response);
       if (
         jsonResponse?.choices?.[0]?.message.tool_calls?.length &&
         jsonResponse?.choices?.[0]?.message.tool_calls[0]?.function?.name ===

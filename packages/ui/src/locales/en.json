@@ -173,7 +173,8 @@
     "proxy_tooltip_global": "Global proxy is on; turn it off to configure per-provider",
     "proxy_tooltip_no_url": "Configure a proxy URL in General settings first",
     "proxy_tooltip_on": "Proxy enabled",
-    "proxy_tooltip_off": "Direct (proxy disabled)"
+    "proxy_tooltip_off": "Direct (proxy disabled)",
+    "edit_parameter": "Edit parameter"
   },
   "router": {
     "title": "Router",

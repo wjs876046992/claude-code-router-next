@@ -1,5 +1,10 @@
 import { UnifiedChatRequest, MessageContent } from "@/types/llm";
 import { Transformer } from "@/types/transformer";
+import {
+  parseResponseJson,
+  peekBodyForSSE,
+  readBodyForSSE,
+} from "./response-body";
 
 interface ResponsesAPIOutputItem {
   type: string;
@@ -268,8 +273,48 @@ export class OpenAIResponsesTransformer implements Transformer {
   async transformResponseOut(response: Response): Promise<Response> {
     const contentType = response.headers.get("Content-Type") || "";
 
+    // Some upstreams (Codex relay) label an SSE body with an application/json
+    // Content-Type. Peek the first meaningful content: when the body actually
+    // looks like SSE, re-dispatch as a stream so the SSE pass-through below
+    // handles it, instead of failing JSON parse with "Upstream returned a
+    // non-JSON response". The peek accumulates across chunks because the first
+    // event may be split, or preceded by an empty buffer / SSE heartbeat.
     if (contentType.includes("application/json")) {
-      const jsonResponse: any = await response.json();
+      const peeked = await peekBodyForSSE(response);
+      if (peeked?.isSSE && peeked.body) {
+        // Body is SSE mislabeled as JSON — rebuild with the untouched tee'd
+        // body (first chunk still in it) and a corrected Content-Type, then
+        // recurse once into this method to take the SSE path.
+        const rebuilt = new Response(peeked.body, {
+          status: response.status,
+          statusText: response.statusText,
+          headers: new Headers({
+            ...Object.fromEntries(response.headers.entries()),
+            "content-type": "text/event-stream",
+          }),
+        });
+        return this.transformResponseOut(rebuilt);
+      }
+      if (peeked?.body) {
+        // Genuine JSON (or at least not SSE) — put the unread body back.
+        response = new Response(peeked.body, {
+          status: response.status,
+          statusText: response.statusText,
+          headers: response.headers,
+        });
+      } else if (peeked === null) {
+        // Body absent or locked so tee-peek is impossible — drain as text and
+        // reclassify; a locked-body SSE mislabel still needs the SSE path.
+        const drained = await readBodyForSSE(response);
+        if (drained.isSSE) {
+          return this.transformResponseOut(drained.response);
+        }
+        response = drained.response;
+      }
+    }
+
+    if (contentType.includes("application/json")) {
+      const jsonResponse: any = await parseResponseJson(response);
 
       // Check if this is a Responses API format JSON response from an upstream
       // provider that natively speaks the Responses API (e.g. OpenAI o-series).
@@ -827,7 +872,7 @@ export class OpenAIResponsesTransformer implements Transformer {
     }
     // Non-stream: assume OpenAI Chat JSON → wrap in Responses API shape
     try {
-      const json = await response.json();
+      const json = await parseResponseJson(response);
       return new Response(JSON.stringify(this.wrapChatInResponses(json)), {
         headers: { "Content-Type": "application/json" },
       });

@@ -4,6 +4,72 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [2.3.2402] - 2026-08-25
+
+### Fixed
+
+- **formatResponse SSE 识别条件放宽至所有非流式响应**: 之前 peek 仅在 Content-Type 含 `application/json` 时触发,导致上游用非标准 Content-Type(如 `text/plain`、空 Content-Type)返回的 SSE body 绕过 peek、直接走 JSON 解析抛 `non-JSON` 错误。现在对任何 `!isStream` 响应都先 peek 判 SSE,覆盖 codex 中转及各类网关返回非标准头带 SSE body 的形态。隔离实例验证 `text/plain` Content-Type + SSE body(stream:true/false)全部 HTTP 200 透传、0 错误。
+
+## [2.3.2400] - 2026-08-25
+
+### Fixed
+
+- **SSE 误标 application/json 的多层彻底修复(心跳/分片/空首块)**: v2.3.2397–2399 修复了 `AnthropicTransformer`、`OpenAIResponsesTransformer` 与 `formatResponse` 对 SSE body 标 JSON 头的识别,但三层校验都依赖"单次 read 首 chunk"判断。当上游首块是空 buffer、SSE 注释心跳(`: ping`)或分片(`ev`|`ent:`)时,SSE 识别失败,响应被误当 JSON 处理仍报 `non-JSON`/`malformed` 错误。本次将识别逻辑改为**累积多 chunk 再判定**(最多 8 次读取),并新增 `peekBodyForSSE`/`readBodyForSSE`/`looksLikeSSE` 共享工具,统一应用于: (1) `formatResponse` 兜底;(2) 两个 transformer 的 peek;(3) `sendRequestToProvider` 的 hidden-error-check(之前会把误标 SSE 的 200 响应 JSON.parse 失败误判为"empty or malformed response" 抛 400);(4) `validateStreamingResponse` 的 SSE data-lines 校验(之前首块只有心跳时误判"no SSE data lines"抛 400)。隔离实例 + mock(空首块/心跳/分片三种形态,stream:true/false 两种请求)端到端验证全部 HTTP 200 + SSE 完整透传,0 错误。
+
+## [2.3.2399] - 2026-08-25
+
+### Fixed
+
+- **bypass 模式下 SSE 响应误标 application/json 时不再报错（formatResponse 兜底）**: v2.3.2397/2398 分别修复了 `AnthropicTransformer` 与 `OpenAIResponsesTransformer` 的同类问题，但 bypass 模式的 provider（单一 transformer 与主 transformer 匹配，如 codex 的 `["Anthropic"]`）会跳过整条 transformer 链，SSE body + `application/json` 头的响应直达 `formatResponse`，仍按 Content-Type 走 JSON 解析并抛 `non-JSON` 错误。现在 `formatResponse` 在非流式分支先 peek 首块：body 实际为 SSE 时按流式透传；真 JSON 则恢复未读 body 照常解析。这是该问题的最后一层兜底，覆盖所有 provider 形态。
+
+## [2.3.2398] - 2026-08-25
+
+### Fixed
+
+- **Codex 中转 SSE 响应误标 application/json 时不再丢失内容**: v2.3.2397 修复了 `AnthropicTransformer.transformResponseIn` 的同类问题，但 `OpenAIResponsesTransformer.transformResponseOut`（codex 客户端场景必经）仍只按 Content-Type 判断——上游（如 Codex 中转）返回 SSE body 却标 `application/json` 时，走进 JSON 分支抛 `Upstream returned a non-JSON response (HTTP 200): event: message_start...`，客户端拿到空响应。现在该 transformer 入口先 peek 首块：body 实际为 SSE（`event:`/`data:`/`: ` 行首）时重建为 `text/event-stream` 并走原有 SSE 分支；真 JSON 则恢复未读 body 照常解析。行首匹配不影响含 `event` 字段的正常 JSON。
+
+## [2.3.2397] - 2026-08-24
+
+### Fixed
+
+- **Anthropic 兼容上游把 SSE 响应误标 application/json 时不再丢失内容**: 部分上游（Codex 中转、OpenRouter 错误响应）对流式请求返回的响应体实为 SSE（`event: message_start\ndata:...` 或 `: OPENROUTER PROCESSING`），却带 `application/json` Content-Type。`AnthropicTransformer.transformResponseIn` 此前仅按 Content-Type 判断流式，遇此情形走进非流式分支对 SSE 文本调 JSON 解析，抛出 `Upstream returned a non-JSON response` 并令客户端收到空响应或触发无谓 fallback。现在非流式分支先 peek 响应体首块，若实际以 `event:`/`data:`/`: ` 开头则按流式走 `convertOpenAIStreamToAnthropic`，仅在确为 JSON 时才解析；检测只匹配行首，不影响含 `event` 字段的正常 JSON 响应。
+
+## [2.3.2396] - 2026-08-24
+
+### Fixed
+
+- **OpenRouter 流式响应不再被错误当作 JSON 解析**: CCR 此前根据客户端请求里的 `stream` 判断最终响应类型，并在多个 transformer 的 `application/json` 分支直接调用 `response.json()`。当上游实际返回 SSE（例如以 `: OPENROUTER PROCESSING` 开头）或返回 Content-Type 与请求预期不一致的错误体时，会抛出无上下文的 `Unexpected token ':' ... is not valid JSON`。现在最终响应按实际 `Content-Type: text/event-stream` 判断流式转发；所有相关 transformer 使用统一的安全 JSON 解析器，兼容 BOM/首尾空白，并在非 JSON 响应时携带 HTTP 状态和截断后的原始 body 预览，方便定位真实上游错误。
+- **OpenCode Go 多轮 thinking 请求恢复完整缓存前缀**: `OpenCodeTransformer` 此前把上游 `reasoning_content` 转成 Claude Code 的 `thinking` 后，下一轮请求没有把历史 assistant `thinking.content`/`signature` 转回 `reasoning_content`/`reasoning_content_signature`，导致上游只能匹配到首个 thinking turn 之前的前缀（长会话常固定命中约 64k），并可能返回 `The reasoning_content in the thinking mode must be passed back to the API`。现在完整回放 reasoning 内容与签名，thinking 模式下无显式 reasoning 的 assistant tool-call 也补兼容占位值；直连同一 181,211-token 请求两次验证上游可命中 180,992 tokens（约 99.88%），证明问题位于 CCR 转换链而非上游限制。
+- **转换器自定义参数支持直接编辑**: Providers 页已有参数此前只能查看或删除，修改嵌套 JSON（如 `reasoning: {"enabled":true,"effort":"max"}`）必须删除后重新输入。现在 provider 级和 model 级参数行新增编辑按钮，点击后以 key/value 形式回填输入框；对象、数组、布尔和数字通过既有格式化/解析逻辑无损往返，同名 key 保存时覆盖原值。
+
+## [2.3.2395] - 2026-08-22
+
+### Fixed
+
+- **UI 转换器参数支持嵌套 JSON / 布尔 / 数字类型**: Providers 页的转换器参数值此前一律按字符串保存，导致结构化参数在 UI 里根本配不了——输入 `{"reasoning":{"enabled":true,"effort":"max"}}` 存进 config.json 的是字符串，`customparams` 的 deep merge 无法应用（已有对象字段被保留、`enabled` 仍是 false），强制 reasoning 的端点（如 OpenRouter `stealth/ox-alpha`）在 UI 配置后依旧 400。现在参数值按类型解析：`true`/`false` → 布尔、数字字面量 → 数字、`{`/`[` 开头 → JSON 解析（畸形 JSON 保留原字符串，不会静默损坏配置），其余保持字符串；参数回显改用 `formatParamValue`，对象不再显示 `[object Object]`。provider 级与 model 级共 5 处参数写入路径全部接入。
+
+## [2.3.2394] - 2026-08-21
+
+### Fixed
+
+- **严格项目路由：熔断目标改为照发请求而非 503**: 项目配置的目标进入 health fail-pool（连续 3 次失败熔断）后，严格项目模式此前直接拒绝请求（503 `model_unhealthy`），请求永远到不了供应商——会话陷入重试死循环，且熔断器因收不到真实请求记录成功而永不恢复。现在 `throwStrictProjectError` 判定诊断为 `model_unhealthy` 时（供应商与模型均真实存在、仅被熔断，属非配置错误），跳过健康检查重试项目自己配置的同一目标：上游真挂时客户端看到真实供应商错误，已恢复时成功请求经 `recordSuccess` 自然闭合熔断器。未更换任何模型、不逃逸项目边界，严格语义不变。配置错误类（`provider_not_found`/`provider_disabled`/`model_not_found`/`invalid_model_format`/`quota_exhausted`）仍照常拒绝。
+- **非流式请求的 TTFT 与 token 速率统计失真**: 非流式响应整包一次性返回，不存在可观测的首 token 时刻。此前 token-speed 插件把总时长记为非流式 TTFT，usage 落库时 decode 窗口（时长−TTFT）塌缩到 1 秒下限，导致每条非流式记录的 `tokens_per_second` 等于输出 token 总数（实测 109 秒的请求被记成 3674 tok/s），且假 TTFT 污染 `avgTtft` 聚合。现在非流式记录 TTFT 一律记 null（UI 显示 `-`），速率为输出 token 数 ÷ 总时长；`normalizeUsageRecord` 对 `stream=false` 记录强制剥离 TTFT（覆盖 jsonl 迁移等所有写入路径），`avgTtft` 仅聚合真实流式 TTFT。
+
+## [2.3.2393] - 2026-08-18
+
+### Fixed
+
+- **项目接管按项目 Router 计算上下文窗口，未启用扩展上下文时封顶 200k**: 项目级 Claude Code 接管此前写 `.claude/settings.local.json` 只读全局 Router 与全局 `ContextWindow`，从不参考项目自己的权威 Router。当全局默认 family 启用 `[1m]` 且 `ContextWindow > 200000`、而项目 Router 未启用扩展上下文时，项目仍带着 `[1m]` alias 与超过 200k 的 auto-compact 窗口；上下文超过 200k 后严格项目路由又不能逃逸到全局扩展模型，最终无可用模型。现在接管使用「全局连接/界面参数 + 项目 Router」的有效配置：默认 family（opus 优先，`enableFamilyRouting` 显式为 false 时忽略 family、回退顶层开关）或顶层 `enableExtendedContext` 未启用时，CCR 管理的 `CLAUDE_CODE_AUTO_COMPACT_WINDOW` 封顶为 `min(ContextWindow, 200000)`，启用时保留全局值；family 未启用扩展时同时移除陈旧 `[1m]` alias。用户手写的 divergent 窗口继续保留，`ccr-state.json` 管理与 `previousAutoCompactWindow` 审计行为不变。保存非空项目 Router（`PUT /api/projects/:id`）与全局配置保存（`syncGlobalProjectTakeovers`）现在都会刷新自定义 Router 项目的 Claude Code 接管，全局连接/上下文变更得以传递，且不把全局 Router 泄漏进项目、不扩大到 pi/qwen/opencode 的项目语义。
+- **opencode go 缓存命中从 0% 恢复（保留 cache_control + DeepSeek 风格用量映射）**: opencode zen 上游的提示词缓存以显式 `cache_control` 标记为前提（直连实测：无标记时 ~16k token 相同前缀连发永不缓存；带标记第 2 次起命中 15616/15885 ≈ 98%），而 `OpenCodeTransformer` 此前把所有 `cache_control` 剥除（依据「GLM/OpenAI 兼容 API 不支持该字段」，对 zen 后端不成立），导致上游永远收不到标记、永不缓存。现在 transformer 保留 `cache_control`，仅继续清理 Anthropic 特有的 `image_url.media_type`。同时 `AnthropicTransformer` 的用量映射在 `prompt_tokens_details.cached_tokens` 缺失时兜底读取 DeepSeek 风格的 `prompt_cache_hit_tokens`（流式 `message_delta` 合并与非流式 OpenAI→Anthropic 转换两处），DeepSeek 风格上游的缓存读取量得以正确计入 `cache_read_input_tokens`。
+
+## [2.3.2392] - 2026-08-08
+
+> 注：2.3.2391 发布时未重新构建，实际发出的是 2.3.239 的代码（缺少本修复、版本号错位，导致更新检查持续提示新版本）；此版本为正确重建后的重新发布。
+
+### Fixed
+
+- **用量按日统计按本地时区分组**: `byDay` 此前用 `substr(timestamp,1,10)` 取 UTC 日期，本地 0:00–8:00 的请求（UTC 仍是昨天）被归到前一天——表现为"过了零点后昨天的消耗还在涨、今天的偏少"。改用 `date(timestamp,'localtime')` 按进程时区分组。聚合在查询时实时计算，历史记录无需迁移即自动按本地日期重新归类。
+
 ## [2.3.239] - 2026-08-03
 
 ### Added

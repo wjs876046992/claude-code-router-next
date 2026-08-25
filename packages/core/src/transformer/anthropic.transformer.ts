@@ -13,6 +13,11 @@ import {
 import { v4 as uuidv4 } from "uuid";
 import { getThinkLevel } from "@/utils/thinking";
 import { createApiError } from "@/api/middleware";
+import {
+  parseResponseJson,
+  peekBodyForSSE,
+  readBodyForSSE,
+} from "./response-body";
 import { formatBase64 } from "@/utils/image";
 import { convertToAnthropic } from "@/utils/converter";
 
@@ -294,7 +299,56 @@ export class AnthropicTransformer implements Transformer {
         },
       });
     } else {
-      const data = (await response.json()) as any;
+      // Some upstreams (Codex relay, OpenRouter error responses) label an SSE
+      // body with an application/json Content-Type. Parse would throw on the
+      // leading "event:" / ": OPENROUTER PROCESSING" line. Peek the body: if it
+      // actually looks like an SSE stream, route it through the stream
+      // converter instead of failing.
+      const peeked = await peekBodyForSSE(response);
+      const bodyIsSSE = peeked?.isSSE ?? false;
+      if (bodyIsSSE && peeked?.body) {
+        const convertedStream = await this.convertOpenAIStreamToAnthropic(
+          peeked.body,
+          context!
+        );
+        return new Response(convertedStream, {
+          headers: {
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            Connection: "keep-alive",
+          },
+        });
+      }
+      // Reconstruct a Response with the unread body so parseResponseJson can
+      // consume it (peek already drained the original body). When peek could
+      // not run (body absent/locked), drain the full body as text and
+      // reclassify — an SSE body mislabeled as JSON still needs the stream
+      // path in that case.
+      let textResponse: Response;
+      if (peeked?.body) {
+        textResponse = new Response(peeked.body, {
+          status: response.status,
+          statusText: response.statusText,
+          headers: response.headers,
+        });
+      } else {
+        const drained = await readBodyForSSE(response);
+        if (drained.isSSE) {
+          const convertedStream = await this.convertOpenAIStreamToAnthropic(
+            drained.response.body!,
+            context!
+          );
+          return new Response(convertedStream, {
+            headers: {
+              "Content-Type": "text/event-stream",
+              "Cache-Control": "no-cache",
+              Connection: "keep-alive",
+            },
+          });
+        }
+        textResponse = drained.response;
+      }
+      const data = (await parseResponseJson(textResponse)) as any;
       const anthropicResponse = this.convertOpenAIResponseToAnthropic(
         data,
         context!
@@ -567,7 +621,13 @@ export class AnthropicTransformer implements Transformer {
 
                 const choice = chunk.choices?.[0];
                 if (chunk.usage) {
-                  const cachedTokens = chunk.usage?.prompt_tokens_details?.cached_tokens || 0;
+                  // OpenAI-compatible upstreams report cache reads in either
+                  // prompt_tokens_details.cached_tokens or the DeepSeek-style
+                  // prompt_cache_hit_tokens; accept whichever is present.
+                  const cachedTokens =
+                    chunk.usage?.prompt_tokens_details?.cached_tokens ??
+                    chunk.usage?.prompt_cache_hit_tokens ??
+                    0;
                   const promptTokens = chunk.usage?.prompt_tokens || 0;
                   // Keep Anthropic protocol semantics for Claude Code: input_tokens is net of cache reads.
                   const inputTokens = promptTokens - cachedTokens;
@@ -1143,7 +1203,9 @@ export class AnthropicTransformer implements Transformer {
         });
       }
       const cachedTokens =
-        openaiResponse.usage?.prompt_tokens_details?.cached_tokens || 0;
+        openaiResponse.usage?.prompt_tokens_details?.cached_tokens ??
+        openaiResponse.usage?.prompt_cache_hit_tokens ??
+        0;
       const inputTokens =
         (openaiResponse.usage?.prompt_tokens || 0) - cachedTokens;
       const result = {
