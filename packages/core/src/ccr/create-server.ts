@@ -18,13 +18,13 @@
  * The CLI adds /api/restart, /api/update/* routes after this returns, then
  * calls server.start().
  */
-import { homedir } from "os";
 import { join } from "path";
 import Server from "../server";
 import { createStream } from "rotating-file-stream";
 import {
   CONFIG_FILE,
   HOME_DIR,
+  LOGS_DIR,
   listPresets,
 } from "@wengine-ai/claude-code-router-shared";
 import { initializeClaudeConfig } from "./claude-config-init";
@@ -90,7 +90,7 @@ export async function createCcrServer(options: CcrRunOptions = {}) {
     const hour = pad(date.getHours());
     const minute = pad(date.getMinutes());
 
-    return `./logs/ccr-${month}${day}${hour}${minute}${pad(date.getSeconds())}${index ? `_${index}` : ''}.log`;
+    return `./ccr-${month}${day}${hour}${minute}${pad(date.getSeconds())}${index ? `_${index}` : ''}.log`;
   };
 
   let loggerConfig: any;
@@ -117,7 +117,7 @@ export async function createCcrServer(options: CcrRunOptions = {}) {
       loggerConfig = {
         level: config.LOG_LEVEL || "error",
         stream: createStream(generator, {
-          path: HOME_DIR,
+          path: LOGS_DIR,
           interval: "1d",
           size: "50M",
           compress: false,
@@ -138,11 +138,7 @@ export async function createCcrServer(options: CcrRunOptions = {}) {
       providers: config.Providers || config.providers,
       HOST: HOST,
       PORT: servicePort,
-      LOG_FILE: join(
-        homedir(),
-        ".claude-code-router",
-        "claude-code-router.log"
-      ),
+      LOG_FILE: join(LOGS_DIR, "claude-code-router.log"),
     },
     logger: loggerConfig,
   });

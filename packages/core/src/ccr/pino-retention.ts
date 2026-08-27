@@ -5,14 +5,14 @@
  */
 import { existsSync, readdirSync, statSync, unlinkSync } from "fs";
 import { join } from "path";
-import { HOME_DIR } from "@wengine-ai/claude-code-router-shared";
+import { LOGS_DIR } from "@wengine-ai/claude-code-router-shared";
 
 const LOG_RETENTION_DAYS = 7;
 const LOG_RETENTION_MS = LOG_RETENTION_DAYS * 24 * 60 * 60 * 1000;
 const LOG_RETENTION_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 let pinoLogRetentionStarted = false;
 
-function pruneOldPinoLogs(logDir = join(HOME_DIR, "logs")): void {
+function pruneOldPinoLogs(logDir = LOGS_DIR): void {
   try {
     if (!existsSync(logDir)) return;
 

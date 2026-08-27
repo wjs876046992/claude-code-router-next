@@ -21,7 +21,6 @@ import { join, isAbsolute, normalize, dirname } from "path";
 import { fileURLToPath } from "url";
 import fastifyStatic from "@fastify/static";
 import { readdirSync, statSync, readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync, rmSync } from "fs";
-import { homedir } from "os";
 import {
   getPresetDir,
   readManifestFromDir,
@@ -30,6 +29,7 @@ import {
   isPresetInstalled,
   extractPreset,
   HOME_DIR,
+  LOGS_DIR,
   loadConfigFromManifest,
   downloadPresetToTemp,
   findMarketPresetByName,
@@ -599,7 +599,7 @@ export async function registerAdminRoutes(server: any, config: any): Promise<any
   // Get log file list endpoint
   _app.get("/api/logs/files", async (req: any, reply: any) => {
     try {
-      const logDir = join(homedir(), ".claude-code-router", "logs");
+      const logDir = LOGS_DIR;
       const logFiles: Array<{ name: string; path: string; size: number; lastModified: string }> = [];
 
       if (existsSync(logDir)) {
@@ -641,7 +641,7 @@ export async function registerAdminRoutes(server: any, config: any): Promise<any
         logFilePath = filePath;
       } else {
         // If file path is not specified, use default log file path
-        logFilePath = join(homedir(), ".claude-code-router", "logs", "app.log");
+        logFilePath = join(LOGS_DIR, "app.log");
       }
 
       if (!existsSync(logFilePath)) {
@@ -669,7 +669,7 @@ export async function registerAdminRoutes(server: any, config: any): Promise<any
         logFilePath = filePath;
       } else {
         // If file path is not specified, use default log file path
-        logFilePath = join(homedir(), ".claude-code-router", "logs", "app.log");
+        logFilePath = join(LOGS_DIR, "app.log");
       }
 
       if (existsSync(logFilePath)) {

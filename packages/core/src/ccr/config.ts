@@ -12,6 +12,7 @@ import {
   CONFIG_FILE,
   HOME_DIR,
   PLUGINS_DIR,
+  LOGS_DIR,
 } from "@wengine-ai/claude-code-router-shared";
 
 // Function to interpolate environment variables in config values
@@ -45,7 +46,7 @@ const ensureDir = async (dir_path: string) => {
 export const initDir = async () => {
   await ensureDir(HOME_DIR);
   await ensureDir(PLUGINS_DIR);
-  await ensureDir(path.join(HOME_DIR, "logs"));
+  await ensureDir(LOGS_DIR);
 };
 
 // Read config file without env-var interpolation.

@@ -4,9 +4,15 @@ import os from "node:os";
 export const HOME_DIR = process.env.CCR_CONFIG_DIR
   || path.join(os.homedir(), ".claude-code-router");
 
+// Global base directory — always ~/.claude-code-router regardless of profile.
+// Used for cross-profile shared resources (logs, plugins).
+export const BASE_DIR = path.join(os.homedir(), ".claude-code-router");
+
 export const CONFIG_FILE = path.join(HOME_DIR, "config.json");
 
-export const PLUGINS_DIR = path.join(HOME_DIR, "plugins");
+// Logs and plugins are shared across all profiles.
+export const LOGS_DIR = path.join(BASE_DIR, "logs");
+export const PLUGINS_DIR = path.join(BASE_DIR, "plugins");
 
 export const PRESETS_DIR = path.join(HOME_DIR, "presets");
 
