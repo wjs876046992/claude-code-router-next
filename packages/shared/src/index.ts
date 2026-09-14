@@ -2,6 +2,7 @@ export * from "./constants";
 export * from "./client-integrations";
 export * from "./projectConfig";
 export * from "./profile";
+export * from "./self-provider";
 
 // Export preset-related functionality
 export * from './preset/types';

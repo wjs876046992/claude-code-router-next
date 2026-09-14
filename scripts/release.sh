@@ -96,6 +96,15 @@ require_npm_login() {
   fi
 }
 
+# True when <name>@<version> is already on the registry. An unreachable
+# registry reads as "not published" so a publish is still attempted, and an
+# empty version always reads as "not published".
+is_version_published() {
+  local name="$1" version="$2"
+  [ -n "$version" ] || return 1
+  [ "$(npm view "${name}@${version}" version 2>/dev/null)" = "$version" ]
+}
+
 # Pre-publish checklist gate: all package versions aligned, and the
 # changelog/README release notes for $VERSION are actually written.
 # Runs for every publish mode (npm/docker/all), including dry-run.
@@ -422,6 +431,11 @@ publish_shared_npm() {
   local SHARED_VERSION
   SHARED_VERSION=$(node -e "console.log(require(process.argv[1]).version)" "$SHARED_DIR/package.json")
 
+  if [ "$PUBLISH_DRY_RUN" != "1" ] && is_version_published "@wengine-ai/claude-code-router-shared" "$SHARED_VERSION"; then
+    echo "⏭️  @wengine-ai/claude-code-router-shared@${SHARED_VERSION} 已发布，跳过（断点续传）。"
+    return 0
+  fi
+
   validate_shared_dist "$SHARED_DIR"
   assert_no_workspace_in_manifest "$SHARED_DIR/package.json"
 
@@ -453,6 +467,11 @@ publish_core_npm() {
   local CORE_VERSION
   mkdir -p "$BACKUP_DIR"
   CORE_VERSION=$(node -e "console.log(require(process.argv[1]).version)" "$CORE_DIR/package.json")
+
+  if [ "$PUBLISH_DRY_RUN" != "1" ] && is_version_published "@wengine-ai/llms" "$CORE_VERSION"; then
+    echo "⏭️  @wengine-ai/llms@${CORE_VERSION} 已发布，跳过（断点续传）。"
+    return 0
+  fi
 
   cp "$ROOT_DIR/README.md" "$CORE_DIR/" 2>/dev/null || echo "README.md 不存在，跳过..."
   cp "$ROOT_DIR/LICENSE" "$CORE_DIR/" 2>/dev/null || echo "LICENSE 文件不存在，跳过..."
@@ -555,6 +574,11 @@ publish_npm() {
   echo "========================================="
 
   require_npm_login
+
+  if [ "$PUBLISH_DRY_RUN" != "1" ] && is_version_published "@wengine-ai/claude-code-router-next" "$VERSION"; then
+    echo "⏭️  @wengine-ai/claude-code-router-next@${VERSION} 已发布，跳过（断点续传）。"
+    return 0
+  fi
 
   local CLI_DIR="$ROOT_DIR/packages/cli"
   local BACKUP_DIR="$CLI_DIR/.backup"
