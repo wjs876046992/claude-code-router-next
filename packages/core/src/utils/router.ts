@@ -14,6 +14,7 @@ import { getHealthStore } from "../services/provider-health";
 import { getQuotaResult } from "../services/quota-store";
 import { getFallbackPromotionStore } from "./fallback-promotion";
 import { normalizeSessionId } from "./session-id";
+import { searchZcodeProjectBySession } from "./zcode-session-project";
 import { applyClientAdapter, type ClientContext } from "../clients/adapters";
 
 /**
@@ -213,11 +214,26 @@ const getProjectSpecificRouter = async (
     );
   }
 
-  const project = hasExplicitProject
+  let project = hasExplicitProject
     ? explicitProject
     : req.sessionId
       ? await searchProjectBySession(req.sessionId)
       : null;
+
+  // ZCode carries no project identity on the wire, so the Claude Code transcript
+  // lookup above always misses for it. Its local task index does map the session
+  // to the workspace it ran in, which resolves to the same project id — so a
+  // ZCode project uses the per-project Router configured for that directory,
+  // and falls back to the global Router when no project config exists.
+  if (
+    !project
+    && !hasExplicitProject
+    && req.clientType === "zcode"
+    && req.sessionId
+  ) {
+    project = await searchZcodeProjectBySession(req.sessionId);
+  }
+
   if (project) {
     req.projectId = project;
     const projectConfigPath = join(HOME_DIR, project, "config.json");

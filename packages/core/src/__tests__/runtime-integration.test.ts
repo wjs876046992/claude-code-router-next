@@ -1,6 +1,7 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   CCR_PROJECT_HEADER,
@@ -330,6 +331,151 @@ describe("runtime integration", () => {
     } finally {
       sessionUsageCache.delete("zcode:session:zcode-e2e");
       await server.app.close();
+    }
+  });
+
+  it("routes a ZCode session through the project Router resolved from its local task index", async () => {
+    const projectPath = mkdtempSync(join(tmpdir(), "ccr-runtime-zcode-project-"));
+    const zcodeDir = mkdtempSync(join(tmpdir(), "ccr-runtime-zcode-store-"));
+    const sessionId = "cccccccc-cccc-cccc-cccc-cccccccccccc";
+    const previousZcodeDir = process.env.CCR_ZCODE_DIR;
+
+    // ZCode's own store maps the session to the workspace it ran in; nothing
+    // about the project reaches CCR over the wire.
+    const storeDir = join(zcodeDir, "v2");
+    mkdirSync(storeDir, { recursive: true });
+    const taskIndex = new Database(join(storeDir, "tasks-index.sqlite"));
+    taskIndex.exec(
+      "CREATE TABLE tasks (workspace_key TEXT, workspace_path TEXT, task_id TEXT, acp_session_id TEXT, updated_at INTEGER)"
+    );
+    taskIndex
+      .prepare(
+        "INSERT INTO tasks (workspace_key, workspace_path, task_id, acp_session_id, updated_at) VALUES (?, ?, ?, ?, ?)"
+      )
+      .run("workspace-key", projectPath, `sess_${sessionId}`, null, 1);
+    taskIndex.close();
+    process.env.CCR_ZCODE_DIR = zcodeDir;
+
+    await writeProjectConfig(projectPath, {
+      Router: { default: "project,project-model", enableFamilyRouting: false },
+    });
+
+    globalThis.fetch = vi.fn(async (url: any, init: any) => {
+      fetchCalls.push({ url: String(url), body: init?.body });
+      return nonStreamResponse({ model: "project-model" });
+    }) as any;
+
+    let server: Awaited<ReturnType<typeof buildRuntime>>["server"] | undefined;
+    try {
+      ({ server } = await buildRuntime({
+        Providers: [
+          {
+            name: "global",
+            api_base_url: "https://upstream.example/v1/messages",
+            api_key: "global-key",
+            models: ["global-model"],
+          },
+          {
+            name: "project",
+            api_base_url: "https://upstream.example/v1/messages",
+            api_key: "project-key",
+            models: ["project-model"],
+          },
+        ],
+        Router: { default: "global,global-model", enableFamilyRouting: false },
+      }));
+
+      const res = await server.app.inject({
+        method: "POST",
+        url: "/v1/messages",
+        headers: {
+          "user-agent": "ZCode/3.11.2 ai-sdk/anthropic/2.0.0",
+          "x-zcode-app-version": "3.11.2",
+        },
+        payload: {
+          model: "ccr-opus",
+          messages: [{ role: "user", content: "hello" }],
+          metadata: { user_id: JSON.stringify({ session_id: sessionId }) },
+          stream: false,
+        },
+      });
+
+      if (res.statusCode !== 200) {
+        console.error("ZCODE-PROJECT-NON-200", res.statusCode, res.body.slice(0, 200));
+      }
+      expect(res.statusCode).toBe(200);
+      expect(fetchCalls).toHaveLength(1);
+      expect(fetchCalls[0].body).toContain('"model":"project-model"');
+    } finally {
+      if (server) await server.app.close();
+      if (previousZcodeDir === undefined) delete process.env.CCR_ZCODE_DIR;
+      else process.env.CCR_ZCODE_DIR = previousZcodeDir;
+      await deleteProjectConfig(projectPath);
+      rmSync(projectPath, { recursive: true, force: true });
+      rmSync(zcodeDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps a ZCode session on the global Router when its project has no config", async () => {
+    const projectPath = mkdtempSync(join(tmpdir(), "ccr-runtime-zcode-noconfig-"));
+    const zcodeDir = mkdtempSync(join(tmpdir(), "ccr-runtime-zcode-store-"));
+    const sessionId = "dddddddd-dddd-dddd-dddd-dddddddddddd";
+    const previousZcodeDir = process.env.CCR_ZCODE_DIR;
+
+    const storeDir = join(zcodeDir, "v2");
+    mkdirSync(storeDir, { recursive: true });
+    const taskIndex = new Database(join(storeDir, "tasks-index.sqlite"));
+    taskIndex.exec(
+      "CREATE TABLE tasks (workspace_key TEXT, workspace_path TEXT, task_id TEXT, acp_session_id TEXT, updated_at INTEGER)"
+    );
+    taskIndex
+      .prepare(
+        "INSERT INTO tasks (workspace_key, workspace_path, task_id, acp_session_id, updated_at) VALUES (?, ?, ?, ?, ?)"
+      )
+      .run("workspace-key", projectPath, `sess_${sessionId}`, null, 1);
+    taskIndex.close();
+    process.env.CCR_ZCODE_DIR = zcodeDir;
+
+    globalThis.fetch = vi.fn(async (url: any, init: any) => {
+      fetchCalls.push({ url: String(url), body: init?.body });
+      return nonStreamResponse({ model: "global-model" });
+    }) as any;
+
+    let server: Awaited<ReturnType<typeof buildRuntime>>["server"] | undefined;
+    try {
+      ({ server } = await buildRuntime({
+        Providers: [
+          {
+            name: "global",
+            api_base_url: "https://upstream.example/v1/messages",
+            api_key: "global-key",
+            models: ["global-model"],
+          },
+        ],
+        Router: { default: "global,global-model", enableFamilyRouting: false },
+      }));
+
+      const res = await server.app.inject({
+        method: "POST",
+        url: "/v1/messages",
+        headers: { "user-agent": "ZCode/3.11.2 ai-sdk/anthropic/2.0.0" },
+        payload: {
+          model: "ccr-opus",
+          messages: [{ role: "user", content: "hello" }],
+          metadata: { user_id: JSON.stringify({ session_id: sessionId }) },
+          stream: false,
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(fetchCalls).toHaveLength(1);
+      expect(fetchCalls[0].body).toContain('"model":"global-model"');
+    } finally {
+      if (server) await server.app.close();
+      if (previousZcodeDir === undefined) delete process.env.CCR_ZCODE_DIR;
+      else process.env.CCR_ZCODE_DIR = previousZcodeDir;
+      rmSync(projectPath, { recursive: true, force: true });
+      rmSync(zcodeDir, { recursive: true, force: true });
     }
   });
 
