@@ -354,3 +354,107 @@ describe("runtime integration", () => {
     }
   });
 });
+
+describe("anthropic effort egress", () => {
+  let originalFetch: typeof globalThis.fetch;
+  let fetchCalls: Array<{ url: string; body: any }>;
+
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+    fetchCalls = [];
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  // Drives one request through a real runtime and returns the JSON body the
+  // provider received. `extraProvider` lets a case opt out of the default
+  // level — without one the provider keeps a single-transformer chain, which
+  // CCR streams through untouched, so nothing would be converted at all.
+  async function sendToUpstream(
+    payload: Record<string, any>,
+    extraProvider: Record<string, any> = { default_thinking_level: "high" }
+  ) {
+    globalThis.fetch = vi.fn(async (url: any, init: any) => {
+      fetchCalls.push({ url: String(url), body: JSON.parse(String(init?.body)) });
+      return nonStreamResponse({ model: "glm-5.3" });
+    }) as any;
+
+    const { server } = await buildRuntime({
+      Providers: [
+        {
+          name: "glm",
+          api_base_url: "https://open.bigmodel.cn/api/anthropic/v1/messages",
+          api_key: "glm-key",
+          models: ["glm-5.3"],
+          transformer: { use: ["Anthropic"] },
+          ...extraProvider,
+        },
+      ],
+      Router: { default: "glm,glm-5.3", enableFamilyRouting: false },
+    });
+
+    try {
+      const res = await server.app.inject({
+        method: "POST",
+        url: "/v1/messages",
+        headers: { "x-anthropic-billing-header": "cc_version=9.9" },
+        payload: {
+          model: "ccr-opus",
+          max_tokens: 64000,
+          stream: false,
+          messages: [{ role: "user", content: "hello" }],
+          ...payload,
+        },
+      });
+      if (res.statusCode !== 200) {
+        console.error("NON-200", res.statusCode, res.body);
+      }
+      expect(res.statusCode).toBe(200);
+      expect(fetchCalls).toHaveLength(1);
+      return fetchCalls[0].body;
+    } finally {
+      await server.app.close();
+    }
+  }
+
+  it("emits the configured level as both budget and effort", async () => {
+    const body = await sendToUpstream({});
+    expect(body.model).toBe("glm-5.3");
+    expect(body.thinking).toEqual({ type: "enabled", budget_tokens: 16384 });
+    expect(body.output_config).toEqual({ effort: "high" });
+  });
+
+  it("leaves the max level on the budget alone", async () => {
+    const body = await sendToUpstream({}, { default_thinking_level: "max" });
+    expect(body.thinking).toEqual({ type: "enabled", budget_tokens: 32768 });
+    expect(body.output_config).toBeUndefined();
+  });
+
+  it("lets a client effort win over the configured default", async () => {
+    const body = await sendToUpstream({
+      thinking: { type: "adaptive" },
+      output_config: { effort: "low" },
+    });
+    expect(body.thinking).toEqual({ type: "enabled", budget_tokens: 1024 });
+    expect(body.output_config).toEqual({ effort: "low" });
+  });
+
+  it("keeps a client budget and derives the effort tier from it", async () => {
+    const body = await sendToUpstream({
+      thinking: { type: "enabled", budget_tokens: 20000 },
+    });
+    expect(body.thinking).toEqual({ type: "enabled", budget_tokens: 20000 });
+    expect(body.output_config).toBeUndefined();
+  });
+
+  it("streams single-transformer providers through untouched", async () => {
+    const body = await sendToUpstream(
+      { thinking: { type: "adaptive" }, output_config: { effort: "low" } },
+      {}
+    );
+    expect(body.thinking).toEqual({ type: "adaptive" });
+    expect(body.output_config).toEqual({ effort: "low" });
+  });
+});

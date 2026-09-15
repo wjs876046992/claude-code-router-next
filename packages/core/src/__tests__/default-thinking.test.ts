@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { DefaultThinkingTransformer, sniffEndpointKind, parseThinkingLevel } from "../transformer/defaultthinking.transformer";
+import { AnthropicTransformer } from "../transformer/anthropic.transformer";
 import { convertToAnthropic } from "../utils/converter";
+import { getThinkBudget, getThinkLevel, normalizeEffort } from "../utils/thinking";
 import { ProviderService } from "../services/provider";
 import { TransformerService } from "../services/transformer";
 import { UnifiedChatRequest } from "../types/llm";
@@ -137,24 +139,57 @@ describe("DefaultThinkingTransformer custom budget", () => {
     expect(responses.reasoning).toEqual({ enabled: true, effort: "minimal" });
   });
 
-  it("maps alias strings to budgets on Anthropic endpoints and skips unknown ones", async () => {
+  it("resolves alias strings to standard levels on Anthropic endpoints and skips unknown ones", async () => {
     const minimal = new DefaultThinkingTransformer({ level: "minimal" });
     const minResult = await minimal.transformRequestIn(makeRequest(), {
       baseUrl: "https://open.bigmodel.cn/api/anthropic/v1/messages",
     });
-    expect(minResult.reasoning).toEqual({ enabled: true, max_tokens: 1024 });
+    expect(minResult.reasoning).toEqual({ enabled: true, effort: "low" });
 
     const maximum = new DefaultThinkingTransformer({ level: "MAX" });
     const maxResult = await maximum.transformRequestIn(makeRequest(), {
       baseUrl: "https://open.bigmodel.cn/api/anthropic/v1/messages",
     });
-    expect(maxResult.reasoning).toEqual({ enabled: true, max_tokens: 32768 });
+    expect(maxResult.reasoning).toEqual({ enabled: true, effort: "max" });
 
     const unknown = new DefaultThinkingTransformer({ level: "off" });
     const unknownResult = await unknown.transformRequestIn(makeRequest(), {
       baseUrl: "https://open.bigmodel.cn/api/anthropic/v1/messages",
     });
     expect(unknownResult.reasoning).toBeUndefined();
+  });
+
+  it("sends the max tier as an effort level on every endpoint kind", async () => {
+    const t = new DefaultThinkingTransformer({ level: "max" });
+
+    const chat: any = await t.transformRequestIn(makeRequest(), {
+      baseUrl: "https://api.deepseek.com/v1/chat/completions",
+    });
+    expect(chat.reasoning_effort).toBe("max");
+
+    const anthropic = await t.transformRequestIn(makeRequest(), {
+      baseUrl: "https://open.bigmodel.cn/api/anthropic/v1/messages",
+    });
+    expect(anthropic.reasoning).toEqual({ enabled: true, effort: "max" });
+
+    const responses = await t.transformRequestIn(makeRequest(), {
+      baseUrl: "https://api.openai.com/v1/responses",
+    });
+    expect(responses.reasoning).toEqual({ enabled: true, effort: "max" });
+  });
+
+  it("keeps the author's spelling of an alias on OpenAI-style endpoints", async () => {
+    const light = new DefaultThinkingTransformer({ level: "light" });
+
+    const chat: any = await light.transformRequestIn(makeRequest(), {
+      baseUrl: "https://api.deepseek.com/v1/chat/completions",
+    });
+    expect(chat.reasoning_effort).toBe("light");
+
+    const anthropic = await light.transformRequestIn(makeRequest(), {
+      baseUrl: "https://open.bigmodel.cn/api/anthropic/v1/messages",
+    });
+    expect(anthropic.reasoning).toEqual({ enabled: true, effort: "low" });
   });
 
   it("ignores empty and none values", async () => {
@@ -206,6 +241,46 @@ describe("convertToAnthropic reasoning mapping", () => {
     expect(roomy.thinking).toEqual({ type: "enabled", budget_tokens: 8192 });
   });
 
+  it("also publishes the level as output_config.effort", () => {
+    const body: any = convertToAnthropic(
+      makeRequest({
+        max_tokens: 64000,
+        reasoning: { enabled: true, effort: "medium" },
+      })
+    );
+    expect(body.output_config).toEqual({ effort: "medium" });
+
+    const low: any = convertToAnthropic(
+      makeRequest({ max_tokens: 64000, reasoning: { enabled: true, effort: "low" } })
+    );
+    expect(low.output_config).toEqual({ effort: "low" });
+  });
+
+  it("derives the effort tier from a custom budget", () => {
+    const body: any = convertToAnthropic(
+      makeRequest({
+        max_tokens: 64000,
+        reasoning: { enabled: true, max_tokens: 4096 },
+      })
+    );
+    expect(body.thinking).toEqual({ type: "enabled", budget_tokens: 4096 });
+    expect(body.output_config).toEqual({ effort: "medium" });
+  });
+
+  it("omits output_config for the max tier, which only the budget can carry", () => {
+    const named: any = convertToAnthropic(
+      makeRequest({ max_tokens: 64000, reasoning: { enabled: true, effort: "max" } })
+    );
+    expect(named.thinking).toEqual({ type: "enabled", budget_tokens: 32768 });
+    expect(named.output_config).toBeUndefined();
+
+    const budgeted: any = convertToAnthropic(
+      makeRequest({ max_tokens: 64000, reasoning: { enabled: true, max_tokens: 32768 } })
+    );
+    expect(budgeted.thinking).toEqual({ type: "enabled", budget_tokens: 32768 });
+    expect(budgeted.output_config).toBeUndefined();
+  });
+
   it("honors explicit reasoning.max_tokens as the budget", () => {
     const body: any = convertToAnthropic(
       makeRequest({
@@ -219,6 +294,7 @@ describe("convertToAnthropic reasoning mapping", () => {
   it("omits thinking when reasoning is absent, disabled, or no budget fits", () => {
     const absent: any = convertToAnthropic(makeRequest({ max_tokens: 4096 }));
     expect(absent.thinking).toBeUndefined();
+    expect(absent.output_config).toBeUndefined();
 
     const disabled: any = convertToAnthropic(
       makeRequest({ max_tokens: 4096, reasoning: { enabled: false } })
@@ -288,5 +364,109 @@ describe("ProviderService injects default_thinking_level", () => {
 
     const provider = ps.getProvider("p2")!;
     expect(provider.transformer?.use).toBeUndefined();
+  });
+});
+
+describe("thinking level ladder", () => {
+  it("round-trips every level through its budget", () => {
+    for (const level of ["low", "medium", "high", "max"] as const) {
+      expect(getThinkLevel(getThinkBudget(level))).toBe(level);
+    }
+    expect(getThinkBudget("none")).toBe(0);
+  });
+
+  it("normalizes the effort spellings providers publish", () => {
+    expect(normalizeEffort("minimal")).toBe("low");
+    expect(normalizeEffort("light")).toBe("low");
+    expect(normalizeEffort("XHIGH")).toBe("max");
+    expect(normalizeEffort("ultra")).toBe("max");
+    expect(normalizeEffort("disabled")).toBe("none");
+    expect(normalizeEffort("bogus")).toBeUndefined();
+    expect(normalizeEffort(4096)).toBeUndefined();
+  });
+});
+
+describe("AnthropicTransformer thinking ingress", () => {
+  const transformer = new AnthropicTransformer();
+  const body = (extra: Record<string, any> = {}) => ({
+    model: "glm-5.3",
+    max_tokens: 64000,
+    messages: [{ role: "user", content: "hi" }],
+    ...extra,
+  });
+
+  it("keeps a client budget and derives its level", async () => {
+    const unified: any = await transformer.transformRequestOut(
+      body({ thinking: { type: "enabled", budget_tokens: 20000 } })
+    );
+    expect(unified.reasoning).toEqual({
+      enabled: true,
+      effort: "max",
+      max_tokens: 20000,
+    });
+  });
+
+  it("treats adaptive thinking as enabled instead of dropping it", async () => {
+    const unified: any = await transformer.transformRequestOut(
+      body({ thinking: { type: "adaptive" } })
+    );
+    expect(unified.reasoning).toEqual({ enabled: true });
+  });
+
+  it("reads output_config.effort, which wins over the switch and budget", async () => {
+    const unified: any = await transformer.transformRequestOut(
+      body({
+        thinking: { type: "adaptive", budget_tokens: 4096 },
+        output_config: { effort: "max" },
+      })
+    );
+    expect(unified.reasoning).toEqual({
+      enabled: true,
+      effort: "max",
+      max_tokens: 4096,
+    });
+  });
+
+  it("maps provider alias spellings from output_config.effort", async () => {
+    const unified: any = await transformer.transformRequestOut(
+      body({ output_config: { effort: "minimal" } })
+    );
+    expect(unified.reasoning).toEqual({ enabled: true, effort: "low" });
+  });
+
+  it("honors an explicit disable and leaves absent thinking to the provider default", async () => {
+    const off: any = await transformer.transformRequestOut(
+      body({ thinking: { type: "disabled" } })
+    );
+    expect(off.reasoning).toEqual({ enabled: false });
+
+    const absent: any = await transformer.transformRequestOut(body());
+    expect(absent.reasoning).toBeUndefined();
+
+    // An unrecognized effort is not a form Anthropic can carry; leaving
+    // reasoning unset keeps the provider's configured default in play.
+    const unknownEffort: any = await transformer.transformRequestOut(
+      body({ output_config: { effort: "bogus" } })
+    );
+    expect(unknownEffort.reasoning).toBeUndefined();
+  });
+
+  it("round-trips client effort into the upstream Anthropic body", async () => {
+    const unified: any = await transformer.transformRequestOut(
+      body({ output_config: { effort: "low" } })
+    );
+    const out: any = convertToAnthropic(unified);
+    expect(out.thinking).toEqual({ type: "enabled", budget_tokens: 1024 });
+    expect(out.output_config).toEqual({ effort: "low" });
+  });
+
+  it("sends a configured max default as a budget, leaving the provider on its own max", async () => {
+    const injected: any = await new DefaultThinkingTransformer({ level: "max" }).transformRequestIn(
+      body(),
+      { baseUrl: "https://open.bigmodel.cn/api/anthropic/v1/messages" }
+    );
+    const out: any = convertToAnthropic(injected);
+    expect(out.thinking).toEqual({ type: "enabled", budget_tokens: 32768 });
+    expect(out.output_config).toBeUndefined();
   });
 });
