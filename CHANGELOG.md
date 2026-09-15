@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [2.3.2406] - 2026-09-15
+
+### Added
+
+- **`default_thinking_level` 支持自定义值**: 除 low/medium/high/max 枚举外，现在也接受 token 预算（数字或数字字符串）与供应商私有字符串（如 `minimal`、`off`）。数字在 Anthropic `/v1/messages` 端点按精确预算注入（低于 1024 提到最小值，仍 clamp 在 `max_tokens` 之下），在 OpenAI 系端点折叠为最接近的档位；非枚举字符串在 OpenAI 系端点（`/v1/responses`、chat completions）原样透传，在 Anthropic 端点按别名归一到标准档位（min/minimal/light→low、xhigh/maximum/ultra→max，其余忽略）。UI 的「默认思考等级」下拉新增「自定义」自由输入。
+- **思考深度按 effort 语义下发**: 上游的思考深度是 effort 枚举——当前 Anthropic 模型读取 `output_config.effort`（low|medium|high|max，默认 high）并忽略 adaptive 模型上的 thinking budget，GLM 等 Anthropic 兼容端点读同一字段。此前只下发思考预算时，这些端点会把各种等级都收敛到各自默认档，配置看起来毫无效果。现在 `convertToAnthropic` 在下发 `thinking.budget_tokens`（兼容旧模型与第三方中转）的同时下发 `output_config.effort`；`max` 只走预算（上游仅最新 Opus 接受 effort=max，而接受它的供应商默认即 max）。统一档位表扩展为 none|low|medium|high|max。
+- **ZCode 作为独立客户端类型**: 请求日志与用量统计新增 `zcode` 客户端，不再与 Claude Code 混在一起；用量沿用 Claude Code 兼容的 `metadata.user_id` 会话口径。
+
+### Fixed
+
+- **客户端原始思考意图不再丢失**: Anthropic 入口此前丢弃客户端的 `output_config.effort`、把 `thinking.type=adaptive` 当作未开启（客户端不再发 budget 时看起来像关闭思考）、并把精确预算四舍五入到档位；现在 effort 原样保留、adaptive 视为开启、预算按原值保留。
+- **ZCode 请求被误记为 Claude Code**: ZCode 以 `ccr-*` 别名 + Claude Code 兼容 `metadata.user_id` + `X-Anthropic-Billing-Header` 调用，仅凭这些信号与 Claude Code 无法区分，日志与用量一律记为 claude-code。现在按请求头识别（`User-Agent: ZCode/<版本> ai-sdk/anthropic/<版本>` 与 `X-ZCode-*` 来源头），归入 zcode 客户端；仅对升级后的新请求生效，历史记录不回填。
+- **release.sh 发布中断后可续跑**: 中断后重跑会在第一个已发布包上因 "cannot publish over the previously published versions" 直接失败，剩下的包永远发不出去（2.3.2401 与 2.3.2405 都踩过）。现在每个包在发现该版本已存在于 registry 时跳过，重跑只发剩余包。
+
 ## [2.3.2405] - 2026-09-12
 
 ### Added
