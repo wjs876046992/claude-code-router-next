@@ -82,7 +82,10 @@ export interface UnifiedTool {
   };
 }
 
-export type ThinkLevel = "none" | "low" | "medium" | "high";
+// Mirrors the upstream effort vocabulary shared by the Anthropic Messages API
+// (`output_config.effort`), the OpenAI Responses API and most Anthropic-
+// compatible providers (e.g. GLM): low | medium | high | max.
+export type ThinkLevel = "none" | "low" | "medium" | "high" | "max";
 
 // 统一的请求接口
 export interface UnifiedChatRequest {

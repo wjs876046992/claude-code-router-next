@@ -137,6 +137,7 @@ function formatDuration(ms: number): string {
 function clientDisplayName(type: string | undefined, t: (key: string) => string): string {
   switch (type || "unknown") {
     case "claude-code": return t("usage.client_claude_code");
+    case "zcode": return t("usage.client_zcode");
     case "codex": return t("usage.client_codex");
     case "pi": return t("usage.client_pi");
     case "qwen-code": return t("usage.client_qwen_code");

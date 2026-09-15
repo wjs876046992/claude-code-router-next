@@ -11,7 +11,7 @@ import {
   TransformerOptions,
 } from "@/types/transformer";
 import { v4 as uuidv4 } from "uuid";
-import { getThinkLevel } from "@/utils/thinking";
+import { getThinkLevel, normalizeEffort } from "@/utils/thinking";
 import { createApiError } from "@/api/middleware";
 import {
   parseResponseJson,
@@ -20,6 +20,24 @@ import {
 } from "./response-body";
 import { formatBase64 } from "@/utils/image";
 import { convertToAnthropic } from "@/utils/converter";
+
+/**
+ * Read a client's thinking switch. "adaptive" and boolean true both mean the
+ * model gets to decide (upstream treats them as enabled) — only an explicit
+ * off value counts as disabled. Undefined means the client expressed no
+ * preference, so the provider's configured default still applies.
+ */
+function isThinkingEnabled(type: unknown): boolean | undefined {
+  if (type === true) return true;
+  if (type === false) return false;
+  if (typeof type !== "string") return undefined;
+  const value = type.trim().toLowerCase();
+  if (value === "enabled" || value === "adaptive" || value === "true") return true;
+  if (value === "disabled" || value === "off" || value === "none" || value === "false") {
+    return false;
+  }
+  return undefined;
+}
 
 export class AnthropicTransformer implements Transformer {
   name = "Anthropic";
@@ -210,12 +228,34 @@ export class AnthropicTransformer implements Transformer {
         : undefined,
       tool_choice: request.tool_choice,
     };
-    if (request.thinking) {
-      result.reasoning = {
-        effort: getThinkLevel(request.thinking.budget_tokens),
-        // max_tokens: request.thinking.budget_tokens,
-        enabled: request.thinking.type === "enabled",
-      };
+    // Thinking intent reaches us in three shapes: a token budget (budget-era
+    // clients), `output_config.effort` (what current Claude Code sends), and
+    // an adaptive thinking switch. All three are preserved — an explicit
+    // effort wins over the budget, which wins over a bare switch — because
+    // dropping the effort silently forced every provider onto its own default
+    // tier. Recognition of "adaptive"/true also matters: a client that stopped
+    // sending a budget used to parse as thinking-disabled and lose thinking
+    // entirely on Anthropic-endpoint providers.
+    const effortOverride = normalizeEffort(request.output_config?.effort);
+    const budgetTokens =
+      typeof request.thinking?.budget_tokens === "number"
+        ? request.thinking.budget_tokens
+        : undefined;
+    if (request.thinking !== undefined || effortOverride !== undefined) {
+      const reasoning: NonNullable<UnifiedChatRequest["reasoning"]> = {};
+      const enabled = isThinkingEnabled(request.thinking?.type);
+      const impliedEnabled =
+        enabled ?? (effortOverride !== undefined || (budgetTokens ?? 0) > 0);
+      if (impliedEnabled !== undefined) reasoning.enabled = impliedEnabled;
+      if (effortOverride !== undefined) {
+        reasoning.effort = effortOverride;
+      } else if (budgetTokens !== undefined) {
+        reasoning.effort = getThinkLevel(budgetTokens);
+      }
+      if (budgetTokens !== undefined && budgetTokens > 0) {
+        reasoning.max_tokens = budgetTokens;
+      }
+      if (Object.keys(reasoning).length > 0) result.reasoning = reasoning;
     }
     if (request.tool_choice) {
       if (request.tool_choice.type === "tool") {

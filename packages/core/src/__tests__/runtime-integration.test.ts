@@ -288,6 +288,51 @@ describe("runtime integration", () => {
     }
   });
 
+  it("attributes a ZCode request to the zcode client end to end", async () => {
+    globalThis.fetch = vi.fn(async () => streamResponse()) as any;
+
+    const { server } = await buildRuntime({
+      Providers: [{
+        name: "demo",
+        api_base_url: "https://upstream.example/v1/messages",
+        api_key: "demo-key",
+        models: ["default", "long", "extended"],
+        transformer: { use: ["Anthropic"] },
+      }],
+    });
+    try {
+      const res = await server.app.inject({
+        method: "POST",
+        url: "/v1/messages",
+        headers: {
+          "user-agent": "ZCode/3.11.2 ai-sdk/anthropic/2.0.0",
+          "x-zcode-app-version": "3.11.2",
+        },
+        payload: {
+          model: "ccr-opus",
+          // Detection is header driven. The body only carries Claude Code's
+          // own shape, so the ZCode headers above are the sole difference.
+          system: [{ type: "text", text: "You are Claude Code, Anthropic's official CLI." }],
+          messages: [{ role: "user", content: "stream" }],
+          metadata: { user_id: JSON.stringify({ session_id: "zcode-e2e" }) },
+          stream: true,
+        },
+      });
+
+      if (res.statusCode !== 200) {
+        console.error("ZCODE-NON-200", res.statusCode, res.body.slice(0, 200));
+      }
+      expect(res.statusCode).toBe(200);
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      // Usage lands under the zcode client, not claude-code.
+      expect(sessionUsageCache.get("zcode:session:zcode-e2e")?.input_tokens).toBeGreaterThan(0);
+      expect(sessionUsageCache.get("claude-code:session:zcode-e2e")).toBeUndefined();
+    } finally {
+      sessionUsageCache.delete("zcode:session:zcode-e2e");
+      await server.app.close();
+    }
+  });
+
   it("routes preset namespace requests with isolated config", async () => {
     const presetFetch = vi.fn(async (url: any, init: any) => {
       fetchCalls.push({ url: String(url), body: init?.body });
@@ -352,5 +397,109 @@ describe("runtime integration", () => {
     } finally {
       await server.app.close();
     }
+  });
+});
+
+describe("anthropic effort egress", () => {
+  let originalFetch: typeof globalThis.fetch;
+  let fetchCalls: Array<{ url: string; body: any }>;
+
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+    fetchCalls = [];
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  // Drives one request through a real runtime and returns the JSON body the
+  // provider received. `extraProvider` lets a case opt out of the default
+  // level — without one the provider keeps a single-transformer chain, which
+  // CCR streams through untouched, so nothing would be converted at all.
+  async function sendToUpstream(
+    payload: Record<string, any>,
+    extraProvider: Record<string, any> = { default_thinking_level: "high" }
+  ) {
+    globalThis.fetch = vi.fn(async (url: any, init: any) => {
+      fetchCalls.push({ url: String(url), body: JSON.parse(String(init?.body)) });
+      return nonStreamResponse({ model: "glm-5.3" });
+    }) as any;
+
+    const { server } = await buildRuntime({
+      Providers: [
+        {
+          name: "glm",
+          api_base_url: "https://open.bigmodel.cn/api/anthropic/v1/messages",
+          api_key: "glm-key",
+          models: ["glm-5.3"],
+          transformer: { use: ["Anthropic"] },
+          ...extraProvider,
+        },
+      ],
+      Router: { default: "glm,glm-5.3", enableFamilyRouting: false },
+    });
+
+    try {
+      const res = await server.app.inject({
+        method: "POST",
+        url: "/v1/messages",
+        headers: { "x-anthropic-billing-header": "cc_version=9.9" },
+        payload: {
+          model: "ccr-opus",
+          max_tokens: 64000,
+          stream: false,
+          messages: [{ role: "user", content: "hello" }],
+          ...payload,
+        },
+      });
+      if (res.statusCode !== 200) {
+        console.error("NON-200", res.statusCode, res.body);
+      }
+      expect(res.statusCode).toBe(200);
+      expect(fetchCalls).toHaveLength(1);
+      return fetchCalls[0].body;
+    } finally {
+      await server.app.close();
+    }
+  }
+
+  it("emits the configured level as both budget and effort", async () => {
+    const body = await sendToUpstream({});
+    expect(body.model).toBe("glm-5.3");
+    expect(body.thinking).toEqual({ type: "enabled", budget_tokens: 16384 });
+    expect(body.output_config).toEqual({ effort: "high" });
+  });
+
+  it("leaves the max level on the budget alone", async () => {
+    const body = await sendToUpstream({}, { default_thinking_level: "max" });
+    expect(body.thinking).toEqual({ type: "enabled", budget_tokens: 32768 });
+    expect(body.output_config).toBeUndefined();
+  });
+
+  it("lets a client effort win over the configured default", async () => {
+    const body = await sendToUpstream({
+      thinking: { type: "adaptive" },
+      output_config: { effort: "low" },
+    });
+    expect(body.thinking).toEqual({ type: "enabled", budget_tokens: 1024 });
+    expect(body.output_config).toEqual({ effort: "low" });
+  });
+
+  it("keeps a client budget and derives the effort tier from it", async () => {
+    const body = await sendToUpstream({
+      thinking: { type: "enabled", budget_tokens: 20000 },
+    });
+    expect(body.thinking).toEqual({ type: "enabled", budget_tokens: 20000 });
+    expect(body.output_config).toBeUndefined();
+  });
+
+  it("streams single-transformer providers through untouched", async () => {
+    const body = await sendToUpstream(
+      { thinking: { type: "adaptive" }, output_config: { effort: "low" } },
+      {}
+    );
+    expect(body.thinking).toEqual({ type: "adaptive" });
+    expect(body.output_config).toEqual({ effort: "low" });
   });
 });
