@@ -37,7 +37,7 @@ interface ProviderType extends Provider {}
 
 // Enum values of default_thinking_level; anything else stored in the field is
 // treated as a custom token budget and rendered as the number input below.
-const DEFAULT_THINKING_ENUMS = ['none', 'low', 'medium', 'high'];
+const DEFAULT_THINKING_ENUMS = ['none', 'low', 'medium', 'high', 'max'];
 const isDefaultThinkingEnum = (value: unknown): value is string =>
   typeof value === 'string' && DEFAULT_THINKING_ENUMS.includes(value);
 
@@ -1180,6 +1180,7 @@ export function Providers() {
                     <SelectItem value="low">{t("providers.default_thinking_level_low")}</SelectItem>
                     <SelectItem value="medium">{t("providers.default_thinking_level_medium")}</SelectItem>
                     <SelectItem value="high">{t("providers.default_thinking_level_high")}</SelectItem>
+                    <SelectItem value="max">{t("providers.default_thinking_level_max")}</SelectItem>
                     <SelectItem value="custom">{t("providers.default_thinking_level_custom")}</SelectItem>
                   </SelectContent>
                 </Select>

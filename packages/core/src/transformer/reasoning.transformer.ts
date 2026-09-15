@@ -1,6 +1,7 @@
 import { UnifiedChatRequest } from "@/types/llm";
 import { Transformer, TransformerOptions } from "../types/transformer";
 import { parseResponseJson } from "./response-body";
+import { getThinkBudget } from "../utils/thinking";
 
 export class ReasoningTransformer implements Transformer {
   static TransformerName = "reasoning";
@@ -24,7 +25,12 @@ export class ReasoningTransformer implements Transformer {
     if (request.reasoning) {
       request.thinking = {
         type: "enabled",
-        budget_tokens: request.reasoning.max_tokens,
+        // A level-only reasoning (e.g. from default_thinking_level) still
+        // needs a budget here — Anthropic-shaped endpoints reject an enabled
+        // thinking block without one.
+        budget_tokens:
+          request.reasoning.max_tokens ??
+          getThinkBudget(request.reasoning.effort || "medium"),
       };
       request.enable_thinking = true;
     }

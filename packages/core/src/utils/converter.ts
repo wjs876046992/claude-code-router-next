@@ -10,7 +10,7 @@ import {
   AnthropicChatRequest,
   ConversionOptions,
 } from "../types/llm";
-import { getThinkBudget } from "./thinking";
+import { ANTHROPIC_EFFORT_LEVELS, getThinkBudget, getThinkLevel } from "./thinking";
 
 // Simple logger function
 function log(...args: any[]) {
@@ -777,6 +777,13 @@ export function convertToAnthropic(
   // transformer's provider-level default. budget_tokens must stay below
   // max_tokens, so clamp; skip entirely when there is no room for the
   // 1024-token minimum.
+  //
+  // Depth is also published as `output_config.effort`, which is what current
+  // Anthropic models read (thinking budgets are ignored by adaptive models)
+  // and the only channel Anthropic-compatible providers actually honor — GLM
+  // resolves a bare enabled thinking block to its default tier, so without
+  // this a configured level never reaches them. The budget stays because
+  // budget-era models and most third-party relays read it and nothing else.
   if (request.reasoning?.enabled) {
     const rawBudget =
       request.reasoning.max_tokens ||
@@ -784,6 +791,15 @@ export function convertToAnthropic(
     const budget = Math.min(rawBudget, (result.max_tokens as number) - 1024);
     if (budget >= 1024) {
       result.thinking = { type: "enabled", budget_tokens: budget };
+    }
+
+    // A custom budget has no name of its own — report the tier it falls in.
+    const effort =
+      request.reasoning.effort && request.reasoning.effort !== "none"
+        ? request.reasoning.effort
+        : getThinkLevel(rawBudget);
+    if (ANTHROPIC_EFFORT_LEVELS.includes(effort)) {
+      result.output_config = { ...(result.output_config || {}), effort };
     }
   }
 

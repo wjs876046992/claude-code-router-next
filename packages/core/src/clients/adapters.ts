@@ -4,6 +4,7 @@ import { extractSessionIdFromUserId } from "../utils/session-id";
 
 export const CLIENT_TYPES = [
   "claude-code",
+  "zcode",
   "pi",
   "qwen-code",
   "opencode",
@@ -107,6 +108,16 @@ const claudeCodeAdapter: ClientAdapter = {
   },
 };
 
+const zcodeAdapter: ClientAdapter = {
+  type: "zcode",
+  createContext(req) {
+    // ZCode is Claude Code compatible (same `metadata.user_id` session
+    // signalling), so it gets the same session-scoped usage bookkeeping under
+    // its own client type.
+    return metadataSessionContext(req, "zcode");
+  },
+};
+
 const piAdapter: ClientAdapter = {
   type: "pi",
   createContext(req) {
@@ -162,6 +173,7 @@ const unknownAdapter: ClientAdapter = {
 
 export const builtinClientAdapterRegistry: Readonly<Record<ClientType, ClientAdapter>> = {
   "claude-code": claudeCodeAdapter,
+  zcode: zcodeAdapter,
   pi: piAdapter,
   "qwen-code": qwenCodeAdapter,
   opencode: opencodeAdapter,
@@ -172,6 +184,22 @@ export const builtinClientAdapterRegistry: Readonly<Record<ClientType, ClientAda
 
 export function isClientType(value: unknown): value is ClientType {
   return typeof value === "string" && (CLIENT_TYPES as readonly string[]).includes(value);
+}
+
+/**
+ * ZCode is the Electron coding agent. It drives Anthropic-compatible endpoints
+ * with the same `ccr-*` model aliases and Claude Code compatible
+ * `metadata.user_id` that Claude Code uses, so by those signals alone it is
+ * indistinguishable and used to be reported as claude-code. Its request
+ * headers carry its identity though: ZCode merges its own source headers into
+ * every provider request it builds, so each call arrives with
+ * `User-Agent: ZCode/<version> ai-sdk/anthropic/<version>` (ZCode's own agent
+ * plus the AI SDK's suffix) and an X-ZCode-* header (X-ZCode-App-Version,
+ * X-ZCode-Agent, x-zcode-trace-id, ...).
+ */
+function isZCodeRequest(headers: Record<string, any>, userAgent: string): boolean {
+  if (/zcode/i.test(userAgent)) return true;
+  return Object.keys(headers).some((key) => key.toLowerCase().startsWith("x-zcode"));
 }
 
 export function detectClientType(req: any): ClientType {
@@ -195,6 +223,10 @@ export function detectClientType(req: any): ClientType {
     return "opencode";
   }
   if (getHeader(req, CCR_PROJECT_HEADER).present) return "pi";
+  // Header fingerprint, ahead of the Claude Code heuristics below: ZCode sends
+  // a ccr-* alias plus Claude Code style metadata, which would otherwise
+  // resolve to claude-code.
+  if (isZCodeRequest(headers, userAgent)) return "zcode";
 
   const billingHeader = headers["x-anthropic-billing-header"];
   if (typeof billingHeader === "string" && billingHeader.includes("cc_version=")) {

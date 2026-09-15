@@ -2,30 +2,33 @@ import { UnifiedChatRequest, ThinkLevel } from "@/types/llm";
 import { Transformer, TransformerOptions } from "../types/transformer";
 import { getThinkLevel } from "../utils/thinking";
 
-export type DefaultThinkingLevel = "none" | "low" | "medium" | "high";
+export type DefaultThinkingLevel = "none" | "low" | "medium" | "high" | "max";
 
 type EndpointKind = "anthropic" | "responses" | "chat";
 
 /**
- * Common level-name aliases mapped to concrete Anthropic thinking budgets
- * (tokens). Anthropic's API has no string effort parameter, so these give
- * familiar names a precise meaning on /v1/messages endpoints. low/medium/high
- * are handled by the standard enum budget table (getThinkBudget), not here.
+ * Extra spellings of the standard levels, kept so configs written before the
+ * ladder grew a "max" tier (and provider docs that name their tiers
+ * differently) still resolve: GLM publishes minimal|light|low → low and
+ * xhigh|max|ultra → max.
  */
-export const ANTHROPIC_ALIAS_BUDGETS: Record<string, number> = {
-  min: 1024,
-  minimal: 1024,
-  max: 32768,
-  maximum: 32768,
+export const ALIAS_LEVELS: Record<string, ThinkLevel> = {
+  min: "low",
+  minimal: "low",
+  light: "low",
+  xhigh: "max",
+  maximum: "max",
+  ultra: "max",
+  ultracode: "max",
 };
 
 /**
  * Parse the configured level. Accepted forms:
- * - "none" | "low" | "medium" | "high" — the standard enum
+ * - "none" | "low" | "medium" | "high" | "max" — the standard enum
  * - a positive integer (or its decimal string form) — custom token budget
  * - any other non-empty string — provider-specific level passed through
- *   verbatim (e.g. "minimal", "off"); only meaningful on OpenAI-style
- *   endpoints, which accept string effort values
+ *   verbatim (e.g. "off"); only meaningful on OpenAI-style endpoints, which
+ *   accept free-form effort values
  * Empty/unparsable input parses as undefined (no injection).
  */
 export function parseThinkingLevel(
@@ -36,7 +39,7 @@ export function parseThinkingLevel(
   const value = raw.trim();
   if (!value) return undefined;
   const normalized = value.toLowerCase();
-  if (["none", "low", "medium", "high"].includes(normalized)) {
+  if (["none", "low", "medium", "high", "max"].includes(normalized)) {
     return normalized as DefaultThinkingLevel;
   }
   if (/^\d+$/.test(value)) return parseInt(value, 10);
@@ -70,14 +73,17 @@ export function sniffEndpointKind(baseUrl?: string): EndpointKind {
  * directly as `["defaultthinking", { "level": "high" }]` in a transformer
  * `use` list.
  *
- * The value is one of "low" | "medium" | "high", a custom token budget
- * (number or numeric string), or a provider-specific effort string (e.g.
- * "minimal", "off") passed through verbatim. Conversion per endpoint kind:
- * - Anthropic /v1/messages: unified `reasoning` — a custom budget flows into
- *   `reasoning.max_tokens` (kept as the exact budget by convertToAnthropic,
- *   raised to Anthropic's 1024 minimum); an enum maps through the standard
- *   budget table; alias strings (min/minimal→1024, max/maximum→32768) map to
- *   concrete budgets; any other string is skipped (no string form exists).
+ * The value is one of "low" | "medium" | "high" | "max", a custom token budget
+ * (number or numeric string), or a provider-specific effort string passed
+ * through verbatim. Conversion per endpoint kind:
+ * - Anthropic /v1/messages: unified `reasoning` — levels ride the effort enum
+ *   (`output_config.effort`, which is what current Anthropic models and
+ *   Anthropic-compatible providers such as GLM actually read) with a matching
+ *   thinking budget; a custom budget flows into `reasoning.max_tokens` (kept
+ *   as the exact budget by convertToAnthropic, raised to Anthropic's 1024
+ *   minimum); known aliases (min|minimal|light→low, xhigh|maximum|ultra→max)
+ *   resolve to their level; any other string is skipped (no string form
+ *   exists).
  * - OpenAI /v1/responses: unified `reasoning` mapped to `reasoning.effort` —
  *   custom budgets collapse to the closest effort enum, free-form strings
  *   pass through.
@@ -109,7 +115,8 @@ export class DefaultThinkingTransformer implements Transformer {
       if (kind === "anthropic") {
         // Exact budget for Anthropic-style endpoints; convertToAnthropic
         // consumes reasoning.max_tokens verbatim (still clamped below the
-        // request's max_tokens). Raise to the 1024 API minimum.
+        // request's max_tokens) and derives the effort tier from it. Raise to
+        // the 1024 API minimum.
         request.reasoning = {
           enabled: true,
           max_tokens: Math.max(1024, Math.floor(level)),
@@ -126,13 +133,33 @@ export class DefaultThinkingTransformer implements Transformer {
       return request;
     }
 
-    if (level === "low" || level === "medium" || level === "high") {
+    if (level === "low" || level === "medium" || level === "high" || level === "max") {
       if (kind === "chat") {
         (request as any).reasoning_effort = level;
       } else {
         // anthropic and responses endpoints both consume the unified shape;
-        // on Anthropic the enum maps through the standard budget table.
+        // on Anthropic the level becomes both the effort enum and the
+        // standard budget (getThinkBudget).
         request.reasoning = { enabled: true, effort: level };
+      }
+      return request;
+    }
+
+    // Non-standard spelling of a known level.
+    const alias = ALIAS_LEVELS[level.toLowerCase()];
+    if (alias) {
+      if (kind === "anthropic") {
+        // Anthropic's effort enum has no "minimal"/"maximum" spelling, so the
+        // alias resolves to the standard level it stands for.
+        request.reasoning = { enabled: true, effort: alias };
+      } else {
+        // OpenAI-style endpoints take free-form strings — keep the author's
+        // spelling.
+        if (kind === "chat") {
+          (request as any).reasoning_effort = level;
+        } else {
+          request.reasoning = { enabled: true, effort: level as ThinkLevel };
+        }
       }
       return request;
     }
@@ -141,15 +168,8 @@ export class DefaultThinkingTransformer implements Transformer {
       (request as any).reasoning_effort = level;
     } else if (kind === "responses") {
       request.reasoning = { enabled: true, effort: level as ThinkLevel };
-    } else {
-      // Anthropic has no string effort parameter, but common level aliases
-      // still map to concrete budgets so e.g. "max" works everywhere. Anything
-      // outside the table stays a skip — guessing a budget would be worse.
-      const budget = ANTHROPIC_ALIAS_BUDGETS[level.toLowerCase()];
-      if (budget) {
-        request.reasoning = { enabled: true, max_tokens: budget };
-      }
     }
+    // Anthropic has no free-form string parameter — skip rather than guess.
     return request;
   }
 }
