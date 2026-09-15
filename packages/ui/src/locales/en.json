@@ -542,6 +542,7 @@
     "clear": "Clear",
     "client": "Client",
     "client_claude_code": "Claude Code",
+    "client_zcode": "ZCode",
     "client_codex": "Codex",
     "client_pi": "pi",
     "client_qwen_code": "Qwen Code",

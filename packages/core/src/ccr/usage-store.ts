@@ -52,7 +52,7 @@ export interface UsageRecord {
   upstreamModel?: string; // Model returned by the upstream provider (may differ from routed model)
   modelFamily: string;
   scenarioType: string;
-  clientType?: string; // "claude-code" | "codex" | "pi" | "qwen-code" | "opencode" | "api" | "unknown"
+  clientType?: string; // "claude-code" | "zcode" | "codex" | "pi" | "qwen-code" | "opencode" | "api" | "unknown"
   stream: boolean;
   inputTokens: number;
   outputTokens: number;

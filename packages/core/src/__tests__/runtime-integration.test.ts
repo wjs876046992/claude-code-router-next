@@ -288,6 +288,51 @@ describe("runtime integration", () => {
     }
   });
 
+  it("attributes a ZCode request to the zcode client end to end", async () => {
+    globalThis.fetch = vi.fn(async () => streamResponse()) as any;
+
+    const { server } = await buildRuntime({
+      Providers: [{
+        name: "demo",
+        api_base_url: "https://upstream.example/v1/messages",
+        api_key: "demo-key",
+        models: ["default", "long", "extended"],
+        transformer: { use: ["Anthropic"] },
+      }],
+    });
+    try {
+      const res = await server.app.inject({
+        method: "POST",
+        url: "/v1/messages",
+        headers: {
+          "user-agent": "ZCode/3.11.2 ai-sdk/anthropic/2.0.0",
+          "x-zcode-app-version": "3.11.2",
+        },
+        payload: {
+          model: "ccr-opus",
+          // Detection is header driven. The body only carries Claude Code's
+          // own shape, so the ZCode headers above are the sole difference.
+          system: [{ type: "text", text: "You are Claude Code, Anthropic's official CLI." }],
+          messages: [{ role: "user", content: "stream" }],
+          metadata: { user_id: JSON.stringify({ session_id: "zcode-e2e" }) },
+          stream: true,
+        },
+      });
+
+      if (res.statusCode !== 200) {
+        console.error("ZCODE-NON-200", res.statusCode, res.body.slice(0, 200));
+      }
+      expect(res.statusCode).toBe(200);
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      // Usage lands under the zcode client, not claude-code.
+      expect(sessionUsageCache.get("zcode:session:zcode-e2e")?.input_tokens).toBeGreaterThan(0);
+      expect(sessionUsageCache.get("claude-code:session:zcode-e2e")).toBeUndefined();
+    } finally {
+      sessionUsageCache.delete("zcode:session:zcode-e2e");
+      await server.app.close();
+    }
+  });
+
   it("routes preset namespace requests with isolated config", async () => {
     const presetFetch = vi.fn(async (url: any, init: any) => {
       fetchCalls.push({ url: String(url), body: init?.body });

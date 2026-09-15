@@ -39,6 +39,7 @@ describe("builtin client adapter registry", () => {
   it("contains every persisted client type", () => {
     expect(Object.keys(builtinClientAdapterRegistry)).toEqual([
       "claude-code",
+      "zcode",
       "pi",
       "qwen-code",
       "opencode",
@@ -91,6 +92,69 @@ describe("builtin client adapter registry", () => {
       body: { model: "gpt-5", metadata: { user_id: "user_abc_session_xyz" } },
     }))).toBe("codex");
   });
+
+  it("classifies ZCode by its request headers before Claude Code signals", () => {
+    // ZCode drives Anthropic endpoints with ccr-* aliases and Claude Code
+    // compatible metadata, so without its own headers it resolved to
+    // claude-code and lost its own client attribution.
+    expect(detectClientType(request({
+      headers: {
+        "user-agent": "ZCode/3.11.2 ai-sdk/anthropic/2.0.0",
+        "x-zcode-app-version": "3.11.2",
+        "x-zcode-agent": "glm",
+      },
+      body: {
+        model: "ccr-opus",
+        system: [{ type: "text", text: "You are Claude Code, Anthropic's official CLI." }],
+        metadata: { user_id: JSON.stringify({ session_id: "zcode-session" }) },
+      },
+    }))).toBe("zcode");
+  });
+
+  it("detects ZCode from any single header in its fingerprint", () => {
+    const body = { model: "ccr-opus", metadata: { user_id: "user_x_session_zcode" } };
+
+    expect(detectClientType(request({
+      headers: { "user-agent": "ZCode/3.11.2 ai-sdk/anthropic/2.0.0" },
+      body,
+    }))).toBe("zcode");
+
+    expect(detectClientType(request({
+      headers: { "X-ZCode-App-Version": "3.11.2" },
+      body,
+    }))).toBe("zcode");
+
+    expect(detectClientType(request({
+      headers: { "x-zcode-trace-id": "abc123" },
+      body,
+    }))).toBe("zcode");
+
+    expect(detectClientType(request({
+      headers: { "user-agent": "ZCode/unknown ai-sdk/anthropic/2.0.0" },
+      body,
+    }))).toBe("zcode");
+  });
+
+  it("does not infer the client from prompt text", () => {
+    // Detection is header driven: identity text in the body is not evidence.
+    expect(detectClientType(request({
+      body: {
+        model: "ccr-opus",
+        system: "You are ZCode Explore, a file search and codebase research specialist for ZCode CLI.",
+        metadata: { user_id: "user_x_session_zcode" },
+      },
+    }))).not.toBe("zcode");
+
+    // A plain Claude Code client with the same alias still classifies as
+    // claude-code.
+    expect(detectClientType(request({
+      headers: {
+        "user-agent": "claude-cli/2.1.140",
+        "x-anthropic-billing-header": "cc_version=2.1.140",
+      },
+      body: { model: "ccr-opus", metadata: { user_id: "user_x_session_cc" } },
+    }))).toBe("claude-code");
+  });
 });
 
 describe("applyClientAdapter", () => {
@@ -122,6 +186,25 @@ describe("applyClientAdapter", () => {
     expect(first.usageSessionId).toBe("stable-session");
     expect(first.usageCacheKey).toBe("claude-code:session:stable-session");
     expect(second.usageCacheKey).toBe(first.usageCacheKey);
+  });
+
+  it("scopes ZCode usage to its Claude Code compatible metadata session", () => {
+    const req = request({
+      id: "zcode-a",
+      headers: { "user-agent": "ZCode/3.11.2 ai-sdk/anthropic/2.0.0" },
+      body: {
+        model: "ccr-opus",
+        messages: [],
+        metadata: { user_id: JSON.stringify({ session_id: "zcode-stable" }) },
+      },
+    });
+
+    applyClientAdapter(req, {});
+
+    expect(req.clientType).toBe("zcode");
+    expect(req.clientContext.usageScope).toBe("session");
+    expect(req.usageSessionId).toBe("zcode-stable");
+    expect(req.usageCacheKey).toBe("zcode:session:zcode-stable");
   });
 
   it("allows qwen session scope only with stable metadata", () => {
