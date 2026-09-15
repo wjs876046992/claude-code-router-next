@@ -137,12 +137,24 @@ describe("DefaultThinkingTransformer custom budget", () => {
     expect(responses.reasoning).toEqual({ enabled: true, effort: "minimal" });
   });
 
-  it("skips provider-specific strings on Anthropic endpoints (no string form)", async () => {
-    const t = new DefaultThinkingTransformer({ level: "minimal" });
-    const result = await t.transformRequestIn(makeRequest(), {
+  it("maps alias strings to budgets on Anthropic endpoints and skips unknown ones", async () => {
+    const minimal = new DefaultThinkingTransformer({ level: "minimal" });
+    const minResult = await minimal.transformRequestIn(makeRequest(), {
       baseUrl: "https://open.bigmodel.cn/api/anthropic/v1/messages",
     });
-    expect(result.reasoning).toBeUndefined();
+    expect(minResult.reasoning).toEqual({ enabled: true, max_tokens: 1024 });
+
+    const maximum = new DefaultThinkingTransformer({ level: "MAX" });
+    const maxResult = await maximum.transformRequestIn(makeRequest(), {
+      baseUrl: "https://open.bigmodel.cn/api/anthropic/v1/messages",
+    });
+    expect(maxResult.reasoning).toEqual({ enabled: true, max_tokens: 32768 });
+
+    const unknown = new DefaultThinkingTransformer({ level: "off" });
+    const unknownResult = await unknown.transformRequestIn(makeRequest(), {
+      baseUrl: "https://open.bigmodel.cn/api/anthropic/v1/messages",
+    });
+    expect(unknownResult.reasoning).toBeUndefined();
   });
 
   it("ignores empty and none values", async () => {

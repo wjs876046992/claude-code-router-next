@@ -183,7 +183,7 @@
     "default_thinking_level_high": "high",
     "default_thinking_level_custom": "Custom",
     "default_thinking_level_custom_placeholder": "e.g. minimal, off, or budget 4096",
-    "default_thinking_level_custom_hint": "Non-enum strings pass through verbatim on OpenAI-style endpoints (/v1/responses, chat completions, e.g. minimal); a pure number is injected as an exact token budget on Anthropic endpoints (below 1024 raised to the API minimum) and collapsed to the closest enum on OpenAI endpoints; Anthropic endpoints ignore non-numeric strings."
+    "default_thinking_level_custom_hint": "Non-enum strings pass through verbatim on OpenAI-style endpoints (/v1/responses, chat completions, e.g. minimal); on Anthropic endpoints they map by alias to a budget: min/minimal→1024, max/maximum→32768, anything else is ignored; a pure number is injected as an exact token budget on Anthropic endpoints (below 1024 raised to the API minimum) and collapsed to the closest enum on OpenAI endpoints."
   },
   "router": {
     "title": "Router",
