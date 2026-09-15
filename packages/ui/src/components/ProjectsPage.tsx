@@ -11,22 +11,23 @@ import { Toast } from "@/components/ui/toast";
 import { MultiCombobox } from "@/components/ui/multi-combobox";
 import { RouterConfigEditor } from "./RouterConfigEditor";
 import { Plus, RefreshCw, Trash2, Save, ChevronDown, ChevronRight } from "lucide-react";
-import type { ClientId, ProjectConfigEntry } from "@/types";
+import type { ProjectConfigEntry, ProjectTakeoverClientId } from "@/types";
 
-// Clients that support project-level ccr takeover (a project-scoped config
-// file). Mirrors PROJECT_TAKEOVER_CLIENT_IDS on the server; Codex is excluded
-// because its config is global-only.
-const TAKEOVER_CLIENTS: { id: ClientId; name: string }[] = [
+// Clients that support project-level ccr takeover. Mirrors
+// PROJECT_TAKEOVER_CLIENT_IDS on the server; Codex is excluded because its
+// config is global-only.
+const TAKEOVER_CLIENTS: { id: ProjectTakeoverClientId; name: string }[] = [
   { id: "claudeCode", name: "Claude Code" },
   { id: "pi", name: "pi" },
   { id: "qwenCode", name: "Qwen Code" },
   { id: "opencode", name: "opencode" },
+  { id: "zcode", name: "ZCode" },
 ];
 const ALL_TAKEOVER_CLIENT_IDS = TAKEOVER_CLIENTS.map((client) => client.id);
 // Default takeover set: Claude Code only. The other clients write config
 // files into the project root (e.g. opencode.json, .qwen/), so they are
 // strictly opt-in via the multi-select.
-const DEFAULT_TAKEOVER_CLIENT_IDS: ClientId[] = ["claudeCode"];
+const DEFAULT_TAKEOVER_CLIENT_IDS: ProjectTakeoverClientId[] = ["claudeCode"];
 
 export function ProjectsPage() {
   const { t } = useTranslation();
@@ -151,7 +152,7 @@ export function ProjectsPage() {
     setCollapsed((current) => ({ ...current, [id]: !current[id] }));
   };
 
-  const applyTakeover = async (id: string, clients: ClientId[]) => {
+  const applyTakeover = async (id: string, clients: ProjectTakeoverClientId[]) => {
     setTakeoverLoadingId(id);
     try {
       const result = await api.setProjectTakeover(id, clients);
@@ -180,8 +181,8 @@ export function ProjectsPage() {
   // back to the default (Claude Code only) rather than turning takeover off
   // (use the master switch for that).
   const handleTakeoverClientsChange = (id: string, clients: string[]) => {
-    const selected = clients.filter((value): value is ClientId =>
-      ALL_TAKEOVER_CLIENT_IDS.includes(value as ClientId)
+    const selected = clients.filter((value): value is ProjectTakeoverClientId =>
+      ALL_TAKEOVER_CLIENT_IDS.includes(value as ProjectTakeoverClientId)
     );
     applyTakeover(id, selected.length > 0 ? selected : [...DEFAULT_TAKEOVER_CLIENT_IDS]);
   };
@@ -266,7 +267,7 @@ export function ProjectsPage() {
           const draft = drafts[project.id] ?? globalRouterWithFallback;
           const isCollapsed = collapsed[project.id] ?? true;
           const takeoverClients =
-            project.ccrTakeoverClients ?? (project.ccrTakeover ? ["claudeCode" as ClientId] : []);
+            project.ccrTakeoverClients ?? (project.ccrTakeover ? ["claudeCode" as ProjectTakeoverClientId] : []);
           return (
             <Card key={project.id}>
               <CardHeader className="pb-2">
