@@ -35,6 +35,12 @@ import type { Provider, ProviderHealthState, ProviderProbeTelemetry, ProviderQuo
 
 interface ProviderType extends Provider {}
 
+// Enum values of default_thinking_level; anything else stored in the field is
+// treated as a custom token budget and rendered as the number input below.
+const DEFAULT_THINKING_ENUMS = ['none', 'low', 'medium', 'high'];
+const isDefaultThinkingEnum = (value: unknown): value is string =>
+  typeof value === 'string' && DEFAULT_THINKING_ENUMS.includes(value);
+
 // Helper function to clean up references to deleted models in Router configurations and fallback lists
 function cleanUpConfigModels(config: any, deletedModels: string[], providerName?: string): any {
   if (!deletedModels || deletedModels.length === 0) return config;
@@ -1151,9 +1157,19 @@ export function Providers() {
                   </TooltipProvider>
                 </div>
                 <Select
-                  value={editingProvider.default_thinking_level || 'none'}
+                  value={
+                    isDefaultThinkingEnum(editingProvider.default_thinking_level)
+                      ? editingProvider.default_thinking_level
+                      : editingProvider.default_thinking_level
+                        ? 'custom'
+                        : 'none'
+                  }
                   onValueChange={(val) =>
-                    handleProviderChange(editingProviderIndex, 'default_thinking_level', val === 'none' ? '' : val)
+                    handleProviderChange(
+                      editingProviderIndex,
+                      'default_thinking_level',
+                      val === 'none' ? '' : val === 'custom' ? '4096' : val
+                    )
                   }
                 >
                   <SelectTrigger id="default_thinking_level">
@@ -1164,8 +1180,29 @@ export function Providers() {
                     <SelectItem value="low">{t("providers.default_thinking_level_low")}</SelectItem>
                     <SelectItem value="medium">{t("providers.default_thinking_level_medium")}</SelectItem>
                     <SelectItem value="high">{t("providers.default_thinking_level_high")}</SelectItem>
+                    <SelectItem value="custom">{t("providers.default_thinking_level_custom")}</SelectItem>
                   </SelectContent>
                 </Select>
+                {editingProvider.default_thinking_level &&
+                 !isDefaultThinkingEnum(editingProvider.default_thinking_level) && (
+                  <Input
+                    id="default_thinking_budget"
+                    type="number"
+                    min={1024}
+                    step={256}
+                    placeholder={t("providers.default_thinking_level_custom_placeholder")}
+                    value={String(editingProvider.default_thinking_level)}
+                    onChange={(e) =>
+                      handleProviderChange(editingProviderIndex, 'default_thinking_level', e.target.value)
+                    }
+                  />
+                )}
+                {editingProvider.default_thinking_level &&
+                 !isDefaultThinkingEnum(editingProvider.default_thinking_level) && (
+                  <p className="text-[11px] text-muted-foreground leading-normal">
+                    {t("providers.default_thinking_level_custom_hint")}
+                  </p>
+                )}
               </div>
               <div className="space-y-2">
                 <Label htmlFor="models">{t("providers.models")}</Label>

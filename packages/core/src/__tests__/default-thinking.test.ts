@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { DefaultThinkingTransformer, sniffEndpointKind } from "../transformer/defaultthinking.transformer";
+import { DefaultThinkingTransformer, sniffEndpointKind, parseThinkingLevel } from "../transformer/defaultthinking.transformer";
 import { convertToAnthropic } from "../utils/converter";
 import { ProviderService } from "../services/provider";
 import { TransformerService } from "../services/transformer";
@@ -84,6 +84,66 @@ describe("DefaultThinkingTransformer", () => {
     const ts = new TransformerService(mockConfig, { info: () => {}, error: () => {} });
     await ts.initialize();
     expect(ts.getTransformer("defaultthinking")).toBeDefined();
+  });
+});
+
+describe("DefaultThinkingTransformer custom budget", () => {
+  it("passes a numeric budget verbatim to Anthropic endpoints via reasoning.max_tokens", async () => {
+    const t = new DefaultThinkingTransformer({ level: 4096 });
+    const result = await t.transformRequestIn(makeRequest(), {
+      baseUrl: "https://open.bigmodel.cn/api/anthropic/v1/messages",
+    });
+    expect(result.reasoning).toEqual({ enabled: true, max_tokens: 4096 });
+  });
+
+  it("raises a sub-minimum numeric budget to Anthropic's 1024 floor", async () => {
+    const t = new DefaultThinkingTransformer({ level: 500 });
+    const result = await t.transformRequestIn(makeRequest(), {
+      baseUrl: "https://open.bigmodel.cn/api/anthropic/v1/messages",
+    });
+    expect(result.reasoning).toEqual({ enabled: true, max_tokens: 1024 });
+  });
+
+  it("collapses a numeric budget to the effort enum on OpenAI endpoints", async () => {
+    const t = new DefaultThinkingTransformer({ level: 4096 });
+    const chat: any = await t.transformRequestIn(makeRequest(), {
+      baseUrl: "https://api.deepseek.com/v1/chat/completions",
+    });
+    expect(chat.reasoning_effort).toBe("medium");
+    expect(chat.reasoning).toBeUndefined();
+
+    const responses = await t.transformRequestIn(makeRequest(), {
+      baseUrl: "https://api.openai.com/v1/responses",
+    });
+    expect(responses.reasoning).toEqual({ enabled: true, effort: "medium" });
+  });
+
+  it("accepts numeric strings and rejects unparsable values", async () => {
+    const t = new DefaultThinkingTransformer({ level: "2048" });
+    const result: any = await t.transformRequestIn(makeRequest(), {
+      baseUrl: "https://api.deepseek.com/v1/chat/completions",
+    });
+    expect(result.reasoning_effort).toBe("medium");
+
+    const garbage = new DefaultThinkingTransformer({ level: "ultra" });
+    const none: any = await garbage.transformRequestIn(makeRequest(), {
+      baseUrl: "https://api.deepseek.com/v1/chat/completions",
+    });
+    expect(none.reasoning_effort).toBeUndefined();
+    expect(none.reasoning).toBeUndefined();
+  });
+});
+
+describe("parseThinkingLevel", () => {
+  it("parses enum strings, positive integers, numeric strings, and rejects the rest", () => {
+    expect(parseThinkingLevel("high")).toBe("high");
+    expect(parseThinkingLevel(" none ")).toBe("none");
+    expect(parseThinkingLevel(4096)).toBe(4096);
+    expect(parseThinkingLevel("4096")).toBe(4096);
+    expect(parseThinkingLevel("")).toBeUndefined();
+    expect(parseThinkingLevel("abc")).toBeUndefined();
+    expect(parseThinkingLevel(-5)).toBe(-5); // validated (<=0 no-op) at injection
+    expect(parseThinkingLevel(null)).toBeUndefined();
   });
 });
 

@@ -176,11 +176,14 @@
     "proxy_tooltip_off": "直连（未启用代理）",
     "edit_parameter": "编辑参数",
     "default_thinking_level": "默认思考等级",
-    "default_thinking_level_tooltip": "客户端请求未携带思考配置时注入的默认思考等级，按供应商端点类型自动转换：Anthropic /v1/messages → thinking.budget_tokens；OpenAI /v1/responses → reasoning.effort；OpenAI 兼容 /v1/chat/completions → reasoning_effort。客户端显式设置的思考等级始终优先。",
+    "default_thinking_level_tooltip": "客户端请求未携带思考配置时注入的默认思考等级，按供应商端点类型自动转换：Anthropic /v1/messages → thinking.budget_tokens；OpenAI /v1/responses → reasoning.effort；OpenAI 兼容 /v1/chat/completions → reasoning_effort。客户端显式设置的思考等级始终优先。选「自定义预算」可输入精确的 token 数。",
     "default_thinking_level_none": "不注入（跟随客户端）",
     "default_thinking_level_low": "low",
     "default_thinking_level_medium": "medium",
-    "default_thinking_level_high": "high"
+    "default_thinking_level_high": "high",
+    "default_thinking_level_custom": "自定义预算（tokens）",
+    "default_thinking_level_custom_placeholder": "思考预算，如 4096",
+    "default_thinking_level_custom_hint": "Anthropic 端点按该 token 数精确注入（低于 1024 会提升到 API 最小值 1024）；OpenAI 系端点换算为最接近的 low/medium/high。"
   },
   "router": {
     "title": "路由",
