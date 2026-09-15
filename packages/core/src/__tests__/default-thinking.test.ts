@@ -118,31 +118,58 @@ describe("DefaultThinkingTransformer custom budget", () => {
     expect(responses.reasoning).toEqual({ enabled: true, effort: "medium" });
   });
 
-  it("accepts numeric strings and rejects unparsable values", async () => {
+  it("accepts numeric strings and passes provider-specific values verbatim on OpenAI endpoints", async () => {
     const t = new DefaultThinkingTransformer({ level: "2048" });
     const result: any = await t.transformRequestIn(makeRequest(), {
       baseUrl: "https://api.deepseek.com/v1/chat/completions",
     });
     expect(result.reasoning_effort).toBe("medium");
 
-    const garbage = new DefaultThinkingTransformer({ level: "ultra" });
-    const none: any = await garbage.transformRequestIn(makeRequest(), {
+    const minimal = new DefaultThinkingTransformer({ level: "minimal" });
+    const passthrough: any = await minimal.transformRequestIn(makeRequest(), {
+      baseUrl: "https://api.deepseek.com/v1/chat/completions",
+    });
+    expect(passthrough.reasoning_effort).toBe("minimal");
+
+    const responses = await minimal.transformRequestIn(makeRequest(), {
+      baseUrl: "https://api.openai.com/v1/responses",
+    });
+    expect(responses.reasoning).toEqual({ enabled: true, effort: "minimal" });
+  });
+
+  it("skips provider-specific strings on Anthropic endpoints (no string form)", async () => {
+    const t = new DefaultThinkingTransformer({ level: "minimal" });
+    const result = await t.transformRequestIn(makeRequest(), {
+      baseUrl: "https://open.bigmodel.cn/api/anthropic/v1/messages",
+    });
+    expect(result.reasoning).toBeUndefined();
+  });
+
+  it("ignores empty and none values", async () => {
+    const empty = new DefaultThinkingTransformer({ level: "" });
+    const none: any = await empty.transformRequestIn(makeRequest(), {
       baseUrl: "https://api.deepseek.com/v1/chat/completions",
     });
     expect(none.reasoning_effort).toBeUndefined();
-    expect(none.reasoning).toBeUndefined();
+
+    const off = new DefaultThinkingTransformer({ level: "none" });
+    const none2: any = await off.transformRequestIn(makeRequest(), {
+      baseUrl: "https://api.deepseek.com/v1/chat/completions",
+    });
+    expect(none2.reasoning_effort).toBeUndefined();
   });
 });
 
 describe("parseThinkingLevel", () => {
-  it("parses enum strings, positive integers, numeric strings, and rejects the rest", () => {
+  it("parses enum strings, positive integers, numeric strings, and passes the rest through", () => {
     expect(parseThinkingLevel("high")).toBe("high");
     expect(parseThinkingLevel(" none ")).toBe("none");
     expect(parseThinkingLevel(4096)).toBe(4096);
     expect(parseThinkingLevel("4096")).toBe(4096);
+    expect(parseThinkingLevel("minimal")).toBe("minimal");
+    expect(parseThinkingLevel("Off")).toBe("Off"); // provider casing preserved
     expect(parseThinkingLevel("")).toBeUndefined();
-    expect(parseThinkingLevel("abc")).toBeUndefined();
-    expect(parseThinkingLevel(-5)).toBe(-5); // validated (<=0 no-op) at injection
+    expect(parseThinkingLevel("   ")).toBeUndefined();
     expect(parseThinkingLevel(null)).toBeUndefined();
   });
 });
