@@ -1168,7 +1168,7 @@ export function Providers() {
                     handleProviderChange(
                       editingProviderIndex,
                       'default_thinking_level',
-                      val === 'none' ? '' : val === 'custom' ? '4096' : val
+                      val === 'none' ? '' : val === 'custom' ? 'minimal' : val
                     )
                   }
                 >
@@ -1187,9 +1187,7 @@ export function Providers() {
                  !isDefaultThinkingEnum(editingProvider.default_thinking_level) && (
                   <Input
                     id="default_thinking_budget"
-                    type="number"
-                    min={1024}
-                    step={256}
+                    type="text"
                     placeholder={t("providers.default_thinking_level_custom_placeholder")}
                     value={String(editingProvider.default_thinking_level)}
                     onChange={(e) =>

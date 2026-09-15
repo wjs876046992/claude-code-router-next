@@ -7,21 +7,28 @@ export type DefaultThinkingLevel = "none" | "low" | "medium" | "high";
 type EndpointKind = "anthropic" | "responses" | "chat";
 
 /**
- * Parse the configured level. Besides the enum, a positive integer (or its
- * decimal string form) is accepted as a custom thinking budget in tokens;
- * anything else parses as undefined (no injection).
+ * Parse the configured level. Accepted forms:
+ * - "none" | "low" | "medium" | "high" — the standard enum
+ * - a positive integer (or its decimal string form) — custom token budget
+ * - any other non-empty string — provider-specific level passed through
+ *   verbatim (e.g. "minimal", "off"); only meaningful on OpenAI-style
+ *   endpoints, which accept string effort values
+ * Empty/unparsable input parses as undefined (no injection).
  */
 export function parseThinkingLevel(
   raw: unknown
-): DefaultThinkingLevel | number | undefined {
+): DefaultThinkingLevel | number | string | undefined {
   if (typeof raw === "number") return Number.isFinite(raw) ? raw : undefined;
   if (typeof raw !== "string") return undefined;
-  const value = raw.trim().toLowerCase();
-  if (["none", "low", "medium", "high"].includes(value)) {
-    return value as DefaultThinkingLevel;
+  const value = raw.trim();
+  if (!value) return undefined;
+  const normalized = value.toLowerCase();
+  if (["none", "low", "medium", "high"].includes(normalized)) {
+    return normalized as DefaultThinkingLevel;
   }
   if (/^\d+$/.test(value)) return parseInt(value, 10);
-  return undefined;
+  // Provider-specific value — keep the author's casing.
+  return value;
 }
 
 /**
@@ -50,16 +57,18 @@ export function sniffEndpointKind(baseUrl?: string): EndpointKind {
  * directly as `["defaultthinking", { "level": "high" }]` in a transformer
  * `use` list.
  *
- * The value is one of "low" | "medium" | "high", or a custom token budget
- * (number or numeric string). Conversion per endpoint kind:
+ * The value is one of "low" | "medium" | "high", a custom token budget
+ * (number or numeric string), or a provider-specific effort string (e.g.
+ * "minimal", "off") passed through verbatim. Conversion per endpoint kind:
  * - Anthropic /v1/messages: unified `reasoning` — a custom budget flows into
  *   `reasoning.max_tokens` (kept as the exact budget by convertToAnthropic,
- *   raised to Anthropic's 1024 minimum); a level maps through the standard
- *   budget table.
+ *   raised to Anthropic's 1024 minimum); an enum maps through the standard
+ *   budget table; provider-specific strings are skipped (no string form).
  * - OpenAI /v1/responses: unified `reasoning` mapped to `reasoning.effort` —
- *   a custom budget collapses to the closest effort enum.
+ *   custom budgets collapse to the closest effort enum, free-form strings
+ *   pass through.
  * - OpenAI-compatible /v1/chat/completions: `reasoning_effort` — same enum
- *   mapping for custom budgets.
+ *   mapping for budgets, verbatim passthrough for free-form strings.
  *
  * Client intent always wins: any defined `request.reasoning` — including an
  * explicit disabled — skips injection entirely. "none" (or an unparsable
@@ -103,11 +112,25 @@ export class DefaultThinkingTransformer implements Transformer {
       return request;
     }
 
+    if (level === "low" || level === "medium" || level === "high") {
+      if (kind === "chat") {
+        (request as any).reasoning_effort = level;
+      } else {
+        // anthropic and responses endpoints both consume the unified shape;
+        // on Anthropic the enum maps through the standard budget table.
+        request.reasoning = { enabled: true, effort: level };
+      }
+      return request;
+    }
+
+    // Provider-specific string (e.g. "minimal", "off"): only OpenAI-style
+    // endpoints accept free-form effort values, so pass it through there.
+    // Anthropic has no string parameter to receive it — skip rather than
+    // guess a budget.
     if (kind === "chat") {
-      (request as any).reasoning_effort = level as ThinkLevel;
-    } else {
-      // anthropic and responses endpoints both consume the unified shape
-      request.reasoning = { enabled: true, effort: level };
+      (request as any).reasoning_effort = level;
+    } else if (kind === "responses") {
+      request.reasoning = { enabled: true, effort: level as ThinkLevel };
     }
     return request;
   }

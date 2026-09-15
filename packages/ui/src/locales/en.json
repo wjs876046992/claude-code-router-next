@@ -176,14 +176,14 @@
     "proxy_tooltip_off": "Direct (proxy disabled)",
     "edit_parameter": "Edit parameter",
     "default_thinking_level": "Default thinking level",
-    "default_thinking_level_tooltip": "Injected when the client request carries no thinking config, auto-converted per endpoint type: Anthropic /v1/messages → thinking.budget_tokens; OpenAI /v1/responses → reasoning.effort; OpenAI-compatible /v1/chat/completions → reasoning_effort. A client-set level always wins. Pick \"Custom budget\" for an exact token count.",
+    "default_thinking_level_tooltip": "Injected when the client request carries no thinking config, auto-converted per endpoint type: Anthropic /v1/messages → thinking.budget_tokens; OpenAI /v1/responses → reasoning.effort; OpenAI-compatible /v1/chat/completions → reasoning_effort. A client-set level always wins. Pick \"Custom\" for a free-form provider value or a token budget.",
     "default_thinking_level_none": "None (follow client)",
     "default_thinking_level_low": "low",
     "default_thinking_level_medium": "medium",
     "default_thinking_level_high": "high",
-    "default_thinking_level_custom": "Custom budget (tokens)",
-    "default_thinking_level_custom_placeholder": "Thinking budget, e.g. 4096",
-    "default_thinking_level_custom_hint": "Anthropic endpoints inject this exact token budget (values below 1024 are raised to the API minimum); OpenAI-style endpoints collapse it to the closest low/medium/high."
+    "default_thinking_level_custom": "Custom",
+    "default_thinking_level_custom_placeholder": "e.g. minimal, off, or budget 4096",
+    "default_thinking_level_custom_hint": "Non-enum strings pass through verbatim on OpenAI-style endpoints (/v1/responses, chat completions, e.g. minimal); a pure number is injected as an exact token budget on Anthropic endpoints (below 1024 raised to the API minimum) and collapsed to the closest enum on OpenAI endpoints; Anthropic endpoints ignore non-numeric strings."
   },
   "router": {
     "title": "Router",
