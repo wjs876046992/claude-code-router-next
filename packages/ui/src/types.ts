@@ -101,6 +101,13 @@ export interface StatusLineConfig {
 
 export type ClientId = 'claudeCode' | 'codex' | 'pi' | 'qwenCode' | 'opencode';
 
+/**
+ * Client ids that can take over a project. ZCode keeps no project-scoped config
+ * of its own, so unlike the others it is not a global Clients-page client; ccr
+ * records its opt-in and routes ZCode sessions through the project Router.
+ */
+export type ProjectTakeoverClientId = ClientId | 'zcode';
+
 export interface ClientConfig {
   enabled?: boolean;
   managed?: boolean;
@@ -146,8 +153,8 @@ export interface ProjectConfigEntry {
   Router: Record<string, any>;
   /** True when at least one client takes this project over through ccr. */
   ccrTakeover?: boolean;
-  /** Which clients (Claude Code, pi) currently route this project through ccr. */
-  ccrTakeoverClients?: ClientId[];
+  /** Which clients (Claude Code, pi, qwen-code, opencode, ZCode) currently route this project through ccr. */
+  ccrTakeoverClients?: ProjectTakeoverClientId[];
 }
 
 export interface ProjectsResponse {

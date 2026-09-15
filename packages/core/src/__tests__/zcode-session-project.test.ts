@@ -3,11 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { getClaudeProjectId } from "@wengine-ai/claude-code-router-shared";
-import {
-  findZcodeWorkspacePath,
-  searchZcodeProjectBySession,
-} from "../utils/zcode-session-project";
+import { findZcodeWorkspacePath } from "../utils/zcode-session-project";
 
 // ZCode's own store: <dir>/v2/tasks-index.sqlite plus <dir>/v2/sessions/<key>/<id>.json.
 function writeTaskIndex(zcodeDir: string, rows: Array<Record<string, unknown>>) {
@@ -176,24 +172,7 @@ describe("findZcodeWorkspacePath", () => {
       findZcodeWorkspacePath("77777777-7777-7777-7777-777777777777")
     ).resolves.toBeNull();
   });
-});
-
-describe("searchZcodeProjectBySession", () => {
-  it("maps the session to the project id used by the project config store", async () => {
-    const workspace = "/Users/someone/work/my-personal-project";
-    writeTaskIndex(zcodeDir, [
-      {
-        workspace_path: workspace,
-        task_id: "sess_99999999-9999-9999-9999-999999999999",
-      },
-    ]);
-
-    await expect(
-      searchZcodeProjectBySession("99999999-9999-9999-9999-999999999999")
-    ).resolves.toBe(getClaudeProjectId(workspace));
-  });
-
-  it("ignores relative workspaces so project ids stay path-derived", async () => {
+  it("rejects workspaces that are not absolute paths", async () => {
     writeTaskIndex(zcodeDir, [
       {
         workspace_path: "relative/workspace",
@@ -202,7 +181,7 @@ describe("searchZcodeProjectBySession", () => {
     ]);
 
     await expect(
-      searchZcodeProjectBySession("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+      findZcodeWorkspacePath("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
     ).resolves.toBeNull();
   });
 
@@ -215,7 +194,7 @@ describe("searchZcodeProjectBySession", () => {
     );
 
     await expect(
-      searchZcodeProjectBySession("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+      findZcodeWorkspacePath("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
     ).resolves.toBeNull();
   });
 });

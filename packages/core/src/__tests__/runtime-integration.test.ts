@@ -5,6 +5,7 @@ import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   CCR_PROJECT_HEADER,
+  applyZcodeProjectTakeover,
   deleteProjectConfig,
   getClaudeProjectId,
   writeProjectConfig,
@@ -334,7 +335,7 @@ describe("runtime integration", () => {
     }
   });
 
-  it("routes a ZCode session through the project Router resolved from its local task index", async () => {
+  it("routes a ZCode session through the project Router when the project takes ZCode over", async () => {
     const projectPath = mkdtempSync(join(tmpdir(), "ccr-runtime-zcode-project-"));
     const zcodeDir = mkdtempSync(join(tmpdir(), "ccr-runtime-zcode-store-"));
     const sessionId = "cccccccc-cccc-cccc-cccc-cccccccccccc";
@@ -359,6 +360,8 @@ describe("runtime integration", () => {
     await writeProjectConfig(projectPath, {
       Router: { default: "project,project-model", enableFamilyRouting: false },
     });
+    // Project routing for ZCode is opt-in, like the other clients'.
+    applyZcodeProjectTakeover(projectPath);
 
     globalThis.fetch = vi.fn(async (url: any, init: any) => {
       fetchCalls.push({ url: String(url), body: init?.body });
@@ -436,6 +439,9 @@ describe("runtime integration", () => {
     taskIndex.close();
     process.env.CCR_ZCODE_DIR = zcodeDir;
 
+    // ZCode is taken over, but the project never got a config of its own.
+    applyZcodeProjectTakeover(projectPath);
+
     globalThis.fetch = vi.fn(async (url: any, init: any) => {
       fetchCalls.push({ url: String(url), body: init?.body });
       return nonStreamResponse({ model: "global-model" });
@@ -474,6 +480,83 @@ describe("runtime integration", () => {
       if (server) await server.app.close();
       if (previousZcodeDir === undefined) delete process.env.CCR_ZCODE_DIR;
       else process.env.CCR_ZCODE_DIR = previousZcodeDir;
+      await deleteProjectConfig(projectPath);
+      rmSync(projectPath, { recursive: true, force: true });
+      rmSync(zcodeDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps a ZCode session on the global Router while its project is not taken over", async () => {
+    const projectPath = mkdtempSync(join(tmpdir(), "ccr-runtime-zcode-nottaken-"));
+    const zcodeDir = mkdtempSync(join(tmpdir(), "ccr-runtime-zcode-store-"));
+    const sessionId = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee";
+    const previousZcodeDir = process.env.CCR_ZCODE_DIR;
+
+    const storeDir = join(zcodeDir, "v2");
+    mkdirSync(storeDir, { recursive: true });
+    const taskIndex = new Database(join(storeDir, "tasks-index.sqlite"));
+    taskIndex.exec(
+      "CREATE TABLE tasks (workspace_key TEXT, workspace_path TEXT, task_id TEXT, acp_session_id TEXT, updated_at INTEGER)"
+    );
+    taskIndex
+      .prepare(
+        "INSERT INTO tasks (workspace_key, workspace_path, task_id, acp_session_id, updated_at) VALUES (?, ?, ?, ?, ?)"
+      )
+      .run("workspace-key", projectPath, `sess_${sessionId}`, null, 1);
+    taskIndex.close();
+    process.env.CCR_ZCODE_DIR = zcodeDir;
+
+    // The project is someone else's — it has a project Router of its own, but
+    // ZCode was never opted in, so its sessions must stay on the global Router.
+    await writeProjectConfig(projectPath, {
+      Router: { default: "project,project-model", enableFamilyRouting: false },
+    });
+
+    globalThis.fetch = vi.fn(async (url: any, init: any) => {
+      fetchCalls.push({ url: String(url), body: init?.body });
+      return nonStreamResponse({ model: "global-model" });
+    }) as any;
+
+    let server: Awaited<ReturnType<typeof buildRuntime>>["server"] | undefined;
+    try {
+      ({ server } = await buildRuntime({
+        Providers: [
+          {
+            name: "global",
+            api_base_url: "https://upstream.example/v1/messages",
+            api_key: "global-key",
+            models: ["global-model"],
+          },
+          {
+            name: "project",
+            api_base_url: "https://upstream.example/v1/messages",
+            api_key: "project-key",
+            models: ["project-model"],
+          },
+        ],
+        Router: { default: "global,global-model", enableFamilyRouting: false },
+      }));
+
+      const res = await server.app.inject({
+        method: "POST",
+        url: "/v1/messages",
+        headers: { "user-agent": "ZCode/3.11.2 ai-sdk/anthropic/2.0.0" },
+        payload: {
+          model: "ccr-opus",
+          messages: [{ role: "user", content: "hello" }],
+          metadata: { user_id: JSON.stringify({ session_id: sessionId }) },
+          stream: false,
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(fetchCalls).toHaveLength(1);
+      expect(fetchCalls[0].body).toContain('"model":"global-model"');
+    } finally {
+      if (server) await server.app.close();
+      if (previousZcodeDir === undefined) delete process.env.CCR_ZCODE_DIR;
+      else process.env.CCR_ZCODE_DIR = previousZcodeDir;
+      await deleteProjectConfig(projectPath);
       rmSync(projectPath, { recursive: true, force: true });
       rmSync(zcodeDir, { recursive: true, force: true });
     }

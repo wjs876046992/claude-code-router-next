@@ -7,6 +7,7 @@ import {
   CLAUDE_PROJECTS_DIR,
   HOME_DIR,
   getClaudeProjectId,
+  isZcodeProjectTakeoverActive,
 } from "@wengine-ai/claude-code-router-shared";
 import { ConfigService } from "../services/config";
 import { TokenizerService } from "../services/tokenizer";
@@ -14,7 +15,7 @@ import { getHealthStore } from "../services/provider-health";
 import { getQuotaResult } from "../services/quota-store";
 import { getFallbackPromotionStore } from "./fallback-promotion";
 import { normalizeSessionId } from "./session-id";
-import { searchZcodeProjectBySession } from "./zcode-session-project";
+import { findZcodeWorkspacePath } from "./zcode-session-project";
 import { applyClientAdapter, type ClientContext } from "../clients/adapters";
 
 /**
@@ -222,16 +223,20 @@ const getProjectSpecificRouter = async (
 
   // ZCode carries no project identity on the wire, so the Claude Code transcript
   // lookup above always misses for it. Its local task index does map the session
-  // to the workspace it ran in, which resolves to the same project id — so a
-  // ZCode project uses the per-project Router configured for that directory,
-  // and falls back to the global Router when no project config exists.
+  // to the workspace it ran in, which resolves to the same project id. Routing
+  // is opt-in per project (the takeover clients of the project in the UI), so a
+  // ZCode project that was not opted in — or has no config — keeps the global
+  // Router, which is what protects projects pinned to their own models.
   if (
     !project
     && !hasExplicitProject
     && req.clientType === "zcode"
     && req.sessionId
   ) {
-    project = await searchZcodeProjectBySession(req.sessionId);
+    const workspacePath = await findZcodeWorkspacePath(req.sessionId);
+    if (workspacePath && isZcodeProjectTakeoverActive(workspacePath)) {
+      project = getClaudeProjectId(workspacePath);
+    }
   }
 
   if (project) {

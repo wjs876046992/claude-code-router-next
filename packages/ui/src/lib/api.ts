@@ -1,4 +1,4 @@
-import type { ClientApplyResponse, ClientId, ClientStatus, Config, ManualProbeResponse, ProjectConfigEntry, ProjectsResponse, ProviderHealthResponse, ProviderQuotaResponse } from '@/types';
+import type { ClientApplyResponse, ClientId, ClientStatus, Config, ManualProbeResponse, ProjectConfigEntry, ProjectTakeoverClientId, ProjectsResponse, ProviderHealthResponse, ProviderQuotaResponse } from '@/types';
 
 // API Client Class for handling requests with baseUrl and apikey authentication
 class ApiClient {
@@ -250,8 +250,8 @@ class ApiClient {
     return this.delete<{ success: boolean }>(`/projects/${encodeURIComponent(id)}`);
   }
 
-  async setProjectTakeover(id: string, clients: ClientId[]): Promise<{ id: string; path: string; ccrTakeover: boolean; ccrTakeoverClients: ClientId[] }> {
-    return this.put<{ id: string; path: string; ccrTakeover: boolean; ccrTakeoverClients: ClientId[] }>(`/projects/${encodeURIComponent(id)}/takeover`, { clients });
+  async setProjectTakeover(id: string, clients: ProjectTakeoverClientId[]): Promise<{ id: string; path: string; ccrTakeover: boolean; ccrTakeoverClients: ProjectTakeoverClientId[] }> {
+    return this.put<{ id: string; path: string; ccrTakeover: boolean; ccrTakeoverClients: ProjectTakeoverClientId[] }>(`/projects/${encodeURIComponent(id)}/takeover`, { clients });
   }
 
   // ========== Usage Statistics API methods ==========

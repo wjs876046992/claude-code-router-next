@@ -3,7 +3,6 @@ import { readFile, readdir } from "fs/promises";
 import { homedir } from "os";
 import { isAbsolute, join, normalize } from "path";
 import Database from "better-sqlite3";
-import { getClaudeProjectId } from "@wengine-ai/claude-code-router-shared";
 
 /**
  * ZCode puts no project identity on the wire — its request headers only carry
@@ -33,20 +32,20 @@ const SESSION_RETRY_ATTEMPTED_MAX = 500;
 const SESSION_LOOKUP_RETRY_COUNT = 3;
 const SESSION_LOOKUP_RETRY_DELAY_MS = 50;
 
-const sessionProjectCache = new Map<string, string>();
+const sessionWorkspaceCache = new Map<string, string>();
 const sessionRetryAttempted = new Set<string>();
 
 const sleep = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
 
 function trimCache(): void {
-  if (sessionProjectCache.size <= SESSION_CACHE_MAX) return;
-  const keysToDelete = [...sessionProjectCache.keys()].slice(
+  if (sessionWorkspaceCache.size <= SESSION_CACHE_MAX) return;
+  const keysToDelete = [...sessionWorkspaceCache.keys()].slice(
     0,
-    sessionProjectCache.size - SESSION_CACHE_MAX
+    sessionWorkspaceCache.size - SESSION_CACHE_MAX
   );
   for (const key of keysToDelete) {
-    sessionProjectCache.delete(key);
+    sessionWorkspaceCache.delete(key);
   }
 }
 
@@ -142,71 +141,57 @@ async function lookupWorkspaceInSessionFiles(
 }
 
 /**
- * Resolve the workspace a ZCode session ran in. Returns null when ZCode is not
- * installed, the store predates v2, or the session is unknown.
+ * Resolve the workspace a ZCode session ran in, as an absolute normalized path.
+ * Returns null — never throws — when ZCode is not installed, the store predates
+ * v2, or the session is unknown, leaving routing to fall back to the global
+ * Router.
  */
 export async function findZcodeWorkspacePath(
-  sessionId: string
-): Promise<string | null> {
-  const candidates = sessionIdCandidates(sessionId);
-  if (candidates.length === 0) return null;
-
-  const storeDir = join(zcodeDir(), ZCODE_STORE_DIR);
-  const taskIndexFile = join(storeDir, TASK_INDEX_FILE);
-  if (existsSync(taskIndexFile)) {
-    const fromIndex = lookupWorkspaceInTaskIndex(taskIndexFile, candidates);
-    if (fromIndex) return fromIndex;
-  }
-
-  return lookupWorkspaceInSessionFiles(
-    join(storeDir, SESSIONS_DIR),
-    candidates
-  );
-}
-
-/**
- * Resolve the CCR project id for a ZCode session. The id is the same
- * path-derived key `getProjectConfigPath` uses, so a project configured from
- * the project directory (`ccr model --project`) or through the UI applies here.
- *
- * Returns null — never throws — when the session is unknown, so routing simply
- * falls back to the global Router.
- */
-export async function searchZcodeProjectBySession(
   sessionId: string
 ): Promise<string | null> {
   const safeSessionId = typeof sessionId === "string" ? sessionId.trim() : "";
   if (!safeSessionId) return null;
 
-  const cached = sessionProjectCache.get(safeSessionId);
+  const cached = sessionWorkspaceCache.get(safeSessionId);
   if (cached) return cached;
 
   const resolve = async (): Promise<string | null> => {
-    const workspacePath = await findZcodeWorkspacePath(safeSessionId);
-    if (!workspacePath || !isAbsolute(workspacePath)) return null;
-    const projectId = getClaudeProjectId(normalize(workspacePath));
-    return projectId || null;
+    const candidates = sessionIdCandidates(safeSessionId);
+    if (candidates.length === 0) return null;
+
+    const storeDir = join(zcodeDir(), ZCODE_STORE_DIR);
+    const taskIndexFile = join(storeDir, TASK_INDEX_FILE);
+    if (existsSync(taskIndexFile)) {
+      const fromIndex = lookupWorkspaceInTaskIndex(taskIndexFile, candidates);
+      if (fromIndex) return fromIndex;
+    }
+
+    return lookupWorkspaceInSessionFiles(
+      join(storeDir, SESSIONS_DIR),
+      candidates
+    );
   };
 
   try {
-    let project = await resolve();
+    let workspacePath = await resolve();
 
     // Only retry once per session so an unknown session does not pay this delay
     // on every request.
-    if (!project && !sessionRetryAttempted.has(safeSessionId)) {
+    if (!workspacePath && !sessionRetryAttempted.has(safeSessionId)) {
       sessionRetryAttempted.add(safeSessionId);
       trimRetryAttempted();
-      for (let i = 0; i < SESSION_LOOKUP_RETRY_COUNT && !project; i++) {
+      for (let i = 0; i < SESSION_LOOKUP_RETRY_COUNT && !workspacePath; i++) {
         await sleep(SESSION_LOOKUP_RETRY_DELAY_MS);
-        project = await resolve();
+        workspacePath = await resolve();
       }
     }
 
-    if (!project) return null;
+    if (!workspacePath || !isAbsolute(workspacePath)) return null;
 
-    sessionProjectCache.set(safeSessionId, project);
+    const normalized = normalize(workspacePath);
+    sessionWorkspaceCache.set(safeSessionId, normalized);
     trimCache();
-    return project;
+    return normalized;
   } catch {
     return null;
   }
