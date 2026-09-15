@@ -18,8 +18,11 @@ import {
   applyOpencodeProjectTakeover,
   removeOpencodeProjectTakeover,
   isOpencodeProjectTakeoverActive,
+  applyZcodeProjectTakeover,
+  removeZcodeProjectTakeover,
+  isZcodeProjectTakeoverActive,
   PROJECT_TAKEOVER_CLIENT_IDS,
-  type ClientId,
+  type ProjectTakeoverClientId,
 } from "./client-integrations";
 
 export interface ProjectConfig {
@@ -270,12 +273,13 @@ export async function refreshCcrProjectTakeover(
 
 /**
  * List which project-takeover-capable clients (Claude Code, pi, qwen-code,
- * opencode) currently route a given project through ccr. Derived directly from each
- * client's project-scoped config file, so it needs no separately stored flag
- * and is always consistent with the real on-disk state.
+ * opencode, ZCode) currently route a given project through ccr. Most are derived
+ * from each client's own project-scoped config file so the answer always matches
+ * the real on-disk state; ZCode has no such file and its opt-in is recorded by
+ * ccr instead.
  */
-export async function getProjectTakeoverClients(projectPath: string): Promise<ClientId[]> {
-  const active: ClientId[] = [];
+export async function getProjectTakeoverClients(projectPath: string): Promise<ProjectTakeoverClientId[]> {
+  const active: ProjectTakeoverClientId[] = [];
   for (const id of PROJECT_TAKEOVER_CLIENT_IDS) {
     if (id === "claudeCode") {
       if (await getCcrTakeoverStatus(projectPath)) active.push(id);
@@ -285,6 +289,8 @@ export async function getProjectTakeoverClients(projectPath: string): Promise<Cl
       if (isQwenProjectTakeoverActive(projectPath)) active.push(id);
     } else if (id === "opencode") {
       if (isOpencodeProjectTakeoverActive(projectPath)) active.push(id);
+    } else if (id === "zcode") {
+      if (isZcodeProjectTakeoverActive(projectPath)) active.push(id);
     }
   }
   return active;
@@ -297,9 +303,9 @@ export async function getProjectTakeoverClients(projectPath: string): Promise<Cl
  */
 export async function setProjectTakeover(
   projectPath: string,
-  clients: ClientId[],
+  clients: ProjectTakeoverClientId[],
   config: Record<string, any>
-): Promise<ClientId[]> {
+): Promise<ProjectTakeoverClientId[]> {
   const want = new Set(clients.filter((id) => PROJECT_TAKEOVER_CLIENT_IDS.includes(id)));
   const piTakeoverConfig = want.has("pi")
     ? await resolveProjectTakeoverConfig(projectPath, config)
@@ -316,6 +322,9 @@ export async function setProjectTakeover(
     } else if (id === "opencode") {
       if (want.has(id)) applyOpencodeProjectTakeover(projectPath, config);
       else removeOpencodeProjectTakeover(projectPath);
+    } else if (id === "zcode") {
+      if (want.has(id)) applyZcodeProjectTakeover(projectPath);
+      else removeZcodeProjectTakeover(projectPath);
     }
   }
   return getProjectTakeoverClients(projectPath);

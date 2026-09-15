@@ -78,6 +78,8 @@ The Web UI (`ccr ui`) has a **Projects** tab in Settings where you can:
   (opus/sonnet/haiku) routing. The editor is pre-filled with a copy of your current global
   `Router` so existing behavior is preserved as your starting point
 - Remove a project's configuration entirely
+- Pick which clients the project takes over — **Clients to take over** under the takeover
+  switch. Claude Code is taken over by default; pi, Qwen Code, opencode and ZCode are opt-in
 
 This is equivalent to running `ccr model --project` from that project's directory, but lets
 you manage all configured projects from one place without needing a terminal open in each
@@ -95,6 +97,20 @@ The provider is intentionally unique per project; do not replace it with the sha
 `ccr` provider. Existing shared-provider takeovers are migrated automatically when CCR starts
 or refreshes client configuration. Disabling global Pi takeover does not disable active Pi
 project takeovers.
+
+### Project takeover and ZCode
+
+ZCode sends no project identity on the wire, so CCR resolves it locally: ZCode records the
+workspace of every session in `~/.zcode/v2/tasks-index.sqlite` (and in
+`~/.zcode/v2/sessions/<workspace-key>/<session>.json`), and CCR looks the session up there to
+find the project a request belongs to.
+
+Because that lookup can attribute a session to any directory you have ever opened in ZCode,
+routing is **opt-in per project**: select **ZCode** in the project's takeover client list and
+that project's ZCode sessions use the project `Router`; otherwise they keep using the global
+`Router`. Unlike the other clients, ZCode has no project-scoped config file for CCR to write —
+CCR records the opt-in itself, in `~/.claude-code-router/<project-id>/takeover-clients.json`.
+Removing the project (or clearing ZCode from the takeover list) removes that record.
 
 ## Managing Project Configuration with `ccr model --project`
 

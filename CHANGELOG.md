@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [2.3.2407] - 2026-09-15
+
+### Added
+
+- **ZCode 会话发现器（项目级路由对 ZCode 生效）**: ZCode 请求不携带任何项目标识（请求头只有自身版本/追踪戳），因此此前 `ccr model --project` 与 UI 里配置的项目 Router 对 ZCode 一律无效。现在按会话回查 ZCode 本地记录：`~/.zcode/v2/tasks-index.sqlite` 保存每个会话运行的工作目录，`~/.zcode/v2/sessions/<workspace-key>/<session>.json` 的 `meta.workspacePath` 是同一信息的兜底（索引不可读/损坏时仍能命中）；会话 id 同时接受请求里的原始值与 `sess_<uuid>` / `<uuid>` 两种形态。解析结果就是 `getProjectConfigPath` 使用的项目 id，所以项目 Router 与 Claude Code 会话走同一份配置；新会话索引行晚于首个请求写入时有一次短重试，成功结果缓存、未命中不缓存，任何异常都退化为全局 Router 而非让请求失败。
+- **ZCode 可作为项目接管客户端（opt-in）**: 项目「接管的客户端」下拉新增 ZCode，接管状态即路由开关——只有勾选了 ZCode 的项目，其 ZCode 会话才走该项目 Router，未勾选的项目（以及没有项目配置的项目）保持全局 Router，避免个人项目被会话发现悄悄改道到项目/公司模型。ZCode 没有可写的项目级配置文件（Claude Code 用 `.claude/settings.local.json`、pi 用 `.pi/settings.json`），所以接管标记由 CCR 自己记录在 `~/.claude-code-router/<project-id>/takeover-clients.json`，取消勾选或删除项目时一并清除；`GET/PUT /api/projects/:id/takeover` 与项目列表接口都按同一集合回报。
+
 ## [2.3.2406] - 2026-09-15
 
 ### Added

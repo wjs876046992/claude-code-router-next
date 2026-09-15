@@ -59,6 +59,7 @@ import {
   setProjectTakeover,
   isProjectTakeoverClient,
   type ClientId,
+  type ProjectTakeoverClientId,
 } from "@wengine-ai/claude-code-router-shared";
 import fastifyMultipart from "@fastify/multipart";
 import AdmZip from "adm-zip";
@@ -556,7 +557,7 @@ export async function registerAdminRoutes(server: any, config: any): Promise<any
       // Only Claude Code is taken over by default: the other clients write
       // config files into the project root (e.g. opencode.json), which users
       // must opt into explicitly via the clients array.
-      let clients: ClientId[];
+      let clients: ProjectTakeoverClientId[];
       if (Array.isArray(body.clients)) {
         clients = body.clients.filter(isProjectTakeoverClient);
       } else if (typeof body.enabled === "boolean") {

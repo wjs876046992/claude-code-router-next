@@ -2010,18 +2010,80 @@ export function isOpencodeProjectTakeoverActive(projectPath: string): boolean {
   return isOpencodeManaged(readJsonObject(getOpencodeProjectSettingsPath(projectPath)));
 }
 
+// ===================== zcode (ccr-recorded takeover) =====================
+//
+// ZCode has no project-scoped config file for ccr to write: it sends its model
+// aliases to ccr and ccr itself maps a ZCode session to the workspace it ran in
+// (see core/utils/zcode-session-project.ts). So the per-project opt-in is
+// recorded by ccr, in its own project directory, and read back from there.
+
+/** File recording takeover clients that have no config file of their own. */
+const PROJECT_CLIENT_STATE_FILE = "takeover-clients.json";
+
+function getProjectClientStatePath(projectPath: string): string {
+  return path.join(getProjectConfigDir(projectPath), PROJECT_CLIENT_STATE_FILE);
+}
+
+function readProjectTakeoverClients(projectPath: string): string[] {
+  const state = readJsonObject(getProjectClientStatePath(projectPath));
+  return Array.isArray(state.clients)
+    ? state.clients.filter((id): id is string => typeof id === "string")
+    : [];
+}
+
 /**
- * Clients that support *project-level* ccr takeover (writing a project-scoped
- * config file). Claude Code uses `.claude/settings.local.json`; pi uses
- * `.pi/settings.json`; qwen-code uses `.qwen/settings.json`; opencode uses
- * `opencode.json`. Codex is intentionally excluded — its config
+ * Enable ZCode takeover for a project: route that project's ZCode sessions
+ * through its project Router instead of the global one.
+ */
+export function applyZcodeProjectTakeover(projectPath: string): void {
+  const clients = readProjectTakeoverClients(projectPath);
+  if (clients.includes("zcode")) return;
+  writeJsonObject(getProjectClientStatePath(projectPath), {
+    clients: [...clients, "zcode"],
+  });
+}
+
+/** Disable ZCode takeover for a project, dropping the state file when empty. */
+export function removeZcodeProjectTakeover(projectPath: string): void {
+  const statePath = getProjectClientStatePath(projectPath);
+  const remaining = readProjectTakeoverClients(projectPath).filter((id) => id !== "zcode");
+  if (remaining.length > 0) {
+    writeJsonObject(statePath, { clients: remaining });
+    return;
+  }
+  try {
+    if (fs.existsSync(statePath)) fs.unlinkSync(statePath);
+  } catch {
+    // Best-effort; a leftover file only reports the takeover as still active.
+  }
+}
+
+/** Whether ZCode sessions of a project route through that project's Router. */
+export function isZcodeProjectTakeoverActive(projectPath: string): boolean {
+  return readProjectTakeoverClients(projectPath).includes("zcode");
+}
+
+/**
+ * Clients that support *project-level* ccr takeover. Claude Code uses
+ * `.claude/settings.local.json`; pi uses `.pi/settings.json`; qwen-code uses
+ * `.qwen/settings.json`; opencode uses `opencode.json`. ZCode keeps no
+ * project-scoped config, so its takeover is recorded inside ccr's own project
+ * directory. Codex is intentionally excluded — its config
  * (`~/.codex/config.toml`) is global-only, so it can only be taken over from the
  * Clients page, not per project.
  */
-export const PROJECT_TAKEOVER_CLIENT_IDS: ClientId[] = ["claudeCode", "pi", "qwenCode", "opencode"];
+export type ProjectTakeoverClientId = ClientId | "zcode";
+
+export const PROJECT_TAKEOVER_CLIENT_IDS: ProjectTakeoverClientId[] = [
+  "claudeCode",
+  "pi",
+  "qwenCode",
+  "opencode",
+  "zcode",
+];
 
 /** Type guard for {@link PROJECT_TAKEOVER_CLIENT_IDS}. */
-export function isProjectTakeoverClient(value: string): value is ClientId {
+export function isProjectTakeoverClient(value: string): value is ProjectTakeoverClientId {
   return (PROJECT_TAKEOVER_CLIENT_IDS as string[]).includes(value);
 }
 
