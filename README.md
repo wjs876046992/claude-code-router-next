@@ -2,7 +2,7 @@
 
 **[🇨🇳 中文文档](README.md)**  |  **[🇬🇧 English](README_en.md)**  |  [![npm version](https://badge.fury.io/js/@wengine-ai_claude-code-router-next.svg)](https://www.npmjs.com/package/@wengine-ai/claude-code-router-next)
 
-> **说明**：原版 [claude-code-router](https://github.com/musistudio/claude-code-router) 仓库已不再活跃维护。本项目是基于原仓库 fork 的社区活跃版本，持续进行 Bug 修复、功能开发和长期维护。
+> **说明**：本项目 fork 自 [claude-code-router](https://github.com/musistudio/claude-code-router)（2026-05 建仓，当时上游自 2026-01-04 起已 4 个月未发版、自 2026-03-04 起无提交；上游其后已恢复活跃）。本项目持续维护自己的发布线，并在其基础上开发按项目路由、多客户端接管、ZCode 支持等特性。
 
 <hr>
 

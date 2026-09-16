@@ -15,7 +15,19 @@
     "router",
     "shared"
   ],
-  "author": "musistudio",
+  "author": "xiaoliu10 (https://github.com/xiaoliu10)",
+  "contributors": [
+    "musistudio (https://github.com/musistudio)"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xiaoliu10/claude-code-router-next.git",
+    "directory": "packages/shared"
+  },
+  "homepage": "https://github.com/xiaoliu10/claude-code-router-next#readme",
+  "bugs": {
+    "url": "https://github.com/xiaoliu10/claude-code-router-next/issues"
+  },
   "license": "MIT",
   "files": [
     "dist"

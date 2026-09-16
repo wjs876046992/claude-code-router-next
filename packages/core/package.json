@@ -32,7 +32,19 @@
     "transformer",
     "api"
   ],
-  "author": "musistudio",
+  "author": "xiaoliu10 (https://github.com/xiaoliu10)",
+  "contributors": [
+    "musistudio (https://github.com/musistudio)"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xiaoliu10/claude-code-router-next.git",
+    "directory": "packages/core"
+  },
+  "homepage": "https://github.com/xiaoliu10/claude-code-router-next#readme",
+  "bugs": {
+    "url": "https://github.com/xiaoliu10/claude-code-router-next/issues"
+  },
   "license": "MIT",
   "dependencies": {
     "@anthropic-ai/sdk": "^0.54.0",
