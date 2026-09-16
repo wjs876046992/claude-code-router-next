@@ -9,7 +9,8 @@ dist
 tsconfig.tsbuildinfo
 tmp/
 
-# Documentation build output
+# TypeScript declaration build outputs in source trees
+packages/ui/src/**/*.d.ts
 docs/build
 docs/.docusaurus
 .mimocode/
