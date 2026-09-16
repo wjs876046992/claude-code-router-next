@@ -2,7 +2,7 @@
 
 **[🇨🇳 中文文档](README.md)**  |  **[🇬🇧 English](README_en.md)**  |  [![npm version](https://badge.fury.io/js/@wengine-ai_claude-code-router-next.svg)](https://www.npmjs.com/package/@wengine-ai/claude-code-router-next)
 
-> **Note**: The original [claude-code-router](https://github.com/musistudio/claude-code-router) repository is no longer actively maintained. This project is a community-driven fork that continues to be actively developed and maintained with bug fixes, new features, and ongoing improvements.
+> **Note**: This project is a fork of [claude-code-router](https://github.com/musistudio/claude-code-router), created in May 2026 when the upstream had not published a release since 2026-01-04 nor committed since 2026-03-04 (upstream has since resumed active development). This project maintains its own release line and adds features on top of it, including per-project routing, multi-client takeover, and ZCode support.
 
 <hr>
 
