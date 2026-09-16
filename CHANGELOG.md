@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`ccr code` 的 auto-compact 窗口改为跟随顶层 `ContextWindow`**: `ccr code` 交给 Claude Code 的会话环境（`--settings` + 进程 env）里 `CLAUDE_CODE_AUTO_COMPACT_WINDOW` 此前硬编码为 `200000`，与接管写入 `settings.json` 时使用的「顶层 `ContextWindow`（默认 family 未启用扩展上下文时封顶 200000）」脱节。用户在 UI 把 `ContextWindow` 设为 1M 后，`ccr code` 启动的会话窗口仍停在 200k：状态栏百分比按 200k 计算、`Router.longContextThreshold`（600000）与 `extendedContextThreshold`（950000）永远不可达，扩展上下文与长上下文路由形同虚设；且该会话环境优先级高于 settings 文件，所以连 `/autocompact`、`autoCompactWindow` 设置项都一并失效。现在 `ccr code` 与接管共用同一套计算。
+- **`ccr code` 按项目 Router 计算窗口与别名（避免覆盖项目接管的上限）**: `ccr code` 在项目目录里启动时，此前只读全局配置，因此只给全局口径的值；但 Claude Code 的 env 层（`ccr code` 会同时写 `--settings` 与进程 env）优先于包括项目 `.claude/settings.local.json` 在内的所有 settings 层，这会覆盖掉项目接管写入的 200k 上限。典型场景：全局默认 family 启用 `[1m]` 且 `ContextWindow=1000000`，而某项目自带 Router 未启用扩展上下文——项目接管正确地封顶 200k，`ccr code` 却把会话重新拉到 1M，上下文超过 200k 后又因严格项目路由无法逃逸到全局扩展模型，最终无可用模型。现在 `ccr code` 经 `readProjectConfig(process.cwd())` + `buildProjectTakeoverConfig`（自 projectConfig 导出）取得「全局连接/界面参数 + 项目 Router」的有效配置，与项目接管同源；项目无自有 Router、或项目配置损坏时回退全局（损坏不再阻断 `ccr code`，请求路径仍会报项目路由错误）。
+- **统一 `ccr code` 与接管的 family 别名与压缩比例（消除两套实现）**: 两条写入路径本各有一份实现，导致三处分歧——① `enableFamilyRouting: false` 时接管会正确地不发 `ccr-*[1m]` 别名，`ccr code` 却仍发，留下无 family 路由可解析的陈旧 `[1m]` 别名（同时把窗口留在 1M）；② `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` 在 CLI 里是 `"85"`、在接管里是 `"90"`；③ 别名取值逻辑重复。现在抽出纯函数 `getClaudeFamilyEnv`（family 别名）与 `CLAUDE_AUTO_COMPACT_PCT_OVERRIDE` 常量（自 shared 导出）供两条路径共用；接管侧 `applyClaudeModelFamilies` 改为先清陈旧 `ccr-*` 别名再 `Object.assign` 共享结果。压缩比例统一取 `"90"`：此前 `ccr code` 的 `"85"` 因 env 层优先级而实际生效，接管写的 `"90"` 被静默忽略；因为该变量只会**下调**压缩阈值，统一后压缩点从 85% 略延后到 90%（如需回到更保守的 85%，改 `packages/shared/src/client-integrations.ts` 的 `CLAUDE_AUTO_COMPACT_PCT_OVERRIDE` 一处即可）。新增 `claude-family-env` 单测覆盖别名、think 路由优先、family 路由显式关闭、窗口封顶与共享常量，shared 51 项、core 325 项全通过。
+
 ## [2.3.2407] - 2026-09-15
 
 ### Added

@@ -151,10 +151,32 @@ const CLAUDE_MODEL_ENV_KEYS = [
   "ANTHROPIC_DEFAULT_HAIKU_MODEL",
   "ANTHROPIC_REASONING_MODEL",
 ];
+/**
+ * Fraction of the compaction window at which Claude Code fires auto-compact.
+ * Claude Code only *lowers* the effective threshold with this, so a smaller
+ * value compacts earlier.
+ *
+ * Single source of truth for every CCR write path. It previously existed as two
+ * independent literals — "85" in `ccr code`'s command env and "90" in the
+ * settings-file takeover — so the same config produced two different compaction
+ * points depending on whether the session was started with `ccr code`. Because
+ * a settings-file takeover writes this into `settings.json` while `ccr code`
+ * passes it as BOTH `--settings` and process env (and Claude Code's env layer
+ * outranks its settings layer), the env copy is the one that wins in practice.
+ */
+export const CLAUDE_AUTO_COMPACT_PCT_OVERRIDE = "90";
+
 const CLAUDE_AUTO_COMPACT_ENV = {
   CLAUDE_CODE_AUTO_COMPACT_WINDOW: "200000",
-  CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "90",
+  CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: CLAUDE_AUTO_COMPACT_PCT_OVERRIDE,
   CLAUDE_CODE_SIMPLE: "1",
+};
+
+/** Family name -> the Claude Code env var that selects its `ccr-*` alias. */
+const CLAUDE_FAMILY_ENV_KEYS: Record<string, string> = {
+  opus: "ANTHROPIC_DEFAULT_OPUS_MODEL",
+  sonnet: "ANTHROPIC_DEFAULT_SONNET_MODEL",
+  haiku: "ANTHROPIC_DEFAULT_HAIKU_MODEL",
 };
 
 // Default context window (in tokens) used to drive client-side auto-compaction
@@ -489,7 +511,14 @@ function getDefaultClaudeFamily(config: Record<string, any>): string | null {
   return familyNames[0] || null;
 }
 
-function getClaudeTakeoverContextWindow(config: Record<string, any>): number {
+/**
+ * Auto-compact window a Claude Code takeover should use: the global
+ * `ContextWindow`, capped at DEFAULT_CONTEXT_WINDOW when the default family has
+ * no extended context. Exported so `ccr code` (the session env it hands to
+ * Claude Code via --settings) computes the same window as the settings-file
+ * takeover instead of hardcoding 200000.
+ */
+export function getClaudeTakeoverContextWindow(config: Record<string, any>): number {
   const contextWindow = getContextWindow(config);
   const defaultFamily = getDefaultClaudeFamily(config);
   const extendedContextEnabled = defaultFamily
@@ -501,52 +530,59 @@ function getClaudeTakeoverContextWindow(config: Record<string, any>): number {
     : Math.min(contextWindow, DEFAULT_CONTEXT_WINDOW);
 }
 
+/**
+ * Compute the Claude Code env vars that select CCR's `ccr-*` model aliases for
+ * the configured model families. Pure (no file access) so that the
+ * settings-file takeover and `ccr code`'s command env share ONE implementation.
+ *
+ * Keeping them separate previously let them drift: the takeover honored
+ * `Router.enableFamilyRouting === false` (via getSupportedClaudeFamilyNames)
+ * while `ccr code` did not, so `ccr code` kept emitting `ccr-opus[1m]` aliases —
+ * and therefore a 1M window — for a config whose family routing was explicitly
+ * disabled, leaving the alias with no family route to resolve to.
+ */
+export function getClaudeFamilyEnv(config: Record<string, any>): Record<string, string> {
+  const env: Record<string, string> = {};
+  if (!hasFamiliesConfig(config)) return env;
+
+  const families = config.Router.families;
+  const supportedFamilyNames = getSupportedClaudeFamilyNames(config);
+
+  for (const family of supportedFamilyNames) {
+    const key = CLAUDE_FAMILY_ENV_KEYS[family];
+    if (!key) continue;
+    const extendedSuffix = hasExtendedContext(families[family]) ? "[1m]" : "";
+    env[key] = `ccr-${family}${extendedSuffix}`;
+  }
+
+  const defaultFamily = getDefaultClaudeFamily(config);
+  if (defaultFamily) {
+    const extendedSuffix = hasExtendedContext(families[defaultFamily]) ? "[1m]" : "";
+    env.ANTHROPIC_MODEL = `ccr-${defaultFamily}${extendedSuffix}`;
+  }
+
+  const thinkFamily = supportedFamilyNames.find((family) => families[family]?.think);
+  const reasoningFamily = thinkFamily || defaultFamily;
+  if (reasoningFamily) {
+    const extendedSuffix = hasExtendedContext(families[reasoningFamily]) ? "[1m]" : "";
+    env.ANTHROPIC_REASONING_MODEL = `ccr-${reasoningFamily}${extendedSuffix}`;
+  }
+
+  return env;
+}
+
 function applyClaudeModelFamilies(settings: Record<string, any>, config: Record<string, any>): void {
   if (!isObject(settings.env)) settings.env = {};
 
+  // Drop stale CCR-owned aliases first so a config change (e.g. extended context
+  // turned off) cannot leave an outdated `ccr-*[1m]` name behind.
   for (const key of CLAUDE_MODEL_ENV_KEYS) {
     if (typeof settings.env[key] === "string" && settings.env[key].startsWith("ccr-")) {
       delete settings.env[key];
     }
   }
 
-  if (!hasFamiliesConfig(config)) return;
-
-  const families = config.Router.families;
-  const supportedFamilyNames = getSupportedClaudeFamilyNames(config);
-
-  for (const family of supportedFamilyNames) {
-    const familyConfig = families[family];
-    const extendedSuffix = hasExtendedContext(familyConfig) ? "[1m]" : "";
-    const ccrModel = `ccr-${family}${extendedSuffix}`;
-
-    switch (family) {
-      case "opus":
-        settings.env.ANTHROPIC_DEFAULT_OPUS_MODEL = ccrModel;
-        break;
-      case "sonnet":
-        settings.env.ANTHROPIC_DEFAULT_SONNET_MODEL = ccrModel;
-        break;
-      case "haiku":
-        settings.env.ANTHROPIC_DEFAULT_HAIKU_MODEL = ccrModel;
-        break;
-    }
-  }
-
-  const defaultFamily = getDefaultClaudeFamily(config);
-  if (defaultFamily) {
-    const defaultConfig = families[defaultFamily];
-    const extendedSuffix = hasExtendedContext(defaultConfig) ? "[1m]" : "";
-    settings.env.ANTHROPIC_MODEL = `ccr-${defaultFamily}${extendedSuffix}`;
-  }
-
-  const thinkFamily = supportedFamilyNames.find((family) => families[family]?.think);
-  const reasoningFamily = thinkFamily || defaultFamily;
-  if (reasoningFamily) {
-    const reasoningConfig = families[reasoningFamily];
-    const extendedSuffix = hasExtendedContext(reasoningConfig) ? "[1m]" : "";
-    settings.env.ANTHROPIC_REASONING_MODEL = `ccr-${reasoningFamily}${extendedSuffix}`;
-  }
+  Object.assign(settings.env, getClaudeFamilyEnv(config));
 }
 
 /**

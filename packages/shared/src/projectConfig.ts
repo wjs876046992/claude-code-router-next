@@ -48,7 +48,17 @@ function isUsingGlobalRouter(router: Record<string, any> | undefined): boolean {
   return Object.keys(router || {}).length === 0;
 }
 
-function buildProjectTakeoverConfig(
+/**
+ * Build the config that applies to a project: global connection/UI settings plus
+ * the project's own Router, so a project's routing decisions (including the
+ * extended-context switch that caps the auto-compact window) drive anything
+ * derived from it. An empty/absent project Router means "use the global Router".
+ *
+ * Exported so `ccr code` derives its session env from the same effective config
+ * the settings-file takeover uses. Without this, a project that caps its window
+ * at 200k (no extended context) could still start a 1M session via `ccr code`.
+ */
+export function buildProjectTakeoverConfig(
   config: Record<string, any>,
   projectRouter: Record<string, any> | undefined,
 ): Record<string, any> {

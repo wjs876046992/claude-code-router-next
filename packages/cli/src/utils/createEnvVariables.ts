@@ -1,75 +1,41 @@
 import { readConfigFile } from ".";
 import {
+  buildProjectTakeoverConfig,
+  CLAUDE_AUTO_COMPACT_PCT_OVERRIDE,
   getActiveProfile,
+  getClaudeFamilyEnv,
+  getClaudeTakeoverContextWindow,
   getProfileConfigPath,
+  readProjectConfig,
 } from "@wengine-ai/claude-code-router-shared";
 import fs from "node:fs/promises";
 import JSON5 from "json5";
 
 const CLAUDE_AUTO_COMPACT_ENV = {
-  CLAUDE_CODE_AUTO_COMPACT_WINDOW: "200000",
-  CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "85",
+  CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: CLAUDE_AUTO_COMPACT_PCT_OVERRIDE,
   CLAUDE_CODE_SIMPLE: "1",
 };
 
-function hasExtendedContext(familyConfig: any): boolean {
-  return familyConfig?.enableExtendedContext === true;
-}
-
 /**
- * Inject model family env vars when families are configured in CCR.
- * This ensures `ccr code` uses the correct ccr-* model names for routing,
- * regardless of what's in ~/.claude/settings.json.
+ * Resolve the config that applies to the project `ccr code` is launched in:
+ * global connection/UI settings with the project's Router overlaid. Mirrors the
+ * settings-file takeover (buildProjectTakeoverConfig) so both paths cap the
+ * auto-compact window identically. Falls back to the global config when the
+ * project has no Router of its own, or when the project config can't be read.
  */
-function getModelEnvVars(config: any): Record<string, string | undefined> {
-  const families = config?.Router?.families;
-  if (!families || typeof families !== "object") return {};
-
-  const familyNames = Object.keys(families);
-  if (familyNames.length === 0) return {};
-
-  const env: Record<string, string | undefined> = {};
-  let primaryFamily: string | null = null;
-
-  for (const family of familyNames) {
-    const familyConfig = families[family];
-    const extendedSuffix = hasExtendedContext(familyConfig) ? "[1m]" : "";
-    const ccrModel = `ccr-${family}${extendedSuffix}`;
-
-    switch (family) {
-      case "opus":
-        env.ANTHROPIC_DEFAULT_OPUS_MODEL = ccrModel;
-        if (!primaryFamily) primaryFamily = "opus";
-        break;
-      case "sonnet":
-        env.ANTHROPIC_DEFAULT_SONNET_MODEL = ccrModel;
-        if (!primaryFamily) primaryFamily = "sonnet";
-        break;
-      case "haiku":
-        env.ANTHROPIC_DEFAULT_HAIKU_MODEL = ccrModel;
-        if (!primaryFamily) primaryFamily = "haiku";
-        break;
-    }
+async function resolveEffectiveConfig(
+  config: Record<string, any>,
+  projectPath: string,
+): Promise<Record<string, any>> {
+  try {
+    const projectConfig = await readProjectConfig(projectPath);
+    if (!projectConfig?.Router) return config;
+    return buildProjectTakeoverConfig(config, projectConfig.Router);
+  } catch {
+    // A malformed project config must not break `ccr code`; the server still
+    // resolves (and reports) project routing errors on the request path.
+    return config;
   }
-
-  if (primaryFamily) {
-    // Default to opus, fallback to first configured family
-    const defaultFamily = families["opus"] ? "opus" : primaryFamily;
-    const defaultConfig = families[defaultFamily];
-    const extendedSuffix = hasExtendedContext(defaultConfig) ? "[1m]" : "";
-    env.ANTHROPIC_MODEL = `ccr-${defaultFamily}${extendedSuffix}`;
-
-    const thinkFamily = familyNames.find((f: string) => families[f]?.think);
-    if (thinkFamily) {
-      const thinkConfig = families[thinkFamily];
-      const thinkExtendedSuffix = hasExtendedContext(thinkConfig) ? "[1m]" : "";
-      env.ANTHROPIC_REASONING_MODEL = `ccr-${thinkFamily}${thinkExtendedSuffix}`;
-    } else {
-      env.ANTHROPIC_REASONING_MODEL = `ccr-${defaultFamily}${extendedSuffix}`;
-    }
-  }
-
-  return env;
 }
 
 /**
@@ -94,6 +60,14 @@ export const createEnvVariables = async (): Promise<Record<string, string | unde
     }
   }
 
+  // `ccr code` is launched inside the project it should route, so derive the
+  // family aliases and the auto-compact window from the project's effective
+  // config — not the global one. Claude Code passes these as both `--settings`
+  // and process env, and its env layer outranks every settings file, so a
+  // global-only value here would override (and defeat) the project takeover's
+  // 200k cap for projects whose Router has no extended context.
+  const effectiveConfig = await resolveEffectiveConfig(config, process.cwd());
+
   const port = config.PORT || 3456;
   const apiKey = config.APIKEY || "test";
 
@@ -111,8 +85,15 @@ export const createEnvVariables = async (): Promise<Record<string, string | unde
     CLAUDE_CODE_ATTRIBUTION_HEADER:
       config.disableAttributionHeader === false ? undefined : "0",
     ...CLAUDE_AUTO_COMPACT_ENV,
+    // Same value the settings-file takeover writes: the configured
+    // `ContextWindow`, capped at 200000 unless the default family has extended
+    // context. Sharing the helper keeps `ccr code` and the takeover from
+    // disagreeing about where auto-compact fires.
+    CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(getClaudeTakeoverContextWindow(effectiveConfig)),
     // Reset CLAUDE_CODE_USE_BEDROCK when running with ccr
     CLAUDE_CODE_USE_BEDROCK: undefined,
-    ...getModelEnvVars(config),
+    // Shared with the takeover, so `enableFamilyRouting: false` suppresses the
+    // `ccr-*[1m]` aliases on both paths.
+    ...getClaudeFamilyEnv(effectiveConfig),
   };
 }
