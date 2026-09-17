@@ -233,18 +233,29 @@ export async function performUpdate() {
 }
 
 /**
- * Compare two version numbers
- * @param v1 Version number 1
- * @param v2 Version number 2
+ * Compare two version numbers.
+ * Supports standard versions and prerelease suffixes (e.g. 2.3.2407-alpha.1).
+ * When comparing against upstream release versions, prerelease identifiers are stripped
+ * so that a local fork at `2.3.2407-alpha.x` matches upstream `2.3.2407` without falsely
+ * reporting an available update.
+ * @param v1 Version number 1 (e.g. latest from npm)
+ * @param v2 Version number 2 (e.g. current version)
  * @returns 1 if v1 > v2, -1 if v1 < v2, 0 if equal
  */
-function compareVersions(v1: string, v2: string): number {
-  const parts1 = v1.split(".").map(Number);
-  const parts2 = v2.split(".").map(Number);
+export function cleanVersionBase(v: string): string {
+  return (v || "").split("-")[0].trim();
+}
+
+export function compareVersions(v1: string, v2: string): number {
+  const base1 = cleanVersionBase(v1);
+  const base2 = cleanVersionBase(v2);
+
+  const parts1 = base1.split(".").map(Number);
+  const parts2 = base2.split(".").map(Number);
 
   for (let i = 0; i < Math.max(parts1.length, parts2.length); i++) {
-    const num1 = i < parts1.length ? parts1[i] : 0;
-    const num2 = i < parts2.length ? parts2[i] : 0;
+    const num1 = i < parts1.length && !Number.isNaN(parts1[i]) ? parts1[i] : 0;
+    const num2 = i < parts2.length && !Number.isNaN(parts2[i]) ? parts2[i] : 0;
 
     if (num1 > num2) return 1;
     if (num1 < num2) return -1;

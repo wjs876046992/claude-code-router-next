@@ -206,6 +206,27 @@ async function handleTransformerEndpoint(
     });
   }
 
+  // Handle /v1/chat/completions (OpenAI compatible endpoint):
+  // When a request arrives at /v1/chat/completions without an explicit provider prefix,
+  // run the core router so it benefits from the full routing pipeline:
+  // - Model family aliases (e.g. "ccr-opus") route according to the family tier.
+  // - Plain models or aliases are tokenized to determine whether to trigger longContext / extendedContext thresholds.
+  // - Fallback models and promotion are honored automatically.
+  if (
+    transformer.endPoint === "/v1/chat/completions" &&
+    !req.provider &&
+    body?.messages &&
+    Array.isArray(body.messages)
+  ) {
+    // If the client specified a CCR alias or no comma-separated provider prefix, let router resolve it
+    if (typeof body?.model === "string" && (!body.model.includes(",") || CCR_FAMILY_ALIAS.test(body.model))) {
+      await router(req, reply, {
+        configService: fastify.configService,
+        tokenizerService: (fastify as any).tokenizerService,
+      });
+    }
+  }
+
   // For /v1/responses (Codex) the modelProviderMiddleware does not run because
   // it only handles /v1/messages. Parse provider from body.model here.
   let providerName = req.provider as string | undefined;
