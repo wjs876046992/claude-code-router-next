@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [2.3.2408] - 2026-09-20
+
+### Fixed
+
+- **Pi 项目 provider 旧名不迁移**: 2.3.2405 把 pi 项目 provider 改成可读的 `ccr-project-<项目名>-<hash>` 后，旧版接管的项目仍指向纯 hash 名（如 `ccr-project-0c969bce85c52041`），而接管刷新只认共享名 `ccr` 和当前版本算出的新名，旧名被当成“未接管”直接跳过，名字一直不变、关闭接管也清不掉。现在识别旧格式（`ccr-project-` 后为纯 hex 且不等于当前名），刷新时自动指向可读名、注册新 provider 并删除孤儿条目；slug 算不出来的项目（如纯中文名）保持纯 hash 名不动。
+- **测试用量写进真实数据库**: usage-store 此前写死 `~/.claude-code-router/data`，不看 `CCR_CONFIG_DIR`，导致每次跑 core 测试都把 fixture 记录（demo/global/project 等假 provider）写进真实用量库，请求日志里出现假请求。改为从尊重 `CCR_CONFIG_DIR` 的 HOME_DIR 解析路径，并加入隔离回归测试。
+
+### Changed
+
+- **发布包补全仓库链接**: `@wengine-ai/claude-code-router-next`、`@wengine-ai/llms`、`@wengine-ai/claude-code-router-shared`、server 四个包补 `repository`/`homepage`/`bugs` 字段，npm 包页面现在可以跳回本仓库；`author` 更新为实际维护者，原作者保留在 contributors。
+
 ## [2.3.2407] - 2026-09-15
 
 ### Added
