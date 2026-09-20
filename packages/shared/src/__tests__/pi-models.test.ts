@@ -1,4 +1,5 @@
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -16,6 +17,7 @@ import {
   enableClient,
   getContextWindow,
   getPiProjectProviderName,
+  isPiProjectTakeoverActive,
   removePiProjectTakeover,
 } from "../client-integrations";
 import { CCR_PROJECT_HEADER, getClaudeProjectId } from "../constants";
@@ -252,5 +254,84 @@ describe("Pi project provider naming", () => {
 
   it("keeps the ccr-project- prefix so pre-slug hash-only names stay recognized", () => {
     expect(getPiProjectProviderName("/a/b")).toMatch(/^ccr-project-/);
+  });
+});
+
+describe("Pi legacy project provider migration", () => {
+  function writeLegacyTakeover(piDir: string, projectDir: string, legacyName: string) {
+    mkdirSync(piDir, { recursive: true });
+    writeFileSync(join(piDir, "models.json"), JSON.stringify({
+      providers: {
+        [legacyName]: {
+          name: "Claude Code Router",
+          baseUrl: "http://127.0.0.1:4567",
+          models: [{ id: "ccr-opus" }],
+        },
+      },
+    }));
+    mkdirSync(join(projectDir, ".pi"), { recursive: true });
+    writeFileSync(join(projectDir, ".pi", "settings.json"), JSON.stringify({
+      defaultProvider: legacyName,
+      defaultModel: "ccr-opus",
+    }));
+  }
+
+  function takeoverConfig(piDir: string) {
+    return {
+      APIKEY: "test-key",
+      Router: { default: "provider,project-model" },
+      Clients: { pi: { configPath: piDir } },
+    };
+  }
+
+  it("migrates a pre-slug hash-only provider to the readable name on refresh", () => {
+    const { piDir, projectDir } = createFixture();
+    const legacyName = "ccr-project-0c969bce85c52041";
+    writeLegacyTakeover(piDir, projectDir, legacyName);
+
+    // The refresh path only touches projects it recognizes as taken over, so
+    // the legacy name must count as active.
+    expect(isPiProjectTakeoverActive(projectDir)).toBe(true);
+
+    applyPiProjectTakeover(projectDir, takeoverConfig(piDir));
+
+    const newName = getPiProjectProviderName(projectDir);
+    expect(readJson(join(projectDir, ".pi", "settings.json")).defaultProvider).toBe(newName);
+    const providers = readJson(join(piDir, "models.json")).providers;
+    expect(providers[newName]).toBeDefined();
+    expect(providers[newName].headers[CCR_PROJECT_HEADER]).toBe(getClaudeProjectId(projectDir));
+    expect(providers[legacyName]).toBeUndefined();
+  });
+
+  it("keeps a bare-hash provider that is the current name of a slug-less project", () => {
+    const { piDir, projectDir: root } = createFixture();
+    // A basename with no [a-z0-9-] characters produces an empty slug, so the
+    // computed name itself is bare hex — it must not be treated as legacy.
+    const projectDir = join(root, "中文项目");
+    const currentName = getPiProjectProviderName(projectDir);
+    expect(currentName).toMatch(/^ccr-project-[0-9a-f]{12}$/);
+    writeLegacyTakeover(piDir, projectDir, currentName);
+
+    applyPiProjectTakeover(projectDir, takeoverConfig(piDir));
+
+    expect(readJson(join(projectDir, ".pi", "settings.json")).defaultProvider).toBe(currentName);
+    expect(readJson(join(piDir, "models.json")).providers[currentName]).toBeDefined();
+  });
+
+  it("clears a legacy provider when the project takeover is disabled", () => {
+    const { piDir, projectDir } = createFixture();
+    const legacyName = "ccr-project-3449c70d46280f6a";
+    writeLegacyTakeover(piDir, projectDir, legacyName);
+    const config = takeoverConfig(piDir);
+
+    expect(isPiProjectTakeoverActive(projectDir)).toBe(true);
+    removePiProjectTakeover(projectDir, config);
+
+    // The fixture's settings carry only ccr fields, so the file is removed
+    // once they are cleared.
+    expect(existsSync(join(projectDir, ".pi", "settings.json"))).toBe(false);
+    const providers = readJson(join(piDir, "models.json")).providers;
+    expect(providers[legacyName]).toBeUndefined();
+    expect(providers[getPiProjectProviderName(projectDir)]).toBeUndefined();
   });
 });

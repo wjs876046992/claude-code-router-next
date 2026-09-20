@@ -1449,8 +1449,9 @@ function ensurePiCcrProvider(
  * path, so takeover enable/refresh is idempotent and pi's model selector shows
  * which project a provider belongs to. Names that predate the slug (bare
  * `ccr-project-<hash>`) still match isPiProjectProviderName below and keep
- * working without migration — the server identifies the project by the
- * x-ccr-project header, not by this name.
+ * working — the server identifies the project by the x-ccr-project header, not
+ * by this name — and isLegacyPiProjectProviderName recognizes them so the
+ * takeover refresh migrates them to the readable name and removes the orphan.
  */
 export function getPiProjectProviderName(projectPath: string): string {
   const slug = path
@@ -1471,6 +1472,31 @@ export function getPiProjectProviderName(projectPath: string): string {
 
 function isPiProjectProviderName(value: unknown): value is string {
   return typeof value === "string" && value.startsWith(PI_PROJECT_PROVIDER_PREFIX);
+}
+
+/**
+ * A provider name from before the readable slug: `ccr-project-` followed by a
+ * bare hex hash and nothing else. Current names either carry a slug segment
+ * (which contains a `-`, so the hex test fails) or — for basenames with no
+ * usable slug characters — have the same bare shape, so a bare name only
+ * counts as legacy when it differs from the name this version computes.
+ */
+function isLegacyPiProjectProviderName(value: unknown, projectPath: string): boolean {
+  if (typeof value !== "string" || !value.startsWith(PI_PROJECT_PROVIDER_PREFIX)) {
+    return false;
+  }
+  const hash = value.slice(PI_PROJECT_PROVIDER_PREFIX.length);
+  return /^[0-9a-f]+$/.test(hash) && value !== getPiProjectProviderName(projectPath);
+}
+
+/** Delete one provider entry from pi's global models.json, if present. */
+function deletePiProviderEntry(modelsPath: string, providerName: string | undefined): void {
+  if (!providerName) return;
+  const models = readJsonObject(modelsPath);
+  if (isObject(models.providers) && models.providers[providerName]) {
+    delete models.providers[providerName];
+    writeJsonObject(modelsPath, models);
+  }
 }
 
 /**
@@ -1516,16 +1542,26 @@ export function applyPiProjectTakeover(projectPath: string, config: Record<strin
 
   const settingsPath = getPiProjectSettingsPath(projectPath);
   const settings = readJsonObject(settingsPath);
+  const previousProvider = settings.defaultProvider;
   settings.defaultProvider = providerName;
   settings.defaultModel = defaultModel;
   writeJsonObject(settingsPath, settings);
+
+  // A takeover applied before the readable naming leaves a bare-hash provider
+  // behind; once this project points at the slug name, that entry is an orphan
+  // only this project can reference (its hash is derived from the path).
+  if (isLegacyPiProjectProviderName(previousProvider, projectPath)) {
+    deletePiProviderEntry(getPiPaths(config).models, previousProvider);
+  }
 }
 
 /**
  * Disable ccr takeover for a project's pi configuration by clearing the ccr
  * `defaultProvider`/`defaultModel` from `.pi/settings.json` (removing the file
  * if nothing else remains) and removing its dedicated global provider. The
- * legacy shared provider and trust entry are left in place.
+ * legacy shared provider and trust entry are left in place; a legacy bare-hash
+ * project provider is cleared like the slug name so disabling never leaves the
+ * project pointing at a ccr provider.
  */
 export function removePiProjectTakeover(
   projectPath: string,
@@ -1533,10 +1569,18 @@ export function removePiProjectTakeover(
 ): void {
   const expectedProviderName = getPiProjectProviderName(projectPath);
   const settingsPath = getPiProjectSettingsPath(projectPath);
+  let legacyProviderName: string | undefined;
   if (fs.existsSync(settingsPath)) {
     const settings = readJsonObject(settingsPath);
     const providerName = settings.defaultProvider;
-    if (providerName === PI_PROVIDER_NAME || providerName === expectedProviderName) {
+    if (
+      providerName === PI_PROVIDER_NAME
+      || providerName === expectedProviderName
+      || isLegacyPiProjectProviderName(providerName, projectPath)
+    ) {
+      if (isLegacyPiProjectProviderName(providerName, projectPath)) {
+        legacyProviderName = providerName;
+      }
       delete settings.defaultProvider;
       delete settings.defaultModel;
       if (Object.keys(settings).length === 0) {
@@ -1548,18 +1592,16 @@ export function removePiProjectTakeover(
   }
 
   const paths = getPiPaths(config);
-  const models = readJsonObject(paths.models);
-  if (isObject(models.providers) && models.providers[expectedProviderName]) {
-    delete models.providers[expectedProviderName];
-    writeJsonObject(paths.models, models);
-  }
+  deletePiProviderEntry(paths.models, expectedProviderName);
+  deletePiProviderEntry(paths.models, legacyProviderName);
 }
 
 /** Whether a project's `.pi/settings.json` currently routes pi through ccr. */
 export function isPiProjectTakeoverActive(projectPath: string): boolean {
   const settings = readJsonObject(getPiProjectSettingsPath(projectPath));
   return settings.defaultProvider === PI_PROVIDER_NAME
-    || settings.defaultProvider === getPiProjectProviderName(projectPath);
+    || settings.defaultProvider === getPiProjectProviderName(projectPath)
+    || isLegacyPiProjectProviderName(settings.defaultProvider, projectPath);
 }
 
 // ========================= qwen-code (Alibaba) =========================
