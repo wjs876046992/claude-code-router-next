@@ -1,11 +1,15 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import {
-  HOME_DIR,
-  CONFIG_FILE,
+  BASE_DIR,
   PROFILES_DIR,
   ACTIVE_PROFILE_FILE,
 } from "./constants";
+
+// The root config always lives under BASE_DIR. CONFIG_FILE follows HOME_DIR,
+// which points *inside* the active profile when CCR_CONFIG_DIR is set, so any
+// code that means "the real root config" must use this path instead.
+const ROOT_CONFIG_FILE = path.join(BASE_DIR, "config.json");
 
 export interface ProfileInfo {
   name: string;
@@ -84,7 +88,7 @@ export async function listProfiles(): Promise<ProfileInfo[]> {
     return [
       {
         name: "default",
-        configPath: CONFIG_FILE,
+        configPath: ROOT_CONFIG_FILE,
         isActive: activeName === "default",
       },
     ];
@@ -113,10 +117,10 @@ export async function listProfiles(): Promise<ProfileInfo[]> {
   // Always include "default" if it doesn't exist as a profile dir
   if (!profiles.find((p) => p.name === "default")) {
     try {
-      await fs.access(CONFIG_FILE);
+      await fs.access(ROOT_CONFIG_FILE);
       profiles.unshift({
         name: "default",
-        configPath: CONFIG_FILE,
+        configPath: ROOT_CONFIG_FILE,
         isActive: activeName === "default",
       });
     } catch {}
@@ -139,9 +143,9 @@ export async function ensureDefaultProfile(): Promise<void> {
 
   // Copy root config.json to default profile
   try {
-    await fs.access(CONFIG_FILE);
+    await fs.access(ROOT_CONFIG_FILE);
     await fs.mkdir(defaultDir, { recursive: true });
-    await fs.copyFile(CONFIG_FILE, defaultConfig);
+    await fs.copyFile(ROOT_CONFIG_FILE, defaultConfig);
   } catch {
     // No root config yet; will be created on first start
   }
@@ -167,7 +171,7 @@ export async function createProfile(name: string): Promise<void> {
   const activeName = await getActiveProfile();
   const sourceConfig =
     activeName === "default"
-      ? CONFIG_FILE
+      ? ROOT_CONFIG_FILE
       : getProfileConfigPath(activeName);
 
   await fs.mkdir(targetDir, { recursive: true });

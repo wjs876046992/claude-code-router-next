@@ -32,7 +32,11 @@ export const CCR_PROJECT_HEADER = "x-ccr-project";
 // edited (must be preserved). Per-project state lives under getProjectConfigDir().
 export const CLIENT_STATE_FILE = path.join(HOME_DIR, "client-state.json");
 
-export const PROFILES_DIR = path.join(HOME_DIR, "profiles");
+// Profile management state must live under BASE_DIR, not HOME_DIR: HOME_DIR
+// follows CCR_CONFIG_DIR (i.e. points *inside* the active profile), so
+// deriving PROFILES_DIR from it would nest profile dirs inside each other and
+// re-resolve "active-profile" against whichever profile happens to be running.
+export const PROFILES_DIR = path.join(BASE_DIR, "profiles");
 
 export const ACTIVE_PROFILE_FILE = path.join(PROFILES_DIR, "active-profile");
 
