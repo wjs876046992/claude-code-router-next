@@ -31,6 +31,13 @@ export class OpenAITransformer implements Transformer {
     return request;
   }
 
+  async transformResponseIn(
+    response: Response,
+    context?: TransformerContext
+  ): Promise<Response> {
+    return this.transformResponseOut(response, context);
+  }
+
   async transformResponseOut(
     response: Response,
     context?: TransformerContext
