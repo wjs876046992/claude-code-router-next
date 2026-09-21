@@ -2,7 +2,7 @@
 
 **[🇨🇳 中文文档](README.md)**  |  **[🇬🇧 English](README_en.md)**  |  [![npm version](https://badge.fury.io/js/@wengine-ai_claude-code-router-next.svg)](https://www.npmjs.com/package/@wengine-ai/claude-code-router-next)
 
-> **说明**：原版 [claude-code-router](https://github.com/musistudio/claude-code-router) 仓库已不再活跃维护。本项目是基于原仓库 fork 的社区活跃版本，持续进行 Bug 修复、功能开发和长期维护。
+> **说明**：本项目 fork 自 [claude-code-router](https://github.com/musistudio/claude-code-router)（2026-05 建仓，当时上游自 2026-01-04 起已 4 个月未发版、自 2026-03-04 起无提交；上游其后已恢复活跃）。本项目持续维护自己的发布线，并在其基础上开发按项目路由、多客户端接管、ZCode 支持等特性。
 
 <hr>
 
@@ -93,6 +93,7 @@ npm install -g @wengine-ai/claude-code-router-next@latest && ccr restart
 
 | 版本 | 发布内容 |
 | --- | --- |
+| **v2.3.2408** | <ul><li>**Pi 项目 provider 自动换成可读名**: 2.3.2405 之前接管的项目仍是 `ccr-project-&lt;hash&gt;` 旧名且刷新不迁移；现在自动改为 `ccr-project-&lt;项目名&gt;-&lt;hash&gt;` 并删除孤儿条目，关闭接管也能清掉旧名。</li><li>**修复测试数据污染真实用量库**: 测试写的假请求（demo/global/project 等）此前会写进真实 `usage.sqlite`，已隔离；历史假记录已提供清理方案。</li><li>**npm 包页面补上仓库链接**（repository/homepage/bugs 与作者信息）。</li></ul> |
 | **v2.3.2407** | <ul><li>**ZCode 会话发现器**: ZCode 请求不带任何项目标识，项目级 Router 对 ZCode 无效；现在按会话回查 ZCode 本地任务索引（`~/.zcode/v2/tasks-index.sqlite`，会话 JSON 的 `meta.workspacePath` 兜底）得到运行目录并映射到项目 id，`ccr model --project`/UI 配置的项目 Router 对 ZCode 生效；索引晚写有一次短重试，异常一律退化为全局 Router。</li><li>**ZCode 项目接管开关（opt-in）**: 项目「接管的客户端」下拉新增 ZCode，且接管状态就是路由开关——只有勾选 ZCode 的项目走项目 Router，未勾选的项目保持全局 Router，避免会话发现把个人项目改道到项目/公司模型。ZCode 无可写的项目级配置文件，标记记录在 `~/.claude-code-router/<project-id>/takeover-clients.json`，取消勾选或删除项目时清除。</li></ul> |
 | **v2.3.2406** | <ul><li>**默认思考等级支持自定义值**: 除枚举外可填 token 预算或供应商私有字符串（如 `minimal`/`off`）；数字在 Anthropic 端点按精确预算注入、OpenAI 系端点折叠为最接近档位，非枚举字符串在 OpenAI 系端点原样透传、Anthropic 端点按别名归一（min/minimal/light→low、xhigh/maximum/ultra→max）；UI 新增「自定义」自由输入。</li><li>**思考深度按 effort 下发**: `convertToAnthropic` 现在同时下发 `output_config.effort`（当前 Anthropic 模型与 GLM 等兼容端点真正读取的字段），`thinking.budget_tokens` 保留以兼容旧模型与中转；客户端原始 effort 不再被丢弃、`thinking.type=adaptive` 不再被误判为关闭思考、预算不再被四舍五入到档位。</li><li>**ZCode 独立客户端归属**: 此前 ZCode 用 `ccr-*` 别名 + Claude Code 兼容 metadata 调用，日志一律记为 claude-code；现按请求头（`User-Agent: ZCode/…`、`X-ZCode-*`）识别并单独计入用量。</li><li>**release.sh 发布中断可续跑**: 重跑自动跳过已发布的包，只发剩余包。</li></ul> |
 | **v2.3.2405** | <ul><li>**供应商级默认思考等级**: 客户端未携带思考配置时按供应商配置的默认等级注入，并按端点类型自动转义——Anthropic `/v1/messages` → `thinking.budget_tokens`、OpenAI `/v1/responses` → `reasoning.effort`、OpenAI 兼容 chat → `reasoning_effort`；客户端显式设置始终优先。附带修复客户端显式 thinking 在 Anthropic 端点被丢弃的问题。</li><li>**预置自引用 `ccr` 供应商（免接管）**: ZCode 等自配端点客户端不再需要接管——CCR 启动/保存配置时自动确保存在指向自身的 `ccr` 供应商（ccr-opus/sonnet/haiku）；删除后记 tombstone 不复活。</li><li>**pi 项目 provider 命名可读化**: `ccr-project-<hash>` → `ccr-project-<项目名>-<hash>`，旧格式无需迁移。</li></ul> |
@@ -102,7 +103,6 @@ npm install -g @wengine-ai/claude-code-router-next@latest && ccr restart
 | **v2.3.2400** | <ul><li>**SSE 误标 JSON 的多层彻底修复**: v2.3.2397–2399 只看首个 chunk,遇空首块/心跳(`: ping`)/分片(`ev`/`ent:`)仍误判报错;现改为累积多 chunk 判定,并统一修复 formatResponse、两个 transformer、hidden-error-check 与 validateStreamingResponse 四处,误标 SSE 全部按流式透传。</li></ul> |
 | **v2.3.2399** | <ul><li>**bypass 模式下 SSE 误标 application/json 兜底修复**: bypass 的 provider 跳过 transformer 链后，SSE body + JSON 头的响应直达 formatResponse 仍会抛 non-JSON；现在 formatResponse 先 peek body 实际内容，SSE 按流式透传，作为该问题的最后一层兜底。</li></ul> |
 | **v2.3.2398** | <ul><li>**修复 Codex 中转 SSE 被误标 application/json 时丢失内容**: 补齐 v2.3.2397 漏掉的 `OpenAIResponsesTransformer` 同类问题——上游返回 SSE body 但 Content-Type 标 `application/json` 时不再抛 `non-JSON` 错误，改为 peek body 实际内容后按 SSE 透传。</li></ul> |
-| **v2.3.2397** | <ul><li>**修复 SSE 响应被误标 application/json 时丢失内容**: Codex 中转/OpenRouter 错误响应把 SSE body 标成 `application/json` 时，Anthropic transformer 此前按 Content-Type 当非流式 JSON 解析并抛错；现在先 peek body 实际内容，确为 SSE（`event:`/`data:`/`: ` 开头）则走流式转换，仅确为 JSON 才解析，行首匹配不误伤含 `event` 字段的 JSON。</li></ul> |
 
 > 仅保留最近 10 个版本，更早版本的发布摘要见 [CHANGELOG-archive.md](./CHANGELOG-archive.md)，完整详细变更记录见 [CHANGELOG.md](./CHANGELOG.md)。
 

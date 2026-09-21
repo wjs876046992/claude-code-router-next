@@ -14,3 +14,7 @@ packages/ui/src/**/*.d.ts
 docs/build
 docs/.docusaurus
 .mimocode/
+
+# Generated type declaration re-emitted into the UI source tree by the build
+# (tsconfig is noEmit, but the build pipeline emits it alongside params.ts).
+packages/ui/src/utils/params.d.ts

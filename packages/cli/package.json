@@ -1,6 +1,6 @@
 {
   "name": "@wengine-ai/claude-code-router-next",
-  "version": "2.3.2407-alpha.1",
+  "version": "2.3.2408",
   "description": "CLI for Claude Code Router",
   "bin": {
     "ccr": "dist/cli.js"
@@ -11,7 +11,19 @@
     "router",
     "cli"
   ],
-  "author": "musistudio",
+  "author": "xiaoliu10 (https://github.com/xiaoliu10)",
+  "contributors": [
+    "musistudio (https://github.com/musistudio)"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xiaoliu10/claude-code-router-next.git",
+    "directory": "packages/cli"
+  },
+  "homepage": "https://github.com/xiaoliu10/claude-code-router-next#readme",
+  "bugs": {
+    "url": "https://github.com/xiaoliu10/claude-code-router-next/issues"
+  },
   "license": "MIT",
   "scripts": {
     "build": "node ../../scripts/build-cli.js"

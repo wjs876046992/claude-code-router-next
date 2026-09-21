@@ -1,9 +1,12 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync } from "fs";
 import { join } from "path";
-import { homedir, tmpdir } from "os";
+import { tmpdir } from "os";
 import Database from "better-sqlite3";
+import { HOME_DIR } from "@wengine-ai/claude-code-router-shared";
 
-const DATA_DIR = join(homedir(), ".claude-code-router", "data");
+// HOME_DIR already honors CCR_CONFIG_DIR, so tests that point it at a temp dir
+// cannot write usage into the real ~/.claude-code-router database.
+const DATA_DIR = join(HOME_DIR, "data");
 const USAGE_DB_FILE = join(DATA_DIR, "usage.sqlite");
 const LEGACY_USAGE_FILE = join(DATA_DIR, "usage.jsonl");
 const MIN_DECODE_DURATION_SECONDS = 1;

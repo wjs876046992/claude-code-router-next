@@ -1,6 +1,6 @@
 {
   "name": "@wengine-ai/claude-code-router-shared",
-  "version": "2.3.2407",
+  "version": "2.3.2408",
   "description": "Shared utilities and constants for Claude Code Router",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -15,7 +15,19 @@
     "router",
     "shared"
   ],
-  "author": "musistudio",
+  "author": "xiaoliu10 (https://github.com/xiaoliu10)",
+  "contributors": [
+    "musistudio (https://github.com/musistudio)"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xiaoliu10/claude-code-router-next.git",
+    "directory": "packages/shared"
+  },
+  "homepage": "https://github.com/xiaoliu10/claude-code-router-next#readme",
+  "bugs": {
+    "url": "https://github.com/xiaoliu10/claude-code-router-next/issues"
+  },
   "license": "MIT",
   "files": [
     "dist"

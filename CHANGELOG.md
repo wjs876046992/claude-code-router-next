@@ -10,6 +10,17 @@ All notable changes to this project will be documented in this file.
 - **`ccr code` 按项目 Router 计算窗口与别名（避免覆盖项目接管的上限）**: `ccr code` 在项目目录里启动时，此前只读全局配置，因此只给全局口径的值；但 Claude Code 的 env 层（`ccr code` 会同时写 `--settings` 与进程 env）优先于包括项目 `.claude/settings.local.json` 在内的所有 settings 层，这会覆盖掉项目接管写入的 200k 上限。典型场景：全局默认 family 启用 `[1m]` 且 `ContextWindow=1000000`，而某项目自带 Router 未启用扩展上下文——项目接管正确地封顶 200k，`ccr code` 却把会话重新拉到 1M，上下文超过 200k 后又因严格项目路由无法逃逸到全局扩展模型，最终无可用模型。现在 `ccr code` 经 `readProjectConfig(process.cwd())` + `buildProjectTakeoverConfig`（自 projectConfig 导出）取得「全局连接/界面参数 + 项目 Router」的有效配置，与项目接管同源；项目无自有 Router、或项目配置损坏时回退全局（损坏不再阻断 `ccr code`，请求路径仍会报项目路由错误）。
 - **统一 `ccr code` 与接管的 family 别名与压缩比例（消除两套实现）**: 两条写入路径本各有一份实现，导致三处分歧——① `enableFamilyRouting: false` 时接管会正确地不发 `ccr-*[1m]` 别名，`ccr code` 却仍发，留下无 family 路由可解析的陈旧 `[1m]` 别名（同时把窗口留在 1M）；② `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` 在 CLI 里是 `"85"`、在接管里是 `"90"`；③ 别名取值逻辑重复。现在抽出纯函数 `getClaudeFamilyEnv`（family 别名）与 `CLAUDE_AUTO_COMPACT_PCT_OVERRIDE` 常量（自 shared 导出）供两条路径共用；接管侧 `applyClaudeModelFamilies` 改为先清陈旧 `ccr-*` 别名再 `Object.assign` 共享结果。压缩比例统一取 `"90"`：此前 `ccr code` 的 `"85"` 因 env 层优先级而实际生效，接管写的 `"90"` 被静默忽略；因为该变量只会**下调**压缩阈值，统一后压缩点从 85% 略延后到 90%（如需回到更保守的 85%，改 `packages/shared/src/client-integrations.ts` 的 `CLAUDE_AUTO_COMPACT_PCT_OVERRIDE` 一处即可）。新增 `claude-family-env` 单测覆盖别名、think 路由优先、family 路由显式关闭、窗口封顶与共享常量，shared 51 项、core 325 项全通过。
 
+## [2.3.2408] - 2026-09-20
+
+### Fixed
+
+- **Pi 项目 provider 旧名不迁移**: 2.3.2405 把 pi 项目 provider 改成可读的 `ccr-project-<项目名>-<hash>` 后，旧版接管的项目仍指向纯 hash 名（如 `ccr-project-0c969bce85c52041`），而接管刷新只认共享名 `ccr` 和当前版本算出的新名，旧名被当成“未接管”直接跳过，名字一直不变、关闭接管也清不掉。现在识别旧格式（`ccr-project-` 后为纯 hex 且不等于当前名），刷新时自动指向可读名、注册新 provider 并删除孤儿条目；slug 算不出来的项目（如纯中文名）保持纯 hash 名不动。
+- **测试用量写进真实数据库**: usage-store 此前写死 `~/.claude-code-router/data`，不看 `CCR_CONFIG_DIR`，导致每次跑 core 测试都把 fixture 记录（demo/global/project 等假 provider）写进真实用量库，请求日志里出现假请求。改为从尊重 `CCR_CONFIG_DIR` 的 HOME_DIR 解析路径，并加入隔离回归测试。
+
+### Changed
+
+- **发布包补全仓库链接**: `@wengine-ai/claude-code-router-next`、`@wengine-ai/llms`、`@wengine-ai/claude-code-router-shared`、server 四个包补 `repository`/`homepage`/`bugs` 字段，npm 包页面现在可以跳回本仓库；`author` 更新为实际维护者，原作者保留在 contributors。
+
 ## [2.3.2407] - 2026-09-15
 
 ### Added
