@@ -12,6 +12,8 @@ import {
   REFERENCE_COUNT_FILE,
   getDefaultClientsConfig,
   readPresetFile,
+  getActiveProfile,
+  getProfileDirPath,
 } from "@wengine-ai/claude-code-router-shared";
 import { getServer } from "@wengine-ai/llms";
 import { writeFileSync, existsSync, readFileSync, mkdirSync } from "fs";
@@ -236,10 +238,30 @@ export const run = async (args: string[] = []) => {
 
   app.post("/api/restart", async () => {
     setTimeout(async () => {
-      spawn("ccr", ["restart"], {
-        detached: true,
-        stdio: "ignore",
-      }).unref();
+      try {
+        const activeProfile = await getActiveProfile();
+        const configDir = getProfileDirPath(activeProfile);
+        const childEnv: Record<string, string> = { ...process.env };
+        if (activeProfile !== "default") {
+          childEnv.CCR_CONFIG_DIR = configDir;
+        } else {
+          delete childEnv.CCR_CONFIG_DIR;
+        }
+        childEnv.CCR_INTERNAL_START = "1";
+
+        const cliPath = path.join(__dirname, "cli.js");
+        spawn("node", [cliPath, "start"], {
+          detached: true,
+          stdio: "ignore",
+          env: childEnv,
+        }).unref();
+      } catch {
+        // Fallback: launch without CCR_CONFIG_DIR (default profile assumed)
+        spawn("ccr", ["restart"], {
+          detached: true,
+          stdio: "ignore",
+        }).unref();
+      }
     }, 100);
 
     return { success: true, message: "Service restart initiated" }
@@ -281,12 +303,27 @@ export const restartService = async () => {
     cleanupPidFile();
   }
 
+  // Determine the active profile so we preserve CCR_CONFIG_DIR across restart.
+  let activeProfile = "default";
+  try {
+    activeProfile = await getActiveProfile();
+  } catch {}
+
   // Start the service again in the background
   console.log("Starting claude code router service...");
   const cliPath = path.join(__dirname, "cli.js");
+  const configDir = getProfileDirPath(activeProfile);
+  const childEnv: Record<string, string> = { ...process.env, CCR_INTERNAL_START: "1" };
+  if (activeProfile !== "default") {
+    childEnv.CCR_CONFIG_DIR = configDir;
+  } else {
+    delete childEnv.CCR_CONFIG_DIR;
+  }
+
   const startProcess = spawn("node", [cliPath, "start"], {
     detached: true,
     stdio: "ignore",
+    env: childEnv,
   });
 
   startProcess.on("error", (error) => {

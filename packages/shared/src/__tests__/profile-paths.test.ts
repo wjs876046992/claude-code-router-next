@@ -8,6 +8,7 @@ import {
   ACTIVE_PROFILE_FILE,
 } from "../constants";
 import { getProfileDir, getProfileConfigPath } from "../profile";
+import { getProfileDirPath } from "../constants";
 
 // When a profile is active, CCR_CONFIG_DIR points *inside* that profile's
 // directory (HOME_DIR follows it). Profile management state must still resolve
@@ -31,5 +32,14 @@ describe("profile management paths are global, not profile-scoped", () => {
     expect(getProfileConfigPath("work")).toBe(
       join(BASE_DIR, "profiles", "work", "config.json")
     );
+  });
+
+  it("getProfileDirPath returns BASE_DIR for 'default' profile", () => {
+    expect(getProfileDirPath("default")).toBe(BASE_DIR);
+  });
+
+  it("getProfileDirPath returns profiles/<name> for named profiles", () => {
+    expect(getProfileDirPath("work")).toBe(join(BASE_DIR, "profiles", "work"));
+    expect(getProfileDirPath("personal")).toBe(join(BASE_DIR, "profiles", "personal"));
   });
 });

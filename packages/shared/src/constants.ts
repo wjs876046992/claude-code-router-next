@@ -40,6 +40,13 @@ export const PROFILES_DIR = path.join(BASE_DIR, "profiles");
 
 export const ACTIVE_PROFILE_FILE = path.join(PROFILES_DIR, "active-profile");
 
+/**
+ * Return the directory for a given profile name. Returns BASE_DIR for "default".
+ */
+export function getProfileDirPath(name: string): string {
+  return name === "default" ? BASE_DIR : path.join(PROFILES_DIR, name);
+}
+
 export const REFERENCE_COUNT_FILE = path.join(os.tmpdir(), "claude-code-reference-count.txt");
 
 // Claude projects directory

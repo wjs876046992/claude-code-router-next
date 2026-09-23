@@ -219,9 +219,15 @@ async function main() {
       if (shouldStartServer && !isRunning) {
         console.log("Service not running, starting service...");
         const cliPath = join(__dirname, "cli.js");
+        const childEnv = {
+          ...process.env,
+          ...(_profileEnvOverride || {}),
+          CCR_INTERNAL_START: "1",
+        };
         const startProcess = spawn("node", [cliPath, "start"], {
           detached: true,
           stdio: "ignore",
+          env: childEnv,
         });
 
         startProcess.on("error", (error) => {
@@ -391,9 +397,15 @@ async function main() {
       if (!isRunning) {
         console.log("Service not running, starting service...");
         const cliPath = join(__dirname, "cli.js");
+        const childEnv = {
+          ...process.env,
+          ...(_profileEnvOverride || {}),
+          CCR_INTERNAL_START: "1",
+        };
         const startProcess = spawn("node", [cliPath, "start"], {
           detached: true,
           stdio: "ignore",
+          env: childEnv,
         });
 
         startProcess.on("error", (error) => {
@@ -422,9 +434,15 @@ async function main() {
       if (!isRunning) {
         console.log("Service not running, starting service...");
         const cliPath = join(__dirname, "cli.js");
+        const childEnv = {
+          ...process.env,
+          ...(_profileEnvOverride || {}),
+          CCR_INTERNAL_START: "1",
+        };
         const startProcess = spawn("node", [cliPath, "start"], {
           detached: true,
           stdio: "ignore",
+          env: childEnv,
         });
 
         startProcess.on("error", (error) => {
@@ -472,10 +490,16 @@ async function main() {
               "Please edit this file with your actual configuration."
             );
 
-            // Try starting the service again
+            // Try starting the service again (preserve profile context)
+            const childEnv = {
+              ...process.env,
+              ...(_profileEnvOverride || {}),
+              CCR_INTERNAL_START: "1",
+            };
             const restartProcess = spawn("node", [cliPath, "start"], {
               detached: true,
               stdio: "ignore",
+              env: childEnv,
             });
 
             restartProcess.on("error", (error) => {
