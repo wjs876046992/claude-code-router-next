@@ -6,6 +6,7 @@ import {
   closeService,
 } from "./processCheck";
 import { createEnvVariables } from "./createEnvVariables";
+import { getActiveProfile, getProfileDirPath } from "@wengine-ai/claude-code-router-shared";
 
 export interface PresetConfig {
   noServer?: boolean;
@@ -29,6 +30,18 @@ export async function executeCodeCommand(
   // Set environment variables using shared function
   const config = await readConfigFile();
   const env = await createEnvVariables();
+
+  // Children spawned by Claude Code (`ccr statusline`, presets) must resolve the
+  // same config dir this command is running under. Prefer the inherited
+  // CCR_CONFIG_DIR (which may be an arbitrary path) over a name-derived one, so
+  // a custom dir is passed through rather than replaced by profiles/<name>.
+  const getProfileEnvOverride = async (): Promise<Record<string, string>> => {
+    const inherited = process.env.CCR_CONFIG_DIR;
+    if (inherited) return { CCR_CONFIG_DIR: inherited };
+    const activeProfile = await getActiveProfile();
+    if (activeProfile === "default") return {};
+    return { CCR_CONFIG_DIR: getProfileDirPath(activeProfile) };
+  };
 
   // Apply environment variable overrides (from preset's provider configuration)
   if (envOverrides) {
@@ -101,6 +114,11 @@ export async function executeCodeCommand(
     {
       env: {
         ...process.env,
+        // Pin the profile for this session. Claude Code inherits this and passes
+        // it to the statusline it spawns, so the statusline reads the same
+        // profile's config and usage database rather than falling back to the
+        // base dir (where it would show a different profile's numbers).
+        ...(await getProfileEnvOverride()),
       },
       stdio: stdioConfig,
     }

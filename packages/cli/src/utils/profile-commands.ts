@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import { getNodeBinary } from "./index";
 import {
   getActiveProfile,
   setActiveProfile,
@@ -109,7 +110,7 @@ export async function handleProfileCommand(args: string[]): Promise<void> {
         const childEnv = name === "default"
           ? { ...process.env, CCR_INTERNAL_START: "1" }
           : { ...process.env, CCR_CONFIG_DIR: join(profilesDir, name), CCR_INTERNAL_START: "1" };
-        const child = spawn("node", [cliPath, "start"], {
+        const child = spawn(getNodeBinary(), [cliPath, "start"], {
           detached: true,
           stdio: "ignore",
           env: childEnv,

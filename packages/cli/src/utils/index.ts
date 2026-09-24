@@ -5,6 +5,7 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import os from "node:os";
 import {
+  BASE_DIR,
   CONFIG_FILE,
   HOME_DIR, PID_FILE,
   PLUGINS_DIR,
@@ -12,15 +13,20 @@ import {
   REFERENCE_COUNT_FILE,
   getDefaultClientsConfig,
   readPresetFile,
-  getActiveProfile,
-  getProfileDirPath,
 } from "@wengine-ai/claude-code-router-shared";
 import { getServer } from "@wengine-ai/llms";
 import { writeFileSync, existsSync, readFileSync, mkdirSync } from "fs";
 import { checkForUpdates, performUpdate } from "./update";
 import { version } from "../../package.json";
 import { spawn } from "child_process";
-import {cleanupPidFile, isServiceRunning} from "./processCheck";
+import {
+  cleanupPidFile,
+  isOwnServiceRunning,
+  getOwnConfigDir,
+  getTargetConfigDir,
+  getTargetPidFile,
+  stopServiceAtPidFile,
+} from "./processCheck";
 
 // Function to interpolate environment variables in config values
 const interpolateEnvVars = (obj: any): any => {
@@ -41,6 +47,18 @@ const interpolateEnvVars = (obj: any): any => {
   }
   return obj;
 };
+
+/**
+ * Node binary used to spawn child `ccr start` processes.
+ *
+ * Always the runtime currently executing the CLI. Spawning a bare "node"
+ * resolves through PATH and can pick up a *different* major version than the
+ * one that launched the CLI; better-sqlite3 is a native addon built for a
+ * single NODE_MODULE_VERSION, so a mismatch makes the child fail to open
+ * usage.sqlite — the usage page then reads as empty even though requests are
+ * being served.
+ */
+export const getNodeBinary = (): string => process.execPath || "node";
 
 const ensureDir = async (dir_path: string) => {
   try {
@@ -218,14 +236,19 @@ export const initConfig = async () => {
 };
 
 export const run = async (args: string[] = []) => {
-  const isRunning = isServiceRunning()
+  // Guard against a duplicate server for *this* profile only. Another profile's
+  // server must not block this one from starting — that made `ccr start` for a
+  // fresh profile quietly no-op while its usage stayed in the other profile.
+  const isRunning = isOwnServiceRunning()
   if (isRunning) {
     console.log('claude-code-router server is running');
     return;
   }
   const server = await getServer();
   const app = server.app;
-  // Save the PID of the background process
+  // Save the PID of the background process in this profile's own directory.
+  // PID_FILE follows HOME_DIR, which is inside the active profile for a named
+  // profile, so the file lands next to the profile it belongs to.
   writeFileSync(PID_FILE, process.pid.toString());
 
   app.post('/api/update/perform', async () => {
@@ -239,18 +262,23 @@ export const run = async (args: string[] = []) => {
   app.post("/api/restart", async () => {
     setTimeout(async () => {
       try {
-        const activeProfile = await getActiveProfile();
-        const configDir = getProfileDirPath(activeProfile);
+        // Restart the config dir this server is actually serving. Reading the
+        // global active-profile file could name a different profile and bring
+        // up the wrong config (and the wrong usage database) after a restart.
+        // Use the process's own dir rather than rebuilding profiles/<name>:
+        // CCR_CONFIG_DIR may point at an arbitrary path, which a name-derived
+        // path would silently replace with a namesake under the profiles root.
+        const ownConfigDir = getOwnConfigDir();
         const childEnv: Record<string, string> = { ...process.env };
-        if (activeProfile !== "default") {
-          childEnv.CCR_CONFIG_DIR = configDir;
+        if (path.resolve(ownConfigDir) !== path.resolve(BASE_DIR)) {
+          childEnv.CCR_CONFIG_DIR = ownConfigDir;
         } else {
           delete childEnv.CCR_CONFIG_DIR;
         }
         childEnv.CCR_INTERNAL_START = "1";
 
         const cliPath = path.join(__dirname, "cli.js");
-        spawn("node", [cliPath, "start"], {
+        spawn(getNodeBinary(), [cliPath, "start"], {
           detached: true,
           stdio: "ignore",
           env: childEnv,
@@ -285,11 +313,15 @@ export const restartService = async () => {
     console.warn("Failed to create pre-restart config backup:", backupError);
   }
 
-  // Stop the service if it's running
-  try {
-    const pid = parseInt(readFileSync(PID_FILE, "utf-8"));
-    process.kill(pid);
-    cleanupPidFile();
+  // Resolve the config dir this invocation targets. An explicit
+  // CCR_CONFIG_DIR (set when a profile server re-spawns us, or by the user)
+  // wins; otherwise the recorded active profile decides.
+  const targetConfigDir = getTargetConfigDir();
+
+  // Stop the target profile's service if it's running. Only its own PID file is
+  // touched, so servers for other profiles keep running. The stop re-verifies
+  // the PID, so a stale PID file cannot make us signal a reused PID.
+  if (stopServiceAtPidFile(getTargetPidFile())) {
     if (existsSync(REFERENCE_COUNT_FILE)) {
       try {
         await fs.unlink(REFERENCE_COUNT_FILE);
@@ -298,29 +330,24 @@ export const restartService = async () => {
       }
     }
     console.log("claude code router service has been stopped.");
-  } catch (e) {
+  } else {
     console.log("Service was not running or failed to stop.");
     cleanupPidFile();
   }
 
-  // Determine the active profile so we preserve CCR_CONFIG_DIR across restart.
-  let activeProfile = "default";
-  try {
-    activeProfile = await getActiveProfile();
-  } catch {}
-
   // Start the service again in the background
   console.log("Starting claude code router service...");
   const cliPath = path.join(__dirname, "cli.js");
-  const configDir = getProfileDirPath(activeProfile);
   const childEnv: Record<string, string> = { ...process.env, CCR_INTERNAL_START: "1" };
-  if (activeProfile !== "default") {
-    childEnv.CCR_CONFIG_DIR = configDir;
+  // BASE_DIR (not HOME_DIR, which itself follows CCR_CONFIG_DIR) is the default
+  // profile's dir, so only clear the var when the target really is the default.
+  if (path.resolve(targetConfigDir) !== path.resolve(BASE_DIR)) {
+    childEnv.CCR_CONFIG_DIR = targetConfigDir;
   } else {
     delete childEnv.CCR_CONFIG_DIR;
   }
 
-  const startProcess = spawn("node", [cliPath, "start"], {
+  const startProcess = spawn(getNodeBinary(), [cliPath, "start"], {
     detached: true,
     stdio: "ignore",
     env: childEnv,

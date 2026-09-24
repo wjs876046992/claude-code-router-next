@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 
@@ -39,6 +40,48 @@ export const CLIENT_STATE_FILE = path.join(HOME_DIR, "client-state.json");
 export const PROFILES_DIR = path.join(BASE_DIR, "profiles");
 
 export const ACTIVE_PROFILE_FILE = path.join(PROFILES_DIR, "active-profile");
+
+/**
+ * Pure core of {@link resolveProfileHomeDir}: which config dir applies given
+ * the raw inputs.
+ *
+ * Split out so the decision table is unit-testable without reading or writing
+ * the real profile files (those always live under BASE_DIR, so a test that
+ * manipulates them would mutate the developer's actual configuration).
+ */
+export function pickProfileHomeDir(
+  envConfigDir: string | undefined,
+  activeProfile: string | null | undefined,
+  baseDir: string = BASE_DIR,
+  profilesDir: string = PROFILES_DIR,
+): string {
+  // A CCR_CONFIG_DIR naming the base dir pins the default profile, which is
+  // indistinguishable from "nothing pinned" — so fall through to the recorded
+  // active profile rather than letting a stale export hide it.
+  if (envConfigDir && path.resolve(envConfigDir) !== path.resolve(baseDir)) {
+    return envConfigDir;
+  }
+  const active = (activeProfile || "").trim();
+  if (active && active !== "default") {
+    return path.join(profilesDir, active);
+  }
+  return baseDir;
+}
+
+export function resolveProfileHomeDir(): string {
+  let active: string | null = null;
+  try {
+    active = fs.readFileSync(ACTIVE_PROFILE_FILE, "utf-8");
+  } catch {
+    // No profile file — treated as the default profile.
+  }
+  return pickProfileHomeDir(process.env.CCR_CONFIG_DIR, active);
+}
+
+/** Profile-scoped config.json path, resolved at call time. */
+export function resolveConfigFilePath(): string {
+  return path.join(resolveProfileHomeDir(), "config.json");
+}
 
 /**
  * Return the directory for a given profile name. Returns BASE_DIR for "default".

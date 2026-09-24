@@ -3,9 +3,13 @@ import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 
-// Isolate the SQLite database inside a throwaway HOME before the module
-// resolves DATA_DIR (computed from homedir() at import time).
+// Isolate the SQLite database inside a throwaway dir before the module resolves
+// DATA_DIR. The store derives it from HOME_DIR, which prefers CCR_CONFIG_DIR
+// over HOME — so set CCR_CONFIG_DIR, not HOME. Setting HOME alone silently
+// shared the vitest-wide CCR_CONFIG_DIR database with the other usage test
+// file, and the two concurrently-appending suites then saw each other's rows.
 const tempHome = mkdtempSync(join(tmpdir(), "ccr-usage-summary-"));
+process.env.CCR_CONFIG_DIR = tempHome;
 process.env.HOME = tempHome;
 process.env.USERPROFILE = tempHome;
 

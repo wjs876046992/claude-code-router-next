@@ -1,11 +1,15 @@
 #!/usr/bin/env node
-import { run, restartService } from "./utils";
+import { run, restartService, getNodeBinary } from "./utils";
 import { showStatus } from "./utils/status";
 import { executeCodeCommand, PresetConfig } from "./utils/codeCommand";
 import {
   cleanupPidFile,
   isServiceRunning,
   getServiceInfo,
+  getCurrentProfileName,
+  getProfilePidFile,
+  getTargetPidFile,
+  stopServiceAtPidFile,
 } from "./utils/processCheck";
 import { runModelSelector } from "./utils/modelSelector";
 import { activateCommand } from "./utils/activateCommand";
@@ -13,7 +17,7 @@ import { readConfigFile } from "./utils";
 import { version } from "../package.json";
 import { spawn, exec } from "child_process";
 import {getPresetDir, loadConfigFromManifest, PID_FILE, readPresetFile, REFERENCE_COUNT_FILE} from "@wengine-ai/claude-code-router-shared";
-import fs, { existsSync, readFileSync } from "fs";
+import fs, { existsSync } from "fs";
 import { join } from "path";
 import { parseStatusLineData, StatusLineInput } from "./utils/statusline";
 import {handlePresetCommand} from "./utils/preset";
@@ -25,7 +29,6 @@ import {
 } from "./utils/clients";
 import { handleProfileCommand } from "./utils/profile-commands";
 import {
-  getActiveProfile,
   getProfileDir,
   ensureDefaultProfile,
   listProfiles,
@@ -126,20 +129,36 @@ async function waitForService(
 }
 
 async function main() {
-  // Read active profile and set CCR_CONFIG_DIR before any shared-dependent code.
-  // Since shared constants are computed at import time, we use a helper that
-  // reads the profile file directly (without shared) and returns the env override.
+  // Decide which profile this invocation targets and express it as a
+  // CCR_CONFIG_DIR override. This runs before any shared-dependent code because
+  // shared constants are frozen at import time.
+  //
+  // Resolution order matches getCurrentProfileName()/resolveProfileHomeDir():
+  // an inherited CCR_CONFIG_DIR wins (e.g. a profile server re-spawning us),
+  // otherwise the globally recorded active profile applies.
   const _profileEnvOverride = await (async () => {
     const os = await import("os");
     const path = await import("path");
     const fs = await import("fs");
     const _homeDir = path.join(os.homedir(), ".claude-code-router");
+    const _profilesDir = path.join(_homeDir, "profiles");
+    const _profileDirOf = (name: string) =>
+      name === "default" ? null : path.join(_profilesDir, name);
+
+    // An explicit CCR_CONFIG_DIR (typically set by a parent profile server) is
+    // authoritative -- but only when it actually names a profile. A value
+    // pointing at the base dir identifies the default profile, so treat it as
+    // unset and fall through to the recorded active profile instead.
+    const _envDir = process.env.CCR_CONFIG_DIR;
+    if (_envDir && path.resolve(_envDir) !== path.resolve(_homeDir)) {
+      return { CCR_CONFIG_DIR: _envDir };
+    }
+
     const _activeProfileFile = path.join(_homeDir, "profiles", "active-profile");
     try {
       const _active = fs.readFileSync(_activeProfileFile, "utf-8").trim();
-      if (_active && _active !== "default") {
-        return { CCR_CONFIG_DIR: path.join(_homeDir, "profiles", _active) };
-      }
+      const _dir = _active ? _profileDirOf(_active) : null;
+      if (_dir) return { CCR_CONFIG_DIR: _dir };
     } catch {}
     return null;
   })();
@@ -224,7 +243,7 @@ async function main() {
           ...(_profileEnvOverride || {}),
           CCR_INTERNAL_START: "1",
         };
-        const startProcess = spawn("node", [cliPath, "start"], {
+        const startProcess = spawn(getNodeBinary(), [cliPath, "start"], {
           detached: true,
           stdio: "ignore",
           env: childEnv,
@@ -276,34 +295,39 @@ async function main() {
           ...(_profileEnvOverride || {}),
           CCR_INTERNAL_START: "1",
         };
-        const child = spawn("node", [cliPath, "start"], {
+        const child = spawn(getNodeBinary(), [cliPath, "start"], {
           detached: true,
           stdio: "ignore",
           env: childEnv,
         });
         child.unref();
+        // Report the profile actually being launched, which is the one the
+        // child will resolve from its environment (not necessarily the globally
+        // recorded active profile when CCR_CONFIG_DIR was inherited).
         const profileName = _profileEnvOverride
-          ? (await getActiveProfile())
+          ? getCurrentProfileName()
           : "default";
         console.log(`Server started in background (profile: ${profileName}).`);
       }
       break;
     case "stop":
       try { await disableConfiguredClientsForStop(); } catch {}
-      // Compute profile paths directly (not via shared constants which may be stale)
+      // Resolve profile paths through the shared helper so stop targets the same
+      // profile the server was started with (CCR_CONFIG_DIR wins when present).
       const _os = await import("os");
       const _path = await import("path");
       const _homeDir = _path.join(_os.homedir(), ".claude-code-router");
       const _profilesDir = _path.join(_homeDir, "profiles");
-      const _activeProfileFile = _path.join(_profilesDir, "active-profile");
-      let _activeName = "default";
-      try { _activeName = readFileSync(_activeProfileFile, "utf-8").trim() || "default"; } catch {}
+      const _activeName = getCurrentProfileName();
 
-      const _getPidFile = (name: string) =>
-        name === "default"
-          ? _path.join(_homeDir, ".claude-code-router.pid")
-          : _path.join(_profilesDir, name, ".claude-code-router.pid");
+      const _getPidFile = getProfilePidFile;
+      // The invocation's own target dir: covers a custom CCR_CONFIG_DIR that
+      // does not live under the profiles root, where _getPidFile can't find it.
+      const _targetPidFile = getTargetPidFile();
 
+      // Every stop goes through stopServiceAtPidFile, which re-verifies that the
+      // recorded PID is still a ccr server for that profile before signalling
+      // it — a PID file left over from before a reboot can name a reused PID.
       if (process.argv[3] === "--all") {
         // Stop all profile servers
         let _stoppedCount = 0;
@@ -311,35 +335,29 @@ async function main() {
           const _entries = fs.readdirSync(_profilesDir, { withFileTypes: true });
           for (const _entry of _entries) {
             if (_entry.isDirectory() && !_entry.name.startsWith(".")) {
-              try {
-                const pid = parseInt(readFileSync(_getPidFile(_entry.name), "utf-8"));
-                process.kill(pid);
-                fs.unlinkSync(_getPidFile(_entry.name));
-                _stoppedCount++;
-              } catch {}
+              if (stopServiceAtPidFile(_getPidFile(_entry.name))) _stoppedCount++;
             }
           }
         } catch {}
         // Also stop default profile
-        try {
-          const pid = parseInt(readFileSync(_getPidFile("default"), "utf-8"));
-          process.kill(pid);
-          fs.unlinkSync(_getPidFile("default"));
-          _stoppedCount++;
-        } catch {}
+        if (stopServiceAtPidFile(_getPidFile("default"))) _stoppedCount++;
+        // And a custom CCR_CONFIG_DIR server, which lives outside the profiles
+        // root and so is not covered by the scan above.
+        if (process.env.CCR_CONFIG_DIR && _targetPidFile !== _getPidFile("default")) {
+          if (stopServiceAtPidFile(_targetPidFile)) _stoppedCount++;
+        }
         console.log(`Stopped ${_stoppedCount} profile server(s).`);
       } else {
-        // Stop active profile's server
-        const _pidFile = _getPidFile(_activeName);
-        try {
-          const pid = parseInt(readFileSync(_pidFile, "utf-8"));
-          process.kill(pid);
-          try { fs.unlinkSync(_pidFile); } catch {}
+        // Stop the server this invocation targets. An explicit CCR_CONFIG_DIR
+        // may be an arbitrary path, so prefer its own PID file over a
+        // name-derived one under the profiles root.
+        const _pidFile = process.env.CCR_CONFIG_DIR ? _targetPidFile : _getPidFile(_activeName);
+        if (stopServiceAtPidFile(_pidFile)) {
           if (existsSync(REFERENCE_COUNT_FILE)) {
             try { fs.unlinkSync(REFERENCE_COUNT_FILE); } catch {}
           }
           console.log(`Profile "${_activeName}" service has been successfully stopped.`);
-        } catch (e) {
+        } else {
           console.log("Failed to stop the service. It may have already been stopped.");
           try { cleanupPidFile(); } catch {}
         }
@@ -402,7 +420,7 @@ async function main() {
           ...(_profileEnvOverride || {}),
           CCR_INTERNAL_START: "1",
         };
-        const startProcess = spawn("node", [cliPath, "start"], {
+        const startProcess = spawn(getNodeBinary(), [cliPath, "start"], {
           detached: true,
           stdio: "ignore",
           env: childEnv,
@@ -439,7 +457,7 @@ async function main() {
           ...(_profileEnvOverride || {}),
           CCR_INTERNAL_START: "1",
         };
-        const startProcess = spawn("node", [cliPath, "start"], {
+        const startProcess = spawn(getNodeBinary(), [cliPath, "start"], {
           detached: true,
           stdio: "ignore",
           env: childEnv,
@@ -496,7 +514,7 @@ async function main() {
               ...(_profileEnvOverride || {}),
               CCR_INTERNAL_START: "1",
             };
-            const restartProcess = spawn("node", [cliPath, "start"], {
+            const restartProcess = spawn(getNodeBinary(), [cliPath, "start"], {
               detached: true,
               stdio: "ignore",
               env: childEnv,
@@ -569,22 +587,25 @@ async function main() {
     case "restart":
       await ensureDefaultProfile();
       if (_profileEnvOverride) {
-        // Stop active profile's server first
+        // Stop the profile's own server first. Only this profile's PID file is
+        // touched so servers belonging to other profiles keep running.
         try { await disableConfiguredClientsForStop(); } catch {}
-        const pidFile = require("@wengine-ai/claude-code-router-shared").getProfilePidFile(
-          await getActiveProfile()
-        );
         try {
-          const pid = parseInt(readFileSync(pidFile, "utf-8"));
-          process.kill(pid);
-          try { fs.unlinkSync(pidFile); } catch {}
+          // Target the profile this invocation resolved (an inherited
+          // CCR_CONFIG_DIR may name a different profile than the recorded
+          // active one), so we stop exactly the server we are about to replace.
+          // The stop re-verifies the PID, so a stale PID file cannot make us
+          // signal an unrelated process that reused that PID.
+          stopServiceAtPidFile(getTargetPidFile());
         } catch {}
-        // Spawn new process with correct CCR_CONFIG_DIR
+        // Spawn new process with correct CCR_CONFIG_DIR. CCR_INTERNAL_START is
+        // required so the child runs the server in-process instead of spawning
+        // yet another detached `ccr start`.
         const cliPath = join(__dirname, "cli.js");
-        const child = spawn("node", [cliPath, "start"], {
+        const child = spawn(getNodeBinary(), [cliPath, "start"], {
           detached: true,
           stdio: "ignore",
-          env: { ...process.env, ..._profileEnvOverride },
+          env: { ...process.env, ..._profileEnvOverride, CCR_INTERNAL_START: "1" },
         });
         child.unref();
         console.log(`Restarting server with profile...`);

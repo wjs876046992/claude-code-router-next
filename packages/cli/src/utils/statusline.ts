@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { execSync } from "child_process";
 import { tmpdir, homedir } from "node:os";
-import { CONFIG_FILE, HOME_DIR, readPresetFile, getPresetDir, loadConfigFromManifest } from "@wengine-ai/claude-code-router-shared";
+import { resolveConfigFilePath, resolveProfileHomeDir, readPresetFile, getPresetDir, loadConfigFromManifest } from "@wengine-ai/claude-code-router-shared";
 import JSON5 from "json5";
 
 export interface StatusLineModuleConfig {
@@ -469,7 +469,10 @@ function formatDuration(ms: number): string {
 }
 
 const MAX_TOKEN_SPEED = 999;
-const USAGE_DB_FILE = path.join(HOME_DIR, "data", "usage.sqlite");
+// Resolved per invocation: Claude Code spawns the statusline from its own
+// environment, which does not carry CCR_CONFIG_DIR, so a module-load-time
+// constant would always point at the base dir even with a profile active.
+const getUsageDbFile = () => path.join(resolveProfileHomeDir(), "data", "usage.sqlite");
 const TOKEN_SPEED_VARIABLE_PATTERN = /\{\{\s*tokenSpeed\s*\}\}/;
 const TOKEN_TIMING_VARIABLE_PATTERN = /\{\{\s*(tokenSpeed|isStreaming|streamingIndicator|timeToFirstToken)\s*\}\}/;
 
@@ -584,7 +587,7 @@ function calculateEstimatedTokenSpeed(outputTokens: number, durationMs: number, 
 function readLatestUsageSpeedFromSqlite(sessionId: string): number {
     try {
         const Database = require('better-sqlite3');
-        const db = new Database(USAGE_DB_FILE, { readonly: true, fileMustExist: true });
+        const db = new Database(getUsageDbFile(), { readonly: true, fileMustExist: true });
         try {
             const row = db.prepare(`
                 SELECT tokens_per_second
@@ -686,7 +689,7 @@ async function getSessionPeakTotal(
 async function getProjectThemeConfig(): Promise<{ theme: StatusLineThemeConfig | null, style: string }> {
     try {
         // Only use fixed configuration file in home directory
-        const configPath = CONFIG_FILE;
+        const configPath = resolveConfigFilePath();
 
         // Check if configuration file exists
         try {
@@ -927,7 +930,7 @@ export async function parseStatusLineData(input: StatusLineInput, presetName?: s
                 try {
                     await fs.access(projectConfigPath);
                 } catch {
-                    configPath = CONFIG_FILE;
+                    configPath = resolveConfigFilePath();
                 }
 
                 // Read configuration file
