@@ -26,7 +26,7 @@ import Fastify, {
 } from "fastify";
 import cors from "@fastify/cors";
 import { ConfigService, AppConfig, ConfigOptions } from "./services/config";
-import { errorHandler } from "./api/middleware";
+import { errorHandler, notFoundHandler } from "./api/middleware";
 import { registerApiRoutes } from "./api/routes";
 import { ProviderService } from "./services/provider";
 import { TransformerService } from "./services/transformer";
@@ -72,6 +72,9 @@ function createApp(options: FastifyServerOptions = {}): FastifyInstance {
 
   // Register error handler
   fastify.setErrorHandler(errorHandler);
+
+  // Register custom 404 handler for OpenAI-compatible JSON error format
+  fastify.setNotFoundHandler(notFoundHandler);
 
   // Register CORS
   fastify.register(cors);
