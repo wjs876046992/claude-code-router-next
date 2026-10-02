@@ -959,6 +959,37 @@ export function SettingsPage() {
                 </div>
               </div>
 
+              {/* Concurrency Priority */}
+              <div className="border-t pt-4">
+                <div className="flex items-center justify-between mb-1">
+                  <div>
+                    <h3 className="text-sm font-medium text-gray-700">{t("settings.concurrency_priority_title")}</h3>
+                    <p className="text-xs text-gray-500">{t("settings.concurrency_priority_description")}</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Switch
+                      id="enable-concurrency-priority"
+                      checked={routerConfig.enableConcurrencyPriority ?? false}
+                      onCheckedChange={(checked) => handleRouterChange("enableConcurrencyPriority", checked)}
+                    />
+                    <Label htmlFor="enable-concurrency-priority" className="text-xs text-gray-500">
+                      {routerConfig.enableConcurrencyPriority ? t("router.enabled") : t("router.disabled")}
+                    </Label>
+                  </div>
+                </div>
+                <div className={`flex items-center gap-2 transition-opacity ${routerConfig.enableConcurrencyPriority ? "" : "opacity-50 pointer-events-none"}`}>
+                  <Label className="text-xs text-gray-600">{t("router.concurrency_threshold")}</Label>
+                  <Input
+                    type="number"
+                    min={1}
+                    value={routerConfig.concurrencyThreshold ?? 3}
+                    onChange={(e) => handleRouterChange("concurrencyThreshold", Math.max(1, parseInt(e.target.value) || 3))}
+                    className="h-7 w-20 text-xs px-2"
+                  />
+                  <span className="text-[10px] text-gray-400">{t("router.concurrency_threshold_hint")}</span>
+                </div>
+              </div>
+
               {/* Model Family Routing */}
               <div className="border-t pt-4">
                 <div className="flex items-center justify-between mb-1">

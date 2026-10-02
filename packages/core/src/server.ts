@@ -13,6 +13,7 @@ import Fastify, {
   preSerializationHookHandler,
   onSendHookHandler,
   onResponseHookHandler,
+  onRequestAbortHookHandler,
   onTimeoutHookHandler,
   onErrorHookHandler,
   onRouteHookHandler,
@@ -168,6 +169,10 @@ class Server {
   ): void;
   addHook(hookName: "onSend", hookFunction: onSendHookHandler): void;
   addHook(hookName: "onResponse", hookFunction: onResponseHookHandler): void;
+  addHook(
+    hookName: "onRequestAbort",
+    hookFunction: onRequestAbortHookHandler
+  ): void;
   addHook(hookName: "onTimeout", hookFunction: onTimeoutHookHandler): void;
   addHook(hookName: "onError", hookFunction: onErrorHookHandler): void;
   addHook(hookName: "onRoute", hookFunction: onRouteHookHandler): void;

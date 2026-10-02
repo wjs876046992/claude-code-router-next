@@ -190,6 +190,50 @@ The system logs detailed fallback process:
 3. **Quota management**: Ensure backup models have sufficient quotas
 4. **Testing**: Regularly test the availability of backup models
 
+## Concurrency Priority Mode
+
+When multiple projects share one CCR instance, heavy concurrent traffic against a single model causes queueing and slowdowns. Concurrency Priority mode layers on top of the normal routing decision: whatever model the router selects for a request (default, think, longContext, family default, ...), it is checked against live in-flight concurrency and new sessions overflow to the scenario-matching fallback list once it gets busy.
+
+### Configuration
+
+```json
+{
+  "Router": {
+    "default": "openrouter,anthropic/claude-sonnet-4",
+    "think": "openrouter,anthropic/claude-3.7-sonnet:thinking",
+    "enableConcurrencyPriority": true,
+    "concurrencyThreshold": 3
+  },
+  "fallback": {
+    "default": [
+      "deepseek,deepseek-chat",
+      "aihubmix,Z/glm-4.5"
+    ],
+    "think": [
+      "openrouter,anthropic/claude-sonnet-4"
+    ]
+  }
+}
+```
+
+- **`enableConcurrencyPriority`** (boolean, default `false`): enable concurrency-priority routing.
+- **`concurrencyThreshold`** (number, default `3`): once the selected model's in-flight request count reaches this value, new (not yet pinned) sessions overflow to that scenario's fallback list.
+
+### How It Works
+
+1. **Fresh assignment**: while the selected model's in-flight concurrency is below the threshold, new sessions use that model. Once the threshold is reached, new sessions are assigned to the least-loaded healthy model in the matching fallback list (family fallback first, then the global `fallback[scenario]` list).
+2. **Session stickiness**: a session sticks to its initially assigned model **per routing slot** (session + model family + scenario), so a session keeps one model for its default traffic and another for think traffic. Already-pinned sessions are never moved by congestion, which keeps provider-side prompt caches warm.
+3. **Error-driven switch only**: a session changes models only when its current model errors and the error-fallback path succeeds (requires `enableFallback`); the session is then rebound to the model that succeeded.
+4. **Scope**: applies to the model selected by the normal routing decision for every scenario (`default`, `think`, `longContext`, `extendedContext`, `webSearch`, `image`, `background`, model family defaults). Explicit `provider,model` requests are left untouched.
+
+### Notes
+
+- The overflow pool is the scenario-matching fallback list; configure at least one fallback model for a scenario for the mode to take effect on that scenario. Candidates are chosen by least in-flight load — when every candidate is busy, the least-loaded one still receives the overflow.
+- If the fallback list is empty or every candidate is unhealthy, new sessions stay on the busy model rather than failing.
+- Stickiness requires a stable session id (Claude Code provides one). Requests without a session id participate in overflow balancing but are never pinned; each request re-evaluates the least-loaded target.
+- When `CUSTOM_ROUTER_PATH` is configured, the concurrency layer still applies to the model the custom router returns (treated as default-scenario traffic, subject to stickiness and overflow). Disable the mode if your custom router must have the final say.
+- In-flight counts and session bindings live in memory and reset on restart.
+
 ## Project-Level Routing
 
 Configure routing per project in `~/.claude/projects/<project-id>/claude-code-router.json`:

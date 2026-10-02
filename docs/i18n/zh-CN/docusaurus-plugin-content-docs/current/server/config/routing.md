@@ -191,6 +191,50 @@ sidebar_position: 3
 3. **配额管理**：确保备用模型有足够的配额
 4. **测试验证**：定期测试备用模型的可用性
 
+## 并发优先模式
+
+当多个项目共用一个 CCR 实例时，大量并发请求打到同一个模型会导致排队变慢。并发优先模式叠加在现有路由结果之上：无论路由为请求选中哪个模型（default、think、longContext、模型族默认值等），都会按其实时在途并发数检查，忙碌时把新会话分流到该场景对应的备用列表。
+
+### 配置
+
+```json
+{
+  "Router": {
+    "default": "openrouter,anthropic/claude-sonnet-4",
+    "think": "openrouter,anthropic/claude-3.7-sonnet:thinking",
+    "enableConcurrencyPriority": true,
+    "concurrencyThreshold": 3
+  },
+  "fallback": {
+    "default": [
+      "deepseek,deepseek-chat",
+      "aihubmix,Z/glm-4.5"
+    ],
+    "think": [
+      "openrouter,anthropic/claude-sonnet-4"
+    ]
+  }
+}
+```
+
+- **`enableConcurrencyPriority`**（布尔，默认 `false`）：开启并发优先路由。
+- **`concurrencyThreshold`**（数字，默认 `3`）：当路由选中模型的在途并发请求数达到该值时，新会话（未粘连的 session）分流到该场景对应的备用列表。
+
+### 工作原理
+
+1. **首次分配**：路由选中模型的在途并发低于阈值时，新会话使用该模型；达到阈值后，新会话被分配到该场景对应备用列表中负载最低的健康模型（先看模型族 fallback，再看全局 `fallback[场景]` 列表）。
+2. **会话粘连**：会话按**路由槽位**（session + 模型族 + 场景）粘连在首次分配的模型上——即一个会话的 default 流量和 think 流量各自粘连一个模型。已粘连的 session 不会因为并发而中途切换，从而保持供应商侧 prompt 缓存的命中率。
+3. **仅报错切换**：只有当当前模型报错且错误 fallback 成功时（需开启 `enableFallback`），会话才会切换并重新绑定到成功的模型。
+4. **作用范围**：作用于路由为请求选中的模型（覆盖 `default`/`think`/`longContext`/`extendedContext`/`webSearch`/`image`/`background`/模型族默认值等所有场景）；显式指定 `provider,model` 的请求不受影响。
+
+### 注意事项
+
+- 分流池来自对应场景的备用列表，请为需要生效的场景至少配置一个备用模型。候选按在途负载最低挑选——所有候选都忙碌时，负载最低的仍会接管溢出流量。
+- 如果备用列表为空或所有候选都不可用，新会话继续使用忙碌模型，不会失败。
+- 粘连依赖稳定的 session id（Claude Code 会提供）。没有 session id 的请求参与溢出分流但不做固定，每次请求重新评估负载最低的目标。
+- 配置了 `CUSTOM_ROUTER_PATH` 时，并发层仍会作用于自定义路由返回的模型（视为 default 场景流量，受粘连与溢出影响）；如需自定义路由拥有最终决定权，请关闭本模式。
+- 在途并发数与会话绑定保存在内存中，服务重启后重置。
+
 ## 项目级路由
 
 在 `~/.claude/projects/<project-id>/claude-code-router.json` 中为每个项目配置路由：
