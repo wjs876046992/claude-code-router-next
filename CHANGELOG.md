@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [2.3.2410] - 2026-10-03
+
+### Changed
+
+- **并发优先模式开关移至通用配置**: 「并发优先模式」开关从 Router 配置区移到全局设置页「通用配置」区（位于「去除 Claude Code Attribution 动态头」下方），作为全局开关；配置仍存于 `Router.enableConcurrencyPriority` / `Router.concurrencyThreshold`，项目 Router 可通过 JSON 覆盖；项目级 Router 编辑器不再展示该开关。顺带补上阈值输入框的无障碍标签关联。
+
 ## [2.3.2409] - 2026-10-03
 
 ### Added
