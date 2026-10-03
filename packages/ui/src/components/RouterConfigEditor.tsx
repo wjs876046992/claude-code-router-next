@@ -190,36 +190,6 @@ export function RouterConfigEditor({ value, onChange, modelOptions }: RouterConf
         </div>
       </div>
 
-      {/* Concurrency Priority */}
-      <div className="border-t pt-4">
-        <div className="flex items-center justify-between mb-1">
-          <div>
-            <h4 className="text-sm font-medium text-gray-700">{t("settings.concurrency_priority_title")}</h4>
-            <p className="text-xs text-gray-500">{t("settings.concurrency_priority_description")}</p>
-          </div>
-          <div className="flex items-center gap-2">
-            <Switch
-              checked={value.enableConcurrencyPriority ?? false}
-              onCheckedChange={(checked) => update("enableConcurrencyPriority", checked)}
-            />
-            <Label className="text-xs text-gray-500">
-              {value.enableConcurrencyPriority ? t("router.enabled") : t("router.disabled")}
-            </Label>
-          </div>
-        </div>
-        <div className={`flex items-center gap-2 transition-opacity ${value.enableConcurrencyPriority ? "" : "opacity-50 pointer-events-none"}`}>
-          <Label className="text-xs text-gray-600">{t("router.concurrency_threshold")}</Label>
-          <Input
-            type="number"
-            min={1}
-            value={value.concurrencyThreshold ?? 3}
-            onChange={(e) => update("concurrencyThreshold", Math.max(1, parseInt(e.target.value) || 3))}
-            className="h-7 w-20 text-xs px-2"
-          />
-          <span className="text-[10px] text-gray-400">{t("router.concurrency_threshold_hint")}</span>
-        </div>
-      </div>
-
       {/* Model Family Routing */}
       <div className="border-t pt-4">
         <div className="flex items-center justify-between mb-1">

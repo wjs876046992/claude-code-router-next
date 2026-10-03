@@ -8,7 +8,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
-- **并发优先模式（会话粘连 + 场景级溢出分流）**: 多项目共用一个 CCR 实例时，大量并发打到同一个模型会导致排队变慢。新增 `Router.enableConcurrencyPriority`（默认关闭）与 `Router.concurrencyThreshold`（默认 3），叠加在现有路由结果之上：路由选中模型（default/think/longContext/extendedContext/webSearch/image/background/模型族默认值）的在途并发达到阈值后，新会话直接分流到该场景对应 fallback 列表（模型族 fallback 优先于全局列表）中负载最低的健康模型；会话按槽位（`sessionId:modelFamily:scenarioType`）粘连在首次分配的模型上——同会话的 default 流量与 think 流量各自粘连，保持供应商侧 prompt 缓存命中率，已粘连会话不受并发影响；仅当当前模型报错且错误 fallback 成功时（需开启 `enableFallback`）会话才重绑定到成功的模型。`provider,model` 显式路由与 `<CCR-SUBAGENT-MODEL>` 子代理覆盖保持原语义。在途租约在响应完成与客户端中断（`onRequestAbort`）时都会释放，异常中断的过期租约自动清理，不会虚增并发计数。UI 全局设置页与项目 Router 编辑器新增「并发优先模式」开关与阈值配置（中英文）。
+- **并发优先模式（会话粘连 + 场景级溢出分流）**: 多项目共用一个 CCR 实例时，大量并发打到同一个模型会导致排队变慢。新增 `Router.enableConcurrencyPriority`（默认关闭）与 `Router.concurrencyThreshold`（默认 3），叠加在现有路由结果之上：路由选中模型（default/think/longContext/extendedContext/webSearch/image/background/模型族默认值）的在途并发达到阈值后，新会话直接分流到该场景对应 fallback 列表（模型族 fallback 优先于全局列表）中负载最低的健康模型；会话按槽位（`sessionId:modelFamily:scenarioType`）粘连在首次分配的模型上——同会话的 default 流量与 think 流量各自粘连，保持供应商侧 prompt 缓存命中率，已粘连会话不受并发影响；仅当当前模型报错且错误 fallback 成功时（需开启 `enableFallback`）会话才重绑定到成功的模型。`provider,model` 显式路由与 `<CCR-SUBAGENT-MODEL>` 子代理覆盖保持原语义。在途租约在响应完成与客户端中断（`onRequestAbort`）时都会释放，异常中断的过期租约自动清理，不会虚增并发计数。UI 全局设置页「通用配置」新增「并发优先模式」全局开关与阈值配置（配置仍存于 Router 节点，项目 Router 可覆盖；中英文）。
 
 ## [2.3.2408] - 2026-09-20
 
