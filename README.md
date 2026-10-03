@@ -93,6 +93,7 @@ npm install -g @wengine-ai/claude-code-router-next@latest && ccr restart
 
 | 版本 | 发布内容 |
 | --- | --- |
+| **v2.3.2410** | <ul><li>**并发优先模式开关移至通用配置**: 开关从 Router 配置区移到全局设置页「通用配置」区（「去除 Claude Code Attribution 动态头」下方），作为全局开关；配置仍存于 Router 节点，项目 Router 可通过 JSON 覆盖；项目级编辑器不再展示该开关。</li></ul> |
 | **v2.3.2409** | <ul><li>**并发优先模式（会话粘连 + 场景级溢出分流）**: 多项目共用一个 CCR 实例时，大量并发打到同一个模型会导致排队变慢。新增 `Router.enableConcurrencyPriority`（默认关闭）与 `Router.concurrencyThreshold`（默认 3），叠加在现有路由结果之上：路由选中模型（default/think/longContext/extendedContext/webSearch/image/background/模型族默认值）在途并发达到阈值后，新会话直接分流到该场景 fallback 列表（模型族优先于全局）中负载最低的健康模型；会话按槽位（session+模型族+场景）粘连首配模型保持 prompt 缓存命中，仅报错走 fallback 成功才切换；`provider,model` 显式路由与 `&lt;CCR-SUBAGENT-MODEL&gt;` 子代理覆盖不受影响。UI 全局设置页「通用配置」新增「并发优先模式」全局开关与阈值（中英文）。</li></ul> |
 | **v2.3.2408** | <ul><li>**Pi 项目 provider 自动换成可读名**: 2.3.2405 之前接管的项目仍是 `ccr-project-&lt;hash&gt;` 旧名且刷新不迁移；现在自动改为 `ccr-project-&lt;项目名&gt;-&lt;hash&gt;` 并删除孤儿条目，关闭接管也能清掉旧名。</li><li>**修复测试数据污染真实用量库**: 测试写的假请求（demo/global/project 等）此前会写进真实 `usage.sqlite`，已隔离；历史假记录已提供清理方案。</li><li>**npm 包页面补上仓库链接**（repository/homepage/bugs 与作者信息）。</li></ul> |
 | **v2.3.2407** | <ul><li>**ZCode 会话发现器**: ZCode 请求不带任何项目标识，项目级 Router 对 ZCode 无效；现在按会话回查 ZCode 本地任务索引（`~/.zcode/v2/tasks-index.sqlite`，会话 JSON 的 `meta.workspacePath` 兜底）得到运行目录并映射到项目 id，`ccr model --project`/UI 配置的项目 Router 对 ZCode 生效；索引晚写有一次短重试，异常一律退化为全局 Router。</li><li>**ZCode 项目接管开关（opt-in）**: 项目「接管的客户端」下拉新增 ZCode，且接管状态就是路由开关——只有勾选 ZCode 的项目走项目 Router，未勾选的项目保持全局 Router，避免会话发现把个人项目改道到项目/公司模型。ZCode 无可写的项目级配置文件，标记记录在 `~/.claude-code-router/<project-id>/takeover-clients.json`，取消勾选或删除项目时清除。</li></ul> |
@@ -102,7 +103,6 @@ npm install -g @wengine-ai/claude-code-router-next@latest && ccr restart
 | **v2.3.2403** | <ul><li>**修复 Pi 项目级路由未生效**: Pi 项目接管不再复用无法标识项目的全局 `ccr` provider；每个项目改用携带受管项目 ID 的独立 provider，服务端直接加载对应项目 Router。旧接管会自动迁移，关闭全局 Pi 接管不会破坏项目接管，无效映射也不会静默回落到全局模型。</li></ul> |
 | **v2.3.2402** | <ul><li>**formatResponse SSE 识别放宽**: 之前仅对 `application/json` 头 peek,上游用非标准 Content-Type(`text/plain`/空)返回 SSE 仍会报 non-JSON;现对任何非流式响应都先 peek 判 SSE。</li></ul> |
 | **v2.3.2400** | <ul><li>**SSE 误标 JSON 的多层彻底修复**: v2.3.2397–2399 只看首个 chunk,遇空首块/心跳(`: ping`)/分片(`ev`/`ent:`)仍误判报错;现改为累积多 chunk 判定,并统一修复 formatResponse、两个 transformer、hidden-error-check 与 validateStreamingResponse 四处,误标 SSE 全部按流式透传。</li></ul> |
-| **v2.3.2399** | <ul><li>**bypass 模式下 SSE 误标 application/json 兜底修复**: bypass 的 provider 跳过 transformer 链后，SSE body + JSON 头的响应直达 formatResponse 仍会抛 non-JSON；现在 formatResponse 先 peek body 实际内容，SSE 按流式透传，作为该问题的最后一层兜底。</li></ul> |
 
 > 仅保留最近 10 个版本，更早版本的发布摘要见 [CHANGELOG-archive.md](./CHANGELOG-archive.md)，完整详细变更记录见 [CHANGELOG.md](./CHANGELOG.md)。
 
