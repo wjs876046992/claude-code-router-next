@@ -14,6 +14,10 @@ import { TokenizerService } from "../services/tokenizer";
 import { getHealthStore } from "../services/provider-health";
 import { getQuotaResult } from "../services/quota-store";
 import { getFallbackPromotionStore } from "./fallback-promotion";
+import {
+  routeWithConcurrencyPriority,
+  DEFAULT_CONCURRENCY_THRESHOLD,
+} from "./concurrency-router";
 import { normalizeSessionId } from "./session-id";
 import { findZcodeWorkspacePath } from "./zcode-session-project";
 import { applyClientAdapter, type ClientContext } from "../clients/adapters";
@@ -1042,6 +1046,10 @@ const getUseModel = async (
   // override here. In strict project mode, the override is ignored — routing
   // continues through the project Router's own scenario routing.
   if (!isStrictProject && subagentOverrideModel) {
+    // Mark the request so the concurrency-priority layer skips it: the
+    // per-request explicit override must win over session stickiness, and the
+    // subagent request must not read/poison the parent session's slot.
+    req.subagentOverrideModel = subagentOverrideModel;
     return { model: subagentOverrideModel, scenarioType: 'default' };
   }
   // Use the background model for any Claude Haiku variant
@@ -1320,6 +1328,35 @@ export const router = async (req: any, _res: any, context: RouterContext) => {
           }
         }
       }
+    }
+
+    // Concurrency-priority routing: when enabled, this layers on top of the
+    // routing decision above. Whatever model was selected (default, think,
+    // longContext, family default, ...) is checked against live in-flight
+    // concurrency: requests from NEW (not yet pinned) sessions overflow to the
+    // least-loaded model of the scenario-matching fallback list (family
+    // fallback first, then global), while already-pinned sessions stick to
+    // their assigned model. Explicit "provider,model" requests are left
+    // untouched so client-pinned routes stay authoritative.
+    if (
+      routerConfig?.enableConcurrencyPriority === true &&
+      !(req.originalModel || '').includes(',') &&
+      !req.subagentOverrideModel &&
+      typeof model === "string" &&
+      model.trim()
+    ) {
+      const concurrencyScenario = req.scenarioType || 'default';
+      const scenarioFallbackModels = [
+        ...((((req.familyFallback as RouterFallbackConfig | undefined) || {})[concurrencyScenario]) || []),
+        ...((((req.fallbackConfig as RouterFallbackConfig | undefined) || {})[concurrencyScenario]) || []),
+      ];
+      model = routeWithConcurrencyPriority(req, model, {
+        threshold: Number(routerConfig?.concurrencyThreshold) || DEFAULT_CONCURRENCY_THRESHOLD,
+        fallbackModels: scenarioFallbackModels,
+        resolve: (modelKey: string) =>
+          resolveConfiguredModel(modelKey, providers, false, concurrencyScenario, enableFallback, !isStrictProject, isStrictProject),
+        log: (msg: string) => req.log.info(msg),
+      });
     }
 
     if (typeof model === "string" && model.trim()) {

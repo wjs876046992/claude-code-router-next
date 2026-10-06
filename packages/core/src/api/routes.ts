@@ -22,6 +22,7 @@ import { Transformer } from "@/types/transformer";
 import { getHealthStore } from "@/services/provider-health";
 import { captureRateLimitHeaders } from "@/services/rate-limit";
 import { getFallbackPromotionStore } from "@/utils/fallback-promotion";
+import { rebindSessionModel } from "@/utils/concurrency-router";
 import { OpenAIResponsesTransformer } from "../transformer/openai.responses.transformer";
 import {
   isEventStreamResponse,
@@ -833,6 +834,12 @@ async function handleFallback(
           // Write back to original req so onResponse hook records correct provider/model
           req.provider = fbProviderName;
           req.body = newBody;
+
+          // Concurrency-priority mode: rebind the session to the fallback model
+          // that just succeeded, so subsequent requests in this session stick to
+          // it (and the in-flight lease follows the new model). No-op when the
+          // request did not participate in concurrency-priority routing.
+          rebindSessionModel(req, `${fbProviderName},${fbModel}`);
 
           // Format and return response
           return formatResponse(finalResponse, reply, newBody, fastify);

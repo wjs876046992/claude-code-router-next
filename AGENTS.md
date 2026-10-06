@@ -84,3 +84,17 @@ PUBLISH_DRY_RUN=1 pnpm release  # validate without publishing
 The release gate (`scripts/release.sh`) validates: all 6 `package.json` versions match, CHANGELOG.md has a section for the version, both README tables have the version row, and the version is strictly greater than the latest published on npm.
 
 Version must be bumped in **all 6** `package.json` files (root + 5 packages) before releasing. See CLAUDE.md for the full release checklist and version numbering rules.
+
+## Agent workflow
+
+Guidance for AI coding agents working in this repository.
+
+## Code Changes
+
+- Whenever you write or modify code, dispatch a separate subagent to perform a code review of the changes before considering the work done. Do not self-review.
+- Feed the reviewer the diff (or changed files) with enough context, then fix the reported issues (or explicitly justify why a finding is a non-issue) before continuing to the next step.
+
+## Pull Requests
+
+- After submitting a pull request, always follow up on the automated review results (GitHub Copilot code review and any other review bots) before moving on to the next step.
+- Address the review comments, or explicitly confirm they are non-issues, and push fixes as needed. Only proceed once the review findings are resolved.

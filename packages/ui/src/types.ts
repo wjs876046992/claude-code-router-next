@@ -64,6 +64,12 @@ export interface RouterConfig {
     extendedContextThreshold?: number;
     enableFamilyRouting?: boolean;
     enableFallback?: boolean;
+    // Concurrency-priority mode: overflow new sessions to the fallback
+    // `default` list once the primary model's in-flight concurrency reaches
+    // `concurrencyThreshold` (default 3). Sessions stick to their assigned
+    // model unless it errors and error-fallback succeeds.
+    enableConcurrencyPriority?: boolean;
+    concurrencyThreshold?: number;
     webSearch: string;
     image: string;
     models?: Record<string, string>;

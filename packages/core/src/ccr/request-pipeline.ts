@@ -26,6 +26,7 @@ import { performance } from "node:perf_hooks";
 import JSON5 from "json5";
 import { applyClientAdapter, detectClientType } from "../clients/adapters";
 import { sessionUsageCache } from "../utils/cache";
+import { releaseRequestLease } from "../utils/concurrency-router";
 import { getHealthStore } from "../services/provider-health";
 import { SSEParserTransform } from "../utils/sse/SSEParser.transform";
 import { SSESerializerTransform } from "../utils/sse/SSESerializer.transform";
@@ -502,11 +503,21 @@ export function registerRequestPipeline(serverInstance: any, config: any): void 
     return payload;
   });
 
+  // Hook: onRequestAbort — client disconnected mid-flight. Fastify does not
+  // guarantee onResponse for aborted requests, so release the
+  // concurrency-priority in-flight lease here too (idempotent; no-op when the
+  // request holds no lease).
+  serverInstance.addHook("onRequestAbort", async (req: any) => {
+    releaseRequestLease(req);
+  });
+
   // Hook 5: onResponse — final usage record (TTFT/speed/health/final record)
   serverInstance.addHook("onResponse", async (req: any, reply: any) => {
     (req.ccrHookOrder ||= []).push("onResponse");
+    // Release the concurrency-priority in-flight lease (no-op when the request
+    // did not go through concurrency-priority routing).
+    releaseRequestLease(req);
     if (!req.pathname?.endsWith("/v1/messages") && !req.pathname?.endsWith("/v1/responses")) return;
-
     try {
       if (req.usageCapturePromise) {
         await req.usageCapturePromise;

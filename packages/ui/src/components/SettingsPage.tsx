@@ -506,6 +506,35 @@ export function SettingsPage() {
                 </Label>
               </div>
 
+              {/* Concurrency Priority (global switch; config lives in Router.*) */}
+              <div className="border-t pt-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-2">
+                    <Switch
+                      id="enable-concurrency-priority"
+                      checked={routerConfig.enableConcurrencyPriority ?? false}
+                      onCheckedChange={(checked) => handleRouterChange("enableConcurrencyPriority", checked)}
+                    />
+                    <Label htmlFor="enable-concurrency-priority">{t("settings.concurrency_priority_title")}</Label>
+                  </div>
+                  <div className={`flex items-center gap-2 transition-opacity ${routerConfig.enableConcurrencyPriority ? "" : "opacity-50 pointer-events-none"}`}>
+                    <Label htmlFor="concurrency-threshold" className="text-xs text-gray-600">{t("router.concurrency_threshold")}</Label>
+                    <Input
+                      id="concurrency-threshold"
+                      type="number"
+                      min={1}
+                      value={routerConfig.concurrencyThreshold ?? 3}
+                      onChange={(e) => handleRouterChange("concurrencyThreshold", Math.max(1, parseInt(e.target.value) || 3))}
+                      className="h-7 w-20 text-xs px-2"
+                    />
+                  </div>
+                </div>
+                <p className="mt-1 text-xs text-gray-500">
+                  {t("settings.concurrency_priority_description")}
+                  <span className="ml-1 text-gray-400">{t("router.concurrency_threshold_hint")}</span>
+                </p>
+              </div>
+
               <div className="space-y-4 border-t pt-4">
                 <div className="flex items-center space-x-2">
                   <Switch

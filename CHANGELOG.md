@@ -10,6 +10,18 @@ All notable changes to this project will be documented in this file.
 - **`ccr code` 按项目 Router 计算窗口与别名（避免覆盖项目接管的上限）**: `ccr code` 在项目目录里启动时，此前只读全局配置，因此只给全局口径的值；但 Claude Code 的 env 层（`ccr code` 会同时写 `--settings` 与进程 env）优先于包括项目 `.claude/settings.local.json` 在内的所有 settings 层，这会覆盖掉项目接管写入的 200k 上限。典型场景：全局默认 family 启用 `[1m]` 且 `ContextWindow=1000000`，而某项目自带 Router 未启用扩展上下文——项目接管正确地封顶 200k，`ccr code` 却把会话重新拉到 1M，上下文超过 200k 后又因严格项目路由无法逃逸到全局扩展模型，最终无可用模型。现在 `ccr code` 经 `readProjectConfig(process.cwd())` + `buildProjectTakeoverConfig`（自 projectConfig 导出）取得「全局连接/界面参数 + 项目 Router」的有效配置，与项目接管同源；项目无自有 Router、或项目配置损坏时回退全局（损坏不再阻断 `ccr code`，请求路径仍会报项目路由错误）。
 - **统一 `ccr code` 与接管的 family 别名与压缩比例（消除两套实现）**: 两条写入路径本各有一份实现，导致三处分歧——① `enableFamilyRouting: false` 时接管会正确地不发 `ccr-*[1m]` 别名，`ccr code` 却仍发，留下无 family 路由可解析的陈旧 `[1m]` 别名（同时把窗口留在 1M）；② `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` 在 CLI 里是 `"85"`、在接管里是 `"90"`；③ 别名取值逻辑重复。现在抽出纯函数 `getClaudeFamilyEnv`（family 别名）与 `CLAUDE_AUTO_COMPACT_PCT_OVERRIDE` 常量（自 shared 导出）供两条路径共用；接管侧 `applyClaudeModelFamilies` 改为先清陈旧 `ccr-*` 别名再 `Object.assign` 共享结果。压缩比例统一取 `"90"`：此前 `ccr code` 的 `"85"` 因 env 层优先级而实际生效，接管写的 `"90"` 被静默忽略；因为该变量只会**下调**压缩阈值，统一后压缩点从 85% 略延后到 90%（如需回到更保守的 85%，改 `packages/shared/src/client-integrations.ts` 的 `CLAUDE_AUTO_COMPACT_PCT_OVERRIDE` 一处即可）。新增 `claude-family-env` 单测覆盖别名、think 路由优先、family 路由显式关闭、窗口封顶与共享常量，shared 51 项、core 325 项全通过。
 
+## [2.3.2410] - 2026-10-03
+
+### Changed
+
+- **并发优先模式开关移至通用配置**: 「并发优先模式」开关从 Router 配置区移到全局设置页「通用配置」区（位于「去除 Claude Code Attribution 动态头」下方），作为全局开关；配置仍存于 `Router.enableConcurrencyPriority` / `Router.concurrencyThreshold`，项目 Router 可通过 JSON 覆盖；项目级 Router 编辑器不再展示该开关。顺带补上阈值输入框的无障碍标签关联。
+
+## [2.3.2409] - 2026-10-03
+
+### Added
+
+- **并发优先模式（会话粘连 + 场景级溢出分流）**: 多项目共用一个 CCR 实例时，大量并发打到同一个模型会导致排队变慢。新增 `Router.enableConcurrencyPriority`（默认关闭）与 `Router.concurrencyThreshold`（默认 3），叠加在现有路由结果之上：路由选中模型（default/think/longContext/extendedContext/webSearch/image/background/模型族默认值）的在途并发达到阈值后，新会话直接分流到该场景对应 fallback 列表（模型族 fallback 优先于全局列表）中负载最低的健康模型；会话按槽位（`sessionId:modelFamily:scenarioType`）粘连在首次分配的模型上——同会话的 default 流量与 think 流量各自粘连，保持供应商侧 prompt 缓存命中率，已粘连会话不受并发影响；仅当当前模型报错且错误 fallback 成功时（需开启 `enableFallback`）会话才重绑定到成功的模型。`provider,model` 显式路由与 `<CCR-SUBAGENT-MODEL>` 子代理覆盖保持原语义。在途租约在响应完成与客户端中断（`onRequestAbort`）时都会释放，异常中断的过期租约自动清理，不会虚增并发计数。UI 全局设置页「通用配置」新增「并发优先模式」全局开关与阈值配置（配置仍存于 Router 节点，项目 Router 可覆盖；中英文）。
+
 ## [2.3.2408] - 2026-09-20
 
 ### Fixed
