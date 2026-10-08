@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-> **Note**: See `AGENTS.md` for a condensed version of this guide.
+> **Note**: This file and `AGENTS.md` overlap. `AGENTS.md` carries the repo overview, build/test commands, and release gate; this file carries the full architecture guide. `AGENTS.md`'s agent-workflow rules are folded into [Agent Workflow](#agent-workflow-from-agentsmd) below so both files can be read from either entry point.
 
 ## Project Overview
 
@@ -45,7 +45,7 @@ pnpm dev:core       # same as dev:server — both run @wengine-ai/llms (nodemon)
 pnpm dev:ui         # Vite dev server for UI
 ```
 
-⚠️ `pnpm dev:cli` is currently broken: the root script filters `@wengine-ai/claude-code-router-cli`, but the CLI package is named `@wengine-ai/claude-code-router-next`. Build the CLI instead (`pnpm build:cli`) and run `ccr` from `packages/cli/dist/cli.js`.
+⚠️ `pnpm dev:cli` is currently broken: the root script filters `@wengine-ai/claude-code-router-cli`, but the CLI package is named `@wengine-ai/claude-code-router-next` (and it defines no `dev` script at all). Build the CLI instead (`pnpm build:cli`) and run `node packages/cli/dist/cli.js <command>`.
 
 **Build order matters**: `shared` must build before `core`. `core` must build before `server` or `cli`. `build:cli` is self-contained (builds shared + core + UI internally), so don't use it if you only changed core — use `build:core` instead.
 
@@ -53,19 +53,24 @@ pnpm dev:ui         # Vite dev server for UI
 
 ## Testing
 
-Tests use **vitest** in `core` and `shared` only. No tests exist for cli, server, or ui packages.
+Tests use **vitest**. Suites live in `core` (the bulk), `shared`, and `cli`; `server` and `ui` have none.
 
 ```bash
-pnpm --filter @wengine-ai/llms test                      # core tests
-pnpm --filter @wengine-ai/claude-code-router-shared test # shared tests
+pnpm --filter @wengine-ai/llms test                       # core
+pnpm --filter @wengine-ai/claude-code-router-shared test  # shared
+pnpm --filter @wengine-ai/claude-code-router-next test    # cli
 
-# Single test file (run from the package dir):
-cd packages/core && npx vitest run src/__tests__/hook-order.test.ts
+# Single test file:
+cd packages/core && npx vitest run src/__tests__/concurrency-router.test.ts
 ```
 
-Both packages' vitest configs pin `CCR_CONFIG_DIR` to a temp dir via the `env` option, so tests never touch `~/.claude-code-router`. Tests live at `src/__tests__/**/*.test.ts`.
+`core` and `shared` have a `vitest.config.ts` that pins `CCR_CONFIG_DIR` to a temp dir via the `env` option, so tests never touch `~/.claude-code-router`. **`cli` has no vitest config** — its single test (`version-compare.test.ts`) is pure and reads no config, so that is fine today, but any new CLI test that touches `HOME_DIR`/`PROFILES_DIR` will read the developer's real `~/.claude-code-router` unless a config is added first.
 
-**CI only runs `pnpm build`** — there is no test or lint step in the GitHub Actions workflow. Run tests locally before pushing.
+Tests live at `src/__tests__/**/*.test.ts`.
+
+**CI only runs `pnpm build`** (Node 22, pnpm 11.1.1) — there is no test or lint step in the GitHub Actions workflow. Run tests locally before pushing.
+
+**`better-sqlite3` pins the Node major.** The usage tests open a real SQLite database through the native addon, which is compiled for one `NODE_MODULE_VERSION`. Running the suite under a different Node major than the one that installed dependencies fails every DB test with `Module did not self-register: .../better_sqlite3.node` (or `ERR_DLOPEN_FAILED`). Check `node -v` before blaming the code, and match the build/install runtime.
 
 ## Core Architecture
 
@@ -102,6 +107,8 @@ Routing priority (highest to lowest):
 5. **Default routing**: `Router.default`
 
 Token calculation uses `tiktoken` (cl100k_base) for request size estimation and `@huggingface/tokenizers` for the tokenizer service.
+
+**Concurrency-priority layer** (`packages/core/src/utils/concurrency-router.ts`): when `Router.enableConcurrencyPriority` is true, this *layers on top of* the routing decision above (it never replaces it) and is invoked from `router()` after the model is chosen. Two pieces of in-memory state: an in-flight lease count per `provider,model`, and a session binding per **slot** (`sessionId:modelFamily:scenarioType`). A new (unpinned) session overflows to the least-loaded healthy model of the scenario-matching fallback list once the routed model's in-flight count reaches `Router.concurrencyThreshold` (default 3); pinned sessions are moved only by error-fallback (`rebindSessionModel` in `routes.ts`). Explicit `provider,model` and `<CCR-SUBAGENT-MODEL>` requests are exempt. Leases are released in the `onResponse` **and** `onRequestAbort` hooks (Fastify does not guarantee `onResponse` for aborted requests), with stale-lease pruning as a backstop — if you add a new response path, release the lease there too or counts drift upward and every new session overflows.
 
 ### Transformer System (`packages/core/src/services/transformer.ts`, `packages/core/src/transformer/`)
 
@@ -145,6 +152,19 @@ Path constants live in `packages/shared/src/constants.ts` and are easy to confus
 ### Configuration Profiles (`packages/shared/src/profile.ts`, `packages/cli/src/utils/profile-commands.ts`)
 
 Named profiles give each `CCR_CONFIG_DIR` its own config, presets, usage DB, and port. Commands: `ccr profile list|create|switch|delete|show`. `switch` restarts the server with the profile's `CCR_CONFIG_DIR`. Profile names: alphanumeric + `-`/`_`, max 64 chars.
+
+Layout on disk (base dir, never nested):
+```
+~/.claude-code-router/                     # BASE_DIR = the "default" profile
+  config.json  .claude-code-router.pid     # default profile's own state
+  profiles/active-profile                  # the recorded active profile (a plain name)
+  profiles/<name>/                         # a named profile's CCR_CONFIG_DIR
+```
+
+The single invariant to preserve: **every profile path derives from a CCR config dir, never from a profile *name*.** `CCR_CONFIG_DIR` may point at an arbitrary directory (not just `profiles/<name>`), so name-derived helpers such as `getProfilePidFile(name)` are only valid for profiles under the profiles root — a CLI invocation that may carry a custom dir must use `getTargetConfigDir()`/`getTargetPidFile()` (`packages/cli/src/utils/processCheck.ts`). Two consequences that are easy to get wrong:
+
+- **A `CCR_CONFIG_DIR` equal to the base dir pins nothing.** It is the default profile's home, so it must fall through to the recorded active profile rather than masking it (`pickProfileHomeDir`, `getEnvProfileName`).
+- **Per-profile liveness must be judged by the PID file inside the profile's own config dir**, and the PID must be re-verified before being signalled. PID files survive reboots and their PIDs get reused; `processCheck.ts` confirms the process via `/proc/<pid>/cmdline` + `/proc/<pid>/environ` on Linux (comparing the *full resolved* config dir, not a basename, so `/a/work` and `/b/work` are not conflated).
 
 ### Logging
 
@@ -193,6 +213,13 @@ Presets stored in `~/.claude-code-router/presets/<preset-name>/manifest.json` (r
 7. **Documentation**: Add to `docs/` project (Docusaurus), not standalone md files. Build with `pnpm build:docs`, dev with `pnpm dev:docs`.
 8. **No lint/format in CI**: Individual packages have lint scripts but they're not wired into CI. No unified format command.
 9. **`workspace:*` protocol**: Used for inter-package deps. Release script rewrites to real version ranges before publishing.
+
+## Agent Workflow (from `AGENTS.md`)
+
+- **Do not self-review.** After writing or modifying code, dispatch a separate subagent to review the diff with enough context, then fix what it reports (or explicitly justify each finding as a non-issue) before moving on.
+- **Follow up on PR review bots.** After opening a PR, wait for the automated review results (GitHub Copilot and others) and address them, or confirm they are non-issues, before continuing.
+- **Trunk-based, PR-only**: `main` is protected — changes land via PR with at least one approving review, and CI (`pnpm build`) must pass. Maintainers can bypass for urgent fixes.
+- **Conventional Commits**: `fix:` / `feat:` / `docs:` / `chore:`.
 
 ## Common Tasks
 
@@ -263,18 +290,13 @@ Daily iterations extend patch segment with extra digit (`2.3.23` → `2.3.231` �
 | Build one package | `pnpm build:core` (or `:shared`, `:cli`, `:ui`, `:server`) |
 | Run core tests | `pnpm --filter @wengine-ai/llms test` |
 | Run shared tests | `pnpm --filter @wengine-ai/claude-code-router-shared test` |
+| Run cli tests | `pnpm --filter @wengine-ai/claude-code-router-next test` |
 | Single test file | `cd packages/core && npx vitest run src/__tests__/<file>.test.ts` |
 | Dev server | `pnpm dev:core` |
 | Dev UI | `pnpm dev:ui` |
 | Restart CCR | `ccr restart` |
 | Release | `pnpm release` (or `PUBLISH_DRY_RUN=1 pnpm release` for dry run) |
 
-## .mimocode Directory
+## Local-Only Directories
 
-The `.mimocode/` directory contains configuration for the mimocode AI assistant plugin (`@mimo-ai/plugin`). It is not part of the application source.
-
-**Contents:**
-- `command/create-agents-md.md` — Command template for generating/updating `AGENTS.md`. Describes the investigation methodology (read manifests → build config → CI workflows → existing instruction files → representative code) and writing rules (high-signal, repo-specific only; exclude generic advice).
-- `plans/1784703009846-clever-star.md` — Implementation plan for **Named Configuration Profiles** (`ccr profile` CLI commands, per-profile `CCR_CONFIG_DIR` isolation). Now implemented — see Configuration Profiles above; the plan is historical reference.
-- `.cron-lock` — Tracks a running mimocode cron process (PID + start time).
-- `package.json` — Declares `@mimo-ai/plugin` dependency.
+`.mimocode/` (mimocode assistant plugin state: a `create-agents-md.md` command template, an implementation plan for the named-profile feature, a cron lock, and its own `package.json`) and `.pi/` are **gitignored and not present in a fresh clone**. Their contents are developer-machine state, not application source — ignore them when reasoning about the repo, and do not treat a plan file found there as current documentation.
