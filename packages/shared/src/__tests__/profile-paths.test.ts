@@ -7,7 +7,7 @@ import {
   ACTIVE_PROFILE_FILE,
 } from "../constants";
 import { getProfileDir, getProfileConfigPath } from "../profile";
-import { getProfileDirPath, pickProfileHomeDir } from "../constants";
+import { getProfileDirPath, pickProfileHomeDir, pickDataDir } from "../constants";
 
 // When a profile is active, CCR_CONFIG_DIR points *inside* that profile's
 // directory (HOME_DIR follows it). Profile management state must still resolve
@@ -89,5 +89,40 @@ describe("profile home resolution decision table", () => {
     expect(pickProfileHomeDir(undefined, "default", BASE, PROFILES)).toBe(BASE);
     expect(pickProfileHomeDir(undefined, "", BASE, PROFILES)).toBe(BASE);
     expect(pickProfileHomeDir(undefined, null, BASE, PROFILES)).toBe(BASE);
+  });
+});
+
+describe("data dir resolution decision table", () => {
+  const BASE = "/home/u/.claude-code-router";
+  const PROFILES = join(BASE, "profiles");
+
+  it("prefers explicit CCR_DATA_DIR override", () => {
+    expect(pickDataDir(join(PROFILES, "work"), "/custom/data", BASE, PROFILES)).toBe(
+      "/custom/data"
+    );
+  });
+
+  it("shares the global base data dir for named profiles", () => {
+    expect(pickDataDir(join(PROFILES, "work"), undefined, BASE, PROFILES)).toBe(
+      join(BASE, "data")
+    );
+    expect(pickDataDir(join(PROFILES, "antigravity"), undefined, BASE, PROFILES)).toBe(
+      join(BASE, "data")
+    );
+  });
+
+  it("shares the global base data dir for the default profile", () => {
+    expect(pickDataDir(BASE, undefined, BASE, PROFILES)).toBe(
+      join(BASE, "data")
+    );
+    expect(pickDataDir(undefined, undefined, BASE, PROFILES)).toBe(
+      join(BASE, "data")
+    );
+  });
+
+  it("isolates data dir when CCR_CONFIG_DIR is an external directory (e.g. tests)", () => {
+    expect(pickDataDir("/tmp/ccr-test-home", undefined, BASE, PROFILES)).toBe(
+      "/tmp/ccr-test-home/data"
+    );
   });
 });

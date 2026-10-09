@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { execSync } from "child_process";
 import { tmpdir, homedir } from "node:os";
-import { resolveConfigFilePath, resolveProfileHomeDir, readPresetFile, getPresetDir, loadConfigFromManifest } from "@wengine-ai/claude-code-router-shared";
+import { resolveConfigFilePath, resolveProfileHomeDir, resolveDataDir, readPresetFile, getPresetDir, loadConfigFromManifest } from "@wengine-ai/claude-code-router-shared";
 import JSON5 from "json5";
 
 export interface StatusLineModuleConfig {
@@ -469,10 +469,8 @@ function formatDuration(ms: number): string {
 }
 
 const MAX_TOKEN_SPEED = 999;
-// Resolved per invocation: Claude Code spawns the statusline from its own
-// environment, which does not carry CCR_CONFIG_DIR, so a module-load-time
-// constant would always point at the base dir even with a profile active.
-const getUsageDbFile = () => path.join(resolveProfileHomeDir(), "data", "usage.sqlite");
+// Usage database is shared across all profiles under BASE_DIR/data (like logs and plugins).
+const getUsageDbFile = () => path.join(resolveDataDir(), "usage.sqlite");
 const TOKEN_SPEED_VARIABLE_PATTERN = /\{\{\s*tokenSpeed\s*\}\}/;
 const TOKEN_TIMING_VARIABLE_PATTERN = /\{\{\s*(tokenSpeed|isStreaming|streamingIndicator|timeToFirstToken)\s*\}\}/;
 

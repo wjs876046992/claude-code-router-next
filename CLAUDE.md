@@ -146,12 +146,12 @@ Location: `~/.claude-code-router/config.json` (JSON5 with env var interpolation 
 Config structure: `providers[]`, `Router` (default/background/think/longContext/webSearch/image), `transformers[]`, `HOST`, `PORT`, `APIKEY`, plus optional `CUSTOM_ROUTER_PATH`, `familyRouting`, etc.
 
 Path constants live in `packages/shared/src/constants.ts` and are easy to confuse:
-- `HOME_DIR` = `CCR_CONFIG_DIR` env or `~/.claude-code-router` — **follows the active profile**; most per-runtime state (config, presets, usage DB, pid file) resolves from it
-- `BASE_DIR` = always `~/.claude-code-router` — used for cross-profile shared state (logs, plugins) and profile management (`profiles/`, `active-profile`) so profiles never nest inside each other
+- `HOME_DIR` = `CCR_CONFIG_DIR` env or `~/.claude-code-router` — **follows the active profile**; per-runtime state (config, presets, pid file) resolves from it
+- `BASE_DIR` = `CCR_BASE_DIR` env or `~/.claude-code-router` — used for cross-profile shared state (logs, plugins, usage DB `data/usage.sqlite`) and profile management (`profiles/`, `active-profile`) so profiles never nest inside each other
 
 ### Configuration Profiles (`packages/shared/src/profile.ts`, `packages/cli/src/utils/profile-commands.ts`)
 
-Named profiles give each `CCR_CONFIG_DIR` its own config, presets, usage DB, and port. Commands: `ccr profile list|create|switch|delete|show`. `switch` restarts the server with the profile's `CCR_CONFIG_DIR`. Profile names: alphanumeric + `-`/`_`, max 64 chars.
+Named profiles give each `CCR_CONFIG_DIR` its own config, presets, and port, while sharing logs and the usage database (`data/usage.sqlite`). Commands: `ccr profile list|create|switch|delete|show`. `switch` restarts the server with the profile's `CCR_CONFIG_DIR`. Profile names: alphanumeric + `-`/`_`, max 64 chars.
 
 Layout on disk (base dir, never nested):
 ```

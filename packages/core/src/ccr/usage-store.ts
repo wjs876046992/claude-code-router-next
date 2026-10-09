@@ -1,12 +1,13 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync } from "fs";
-import { join } from "path";
+import { join, resolve } from "path";
 import { tmpdir } from "os";
 import Database from "better-sqlite3";
-import { HOME_DIR } from "@wengine-ai/claude-code-router-shared";
+import { PROFILES_DIR, resolveDataDir } from "@wengine-ai/claude-code-router-shared";
 
-// HOME_DIR already honors CCR_CONFIG_DIR, so tests that point it at a temp dir
-// cannot write usage into the real ~/.claude-code-router database.
-const DATA_DIR = join(HOME_DIR, "data");
+// Data directory is shared across all profiles (like logs and plugins).
+// Tests that point CCR_CONFIG_DIR at an isolated temp dir outside PROFILES_DIR
+// keep their usage isolated to that temp dir.
+const DATA_DIR = resolveDataDir();
 const USAGE_DB_FILE = join(DATA_DIR, "usage.sqlite");
 const LEGACY_USAGE_FILE = join(DATA_DIR, "usage.jsonl");
 const MIN_DECODE_DURATION_SECONDS = 1;
@@ -143,6 +144,7 @@ function getDb(): Database.Database {
     db.pragma("user_version = 2");
   }
   migrateLegacyUsageJsonl(db);
+  migrateProfileUsageDatabases(db);
   pruneExpiredRecords(db, true);
 
   // NOTE: legacy databases may still carry codex_account_id/codex_account_email
@@ -266,6 +268,92 @@ function migrateLegacyUsageJsonl(db: Database.Database): void {
   });
 
   migrate();
+}
+
+function migrateProfileUsageDatabases(db: Database.Database): void {
+  if (!existsSync(PROFILES_DIR)) {
+    return;
+  }
+
+  let entries: string[];
+  try {
+    entries = readdirSync(PROFILES_DIR);
+  } catch {
+    return;
+  }
+
+  const insertStatement = getInsertStatement(db, "INSERT OR IGNORE");
+
+  for (const entry of entries) {
+    const metaKey = `profile_usage_${entry}_migrated_at`;
+    if (getMeta(db, metaKey)) {
+      continue;
+    }
+
+    const profileDbPath = join(PROFILES_DIR, entry, "data", "usage.sqlite");
+    if (!existsSync(profileDbPath) || resolve(profileDbPath) === resolve(USAGE_DB_FILE)) {
+      continue;
+    }
+
+    let profileDb: Database.Database | null = null;
+    try {
+      profileDb = new Database(profileDbPath, { readonly: true, fileMustExist: true });
+      const tableCheck = profileDb
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'usage_records'")
+        .get();
+      if (!tableCheck) {
+        setMeta(db, metaKey, new Date().toISOString());
+        continue;
+      }
+
+      const rows = profileDb.prepare("SELECT * FROM usage_records").all() as any[];
+      let imported = 0;
+      let duplicates = 0;
+
+      const migrate = db.transaction(() => {
+        for (const row of rows) {
+          const result = insertStatement.run({
+            id: row.id,
+            timestamp: row.timestamp,
+            session_id: row.session_id,
+            provider: row.provider,
+            original_model: row.original_model,
+            model: row.model,
+            upstream_model: row.upstream_model ?? null,
+            model_family: row.model_family ?? "",
+            scenario_type: row.scenario_type ?? "default",
+            client_type: row.client_type ?? null,
+            stream: row.stream ?? 0,
+            input_tokens: row.input_tokens ?? 0,
+            output_tokens: row.output_tokens ?? 0,
+            cache_read_input_tokens: row.cache_read_input_tokens ?? 0,
+            cache_creation_input_tokens: row.cache_creation_input_tokens ?? 0,
+            ttft: row.ttft ?? null,
+            tokens_per_second: row.tokens_per_second ?? null,
+            duration_ms: row.duration_ms ?? 0,
+            status: row.status ?? "success",
+            error_message: row.error_message ?? null,
+            response_body: row.response_body ?? null,
+          });
+          if (result.changes > 0) {
+            imported++;
+          } else {
+            duplicates++;
+          }
+        }
+      });
+
+      migrate();
+
+      setMeta(db, metaKey, new Date().toISOString());
+      setMeta(db, `profile_usage_${entry}_imported_count`, String(imported));
+      setMeta(db, `profile_usage_${entry}_duplicate_count`, String(duplicates));
+    } catch (err) {
+      console.error(`Failed to migrate profile usage from ${profileDbPath}:`, err);
+    } finally {
+      profileDb?.close();
+    }
+  }
 }
 
 function isMigrationCandidate(value: unknown): value is UsageRecord {

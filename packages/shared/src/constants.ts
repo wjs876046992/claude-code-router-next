@@ -6,12 +6,13 @@ export const HOME_DIR = process.env.CCR_CONFIG_DIR
   || path.join(os.homedir(), ".claude-code-router");
 
 // Global base directory — always ~/.claude-code-router regardless of profile.
-// Used for cross-profile shared resources (logs, plugins).
-export const BASE_DIR = path.join(os.homedir(), ".claude-code-router");
+// Used for cross-profile shared resources (logs, plugins, usage data).
+export const BASE_DIR = process.env.CCR_BASE_DIR
+  || path.join(os.homedir(), ".claude-code-router");
 
 export const CONFIG_FILE = path.join(HOME_DIR, "config.json");
 
-// Logs and plugins are shared across all profiles.
+// Logs, plugins, and usage data are shared across all profiles.
 export const LOGS_DIR = path.join(BASE_DIR, "logs");
 export const PLUGINS_DIR = path.join(BASE_DIR, "plugins");
 
@@ -40,6 +41,45 @@ export const CLIENT_STATE_FILE = path.join(HOME_DIR, "client-state.json");
 export const PROFILES_DIR = path.join(BASE_DIR, "profiles");
 
 export const ACTIVE_PROFILE_FILE = path.join(PROFILES_DIR, "active-profile");
+
+/**
+ * Pure core of {@link resolveDataDir}: which data directory applies given the inputs.
+ *
+ * In production, all profiles share the same data directory under BASE_DIR
+ * (~/.claude-code-router/data), just like logs and plugins.
+ *
+ * If CCR_DATA_DIR is set, it takes highest precedence.
+ * If CCR_CONFIG_DIR points to an external isolated directory (e.g. in test suites
+ * with a temp home outside PROFILES_DIR and BASE_DIR), data stays isolated inside
+ * that directory so tests never touch real user data.
+ */
+export function pickDataDir(
+  envConfigDir: string | undefined,
+  envDataDir: string | undefined,
+  baseDir: string = BASE_DIR,
+  profilesDir: string = PROFILES_DIR,
+): string {
+  if (envDataDir) return envDataDir;
+  if (envConfigDir) {
+    const resolvedConfig = path.resolve(envConfigDir);
+    const resolvedBase = path.resolve(baseDir);
+    const resolvedProfiles = path.resolve(profilesDir);
+    const isProfile =
+      resolvedConfig === resolvedBase ||
+      resolvedConfig.startsWith(resolvedProfiles + path.sep);
+    if (!isProfile) {
+      return path.join(envConfigDir, "data");
+    }
+  }
+  return path.join(baseDir, "data");
+}
+
+export function resolveDataDir(): string {
+  return pickDataDir(process.env.CCR_CONFIG_DIR, process.env.CCR_DATA_DIR);
+}
+
+export const DATA_DIR = resolveDataDir();
+export const USAGE_DB_FILE = path.join(DATA_DIR, "usage.sqlite");
 
 /**
  * Pure core of {@link resolveProfileHomeDir}: which config dir applies given

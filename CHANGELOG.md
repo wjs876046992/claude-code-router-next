@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **用量统计跨 Profile 共享**: 将用量数据库（`data/usage.sqlite`）从跟随 profile `HOME_DIR` 改为与日志和插件一致，共享存放在 `BASE_DIR/data/usage.sqlite`（`~/.claude-code-router/data/usage.sqlite`）。切换 profile 或使用多 profile 时，Web UI 与状态栏（`ccr statusline`）不再出现用量碎片化或统计清空的问题。启动时自动识别并增量迁移各命名 profile 目录下的历史用量记录到主数据库；测试环境（独立临时目录）仍保持隔离，不污染生产数据。
+
 ### Fixed
 
 - **`ccr code` 的 auto-compact 窗口改为跟随顶层 `ContextWindow`**: `ccr code` 交给 Claude Code 的会话环境（`--settings` + 进程 env）里 `CLAUDE_CODE_AUTO_COMPACT_WINDOW` 此前硬编码为 `200000`，与接管写入 `settings.json` 时使用的「顶层 `ContextWindow`（默认 family 未启用扩展上下文时封顶 200000）」脱节。用户在 UI 把 `ContextWindow` 设为 1M 后，`ccr code` 启动的会话窗口仍停在 200k：状态栏百分比按 200k 计算、`Router.longContextThreshold`（600000）与 `extendedContextThreshold`（950000）永远不可达，扩展上下文与长上下文路由形同虚设；且该会话环境优先级高于 settings 文件，所以连 `/autocompact`、`autoCompactWindow` 设置项都一并失效。现在 `ccr code` 与接管共用同一套计算。
