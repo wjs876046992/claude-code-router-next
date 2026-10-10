@@ -11,9 +11,13 @@ import {
 import fs from "node:fs/promises";
 import JSON5 from "json5";
 
+// Auto-compact tuning shared by the `ccr code` env path.
+// NOTE: this list deliberately does NOT force CLAUDE_CODE_SIMPLE. Bare/simple
+// mode makes Claude Code skip every settings-file and plugin hook, so user hooks
+// (task-finished notifications, formatters, …) silently never fire under
+// `ccr code`. It is now opt-in via `simpleMode: true` — see the return block.
 const CLAUDE_AUTO_COMPACT_ENV = {
   CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: CLAUDE_AUTO_COMPACT_PCT_OVERRIDE,
-  CLAUDE_CODE_SIMPLE: "1",
 };
 
 /**
@@ -85,6 +89,15 @@ export const createEnvVariables = async (): Promise<Record<string, string | unde
     CLAUDE_CODE_ATTRIBUTION_HEADER:
       config.disableAttributionHeader === false ? undefined : "0",
     ...CLAUDE_AUTO_COMPACT_ENV,
+    // Bare/simple mode. Historically CCR always set this to "1" to guarantee
+    // Claude Code would ignore a stored claude.ai (/login) OAuth session, which
+    // otherwise takes precedence over ANTHROPIC_AUTH_TOKEN and would bypass the
+    // router. That belt-and-braces guard came at a steep cost: simple mode
+    // disables ALL settings-file and plugin hooks (plus LSP, plugin sync,
+    // auto-memory, CLAUDE.md auto-discovery, keychain reads, background
+    // prefetches). It is now opt-in — set `simpleMode: true` in the CCR config
+    // if you log in with claude.ai and need to force requests through the router.
+    CLAUDE_CODE_SIMPLE: config.simpleMode === true ? "1" : undefined,
     // Same value the settings-file takeover writes: the configured
     // `ContextWindow`, capped at 200000 unless the default family has extended
     // context. Sharing the helper keeps `ccr code` and the takeover from
