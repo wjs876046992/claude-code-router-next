@@ -155,6 +155,116 @@ export function normalizeResponsesBody(body: any): void {
   delete body.include;
 }
 
+/**
+ * Extract plain text from message content which can be a string, array of text blocks,
+ * or text object.
+ */
+export function extractMessageText(content: any): string {
+  if (typeof content === "string") {
+    return content;
+  }
+  if (Array.isArray(content)) {
+    return content
+      .map((item: any) => {
+        if (typeof item === "string") return item;
+        if (item && typeof item === "object" && typeof item.text === "string") {
+          return item.text;
+        }
+        return "";
+      })
+      .filter((s) => s.length > 0)
+      .join("\n\n");
+  }
+  if (content && typeof content === "object" && typeof content.text === "string") {
+    return content.text;
+  }
+  return "";
+}
+
+/**
+ * Check if the target provider or model requires strict single system message at index 0.
+ *
+ * Models with strict Jinja chat templates (notably Qwen models on vLLM, SGLang, Hugging Face,
+ * DashScope, Ollama) enforce:
+ *   {%- if message.role == "system" %}
+ *     {%- if not loop.first %}
+ *       {{- raise_exception('System message must be at the beginning.') }}
+ *     {%- endif %}
+ *   {%- endif %}
+ * If there are multiple system messages, the second one triggers a 400 exception.
+ *
+ * Other models (DeepSeek, GPT-4, etc.) tolerate multiple system messages, so we do NOT
+ * merge by default to avoid side effects on other models, unless:
+ * 1. The model is a Qwen model (name matches /qwen/i).
+ * 2. Or the provider explicitly enables `mergeSystemMessages: true` in its config.
+ */
+export function shouldMergeSystemMessages(provider: any, model?: string): boolean {
+  if (provider?.mergeSystemMessages === true) return true;
+  if (typeof model === "string" && /qwen/i.test(model)) return true;
+  return false;
+}
+
+/**
+ * Normalize system messages for OpenAI-compatible providers:
+ * 1. Hoist system messages to index 0 of the messages array.
+ * 2. Deduplicate exact duplicate system messages (improves prompt caching prefix stability).
+ * 3. If mergeMultiple is true (for Qwen or when mergeSystemMessages: true), merge multiple distinct
+ *    system messages into a SINGLE system message at index 0.
+ *    If mergeMultiple is false, keep distinct system messages as separate messages at the front.
+ */
+export function normalizeSystemMessagesForOpenAI(
+  messages: any[],
+  mergeMultiple: boolean = false
+): any[] {
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return messages;
+  }
+
+  const seenSystem = new Set<string>();
+  const systemMsgs: any[] = [];
+  const otherMsgs: any[] = [];
+
+  for (const message of messages) {
+    if (message?.role !== "system") {
+      otherMsgs.push(message);
+      continue;
+    }
+    const key = JSON.stringify(message.content ?? "");
+    if (!seenSystem.has(key)) {
+      seenSystem.add(key);
+      systemMsgs.push(message);
+    }
+  }
+
+  if (systemMsgs.length === 0) {
+    return otherMsgs;
+  }
+
+  // Default behavior: keep separate system messages at the front without merging
+  if (!mergeMultiple) {
+    return [...systemMsgs, ...otherMsgs];
+  }
+
+  // Targeted merge: consolidate into a single system message at index 0 for models
+  // that reject multiple system messages (such as Qwen).
+  let singleSystemMsg: any;
+  if (systemMsgs.length === 1 && typeof systemMsgs[0].content === "string") {
+    singleSystemMsg = systemMsgs[0];
+  } else {
+    const mergedText = systemMsgs
+      .map((m) => extractMessageText(m.content))
+      .filter((text) => text.trim().length > 0)
+      .join("\n\n");
+
+    singleSystemMsg = {
+      role: "system",
+      content: mergedText,
+    };
+  }
+
+  return [singleSystemMsg, ...otherMsgs];
+}
+
 // Extend FastifyInstance to include custom services
 declare module "fastify" {
   interface FastifyInstance {
@@ -328,33 +438,26 @@ async function handleTransformerEndpoint(
       }
     );
 
-    // Hoist system messages to the front of the messages array and dedupe exact
-    // repeats. OpenAI-compatible providers (DeepSeek V4, GLM, vLLM) require the
-    // [system, user, assistant] order; placing system after user/assistant can
-    // produce garbled output. Deduping also keeps the leading prefix stable for
-    // upstream prompt caching when Claude Code appends identical reminder system
-    // messages every few turns. Note: a genuinely new (non-duplicate) system
-    // reminder still shifts the front block and busts the cache — we mitigate that
-    // separately by stripping Claude Code's dynamic attribution header on takeover.
-    if (requestBody?.messages && !bypass && !(req as any).isTargetAnthropic) {
-      const msgs = requestBody.messages;
-      const seenSystem = new Set<string>();
-      const systemMsgs: any[] = [];
-      const otherMsgs: any[] = [];
-      for (const message of msgs) {
-        if (message?.role !== "system") {
-          otherMsgs.push(message);
-          continue;
-        }
-        const key = JSON.stringify(message.content ?? "");
-        if (!seenSystem.has(key)) {
-          seenSystem.add(key);
-          systemMsgs.push(message);
-        }
-      }
-      if (systemMsgs.length > 0 && otherMsgs.length > 0) {
-        requestBody.messages = [...systemMsgs, ...otherMsgs];
-      }
+    // Hoist system messages to index 0, dedupe exact repeats, and conditionally merge
+    // multiple distinct system messages into a single system message when targeting models
+    // with strict chat templates (e.g. Qwen) or when provider.mergeSystemMessages is enabled.
+    //
+    // OpenAI-compatible providers (DeepSeek V4, GLM, vLLM) require [system, user, assistant]
+    // order; placing system after user/assistant causes garbled output.
+    // Moreover, strict chat templates (notably Qwen models served via vLLM, SGLang,
+    // or Hugging Face) enforce that role='system' can ONLY appear once and only at
+    // loop.first (index 0). Any subsequent system message triggers:
+    //   "System message must be at the beginning." (BadRequestError 400).
+    //
+    // For Qwen / strict providers, merging distinct system messages ensures compatibility.
+    // For all other models (DeepSeek, GPT-4, etc.), multiple system messages remain
+    // separate (unmerged) by default to avoid unintended side effects.
+    if (requestBody?.messages && !(req as any).isTargetAnthropic) {
+      const mergeMultiple = shouldMergeSystemMessages(provider, requestBody.model);
+      requestBody.messages = normalizeSystemMessagesForOpenAI(
+        requestBody.messages,
+        mergeMultiple
+      );
     }
 
     // Send request to LLM provider

@@ -186,12 +186,13 @@ export function convertToOpenAI(
     }
   }
 
-  // Append system as the LAST message so it does not shift the conversation prefix.
-  // This prevents system-reminder changes from breaking upstream prompt caching
-  // which depends on prefix stability.
+  // Prepend system as the FIRST message at index 0.
+  // OpenAI and strict chat templates (e.g. Qwen in vLLM) require system messages
+  // to appear at loop.first; placing system at the end triggers
+  // "System message must be at the beginning." (BadRequestError 400).
   if (systemContents.length > 0) {
     const uniqueSystemContents = Array.from(new Set(systemContents));
-    messages.push({
+    messages.unshift({
       role: "system",
       content: uniqueSystemContents.join("\n\n"),
     } as any);
