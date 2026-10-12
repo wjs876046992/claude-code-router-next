@@ -42,6 +42,19 @@ import {
 
 const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
 
+// Minimal request factory for cross-client detection assertions (mirrors the
+// helper in client-adapters.test.ts but kept local to avoid cross-file imports).
+function bareRequest(overrides: Record<string, any> = {}): any {
+  return {
+    id: `bare-${Math.random().toString(36).slice(2, 8)}`,
+    url: "/v1/messages",
+    headers: {},
+    log,
+    body: { model: "ccr-opus", messages: [] },
+    ...overrides,
+  };
+}
+
 function piRequest(sessionId: string | undefined, overrides: Record<string, any> = {}): any {
   const headers: Record<string, any> = {
     "user-agent": "pi-coding-agent",
@@ -186,6 +199,59 @@ describe("pi session affinity adapter", () => {
     expect(req.clientContext.stableSessionId).toBeUndefined();
     expect(req.usageScope_label_check).toBeUndefined();
     expect(req.usageCacheKey).toBe(`pi:request:${req.id}`);
+  });
+
+  it("does not reclassify other clients from generic session headers", () => {
+    // x-session-id / x-litellm-session-id are generic carriers also sent by
+    // Codex, ZCode and LiteLLM-fronted clients. They must never override the
+    // strong identity signals of those clients (regression guard).
+    const codex = bareRequest({
+      url: "/v1/responses",
+      headers: { "user-agent": "codex-cli/1.0", "x-session-id": "sess-12345678" },
+      body: { model: "gpt-5", input: [] },
+    });
+    expect(detectClientType(codex)).toBe("codex");
+
+    const zcode = bareRequest({
+      headers: {
+        "user-agent": "ZCode/3.11.2 ai-sdk/anthropic/2.0.0",
+        "x-zcode-app-version": "3.11.2",
+        "x-session-id": "sess-12345678",
+      },
+      body: {
+        model: "ccr-opus",
+        metadata: { user_id: JSON.stringify({ session_id: "zcode-session" }) },
+      },
+    });
+    expect(detectClientType(zcode)).toBe("zcode");
+
+    const claude = bareRequest({
+      headers: {
+        "user-agent": "claude-cli/9.9",
+        "x-anthropic-billing-header": "cc_version=9.9",
+        "x-session-id": "sess-12345678",
+      },
+      body: {
+        model: "ccr-opus",
+        metadata: { user_id: "user_x_session_claude-session" },
+      },
+    });
+    expect(detectClientType(claude)).toBe("claude-code");
+
+    // Generic carriers ARE consumed as data for already-identified pi requests.
+    const pi = piRequest(undefined, {
+      headers: { "x-litellm-session-id": "downstream-session" },
+    });
+    applyClientAdapter(pi, {});
+    expect(pi.clientContext.stableSessionId).toBe("downstream-session");
+  });
+
+  it("keeps the stable id when the adapter is applied twice", () => {
+    const req = piRequest("sess-abcd1234");
+    applyClientAdapter(req, {});
+    applyClientAdapter(req, {});
+    expect(req.clientContext.stableSessionId).toBe("sess-abcd1234");
+    expect(req.sessionId).toBe("sess-abcd1234");
   });
 });
 

@@ -89,16 +89,29 @@ export class TempFileOutputHandler implements OutputHandler {
 
   /**
    * Output data to temp file
+   *
+   * The file key is `options.metadata?.statsKey` when provided (per-request:
+   * parallel requests inside one conversation each get their own file, and the
+   * usage pipeline reads the exact same key back with readTokenSpeedStats(),
+   * so joins stay correct under concurrency). `options.metadata?.sessionId` is
+   * display/grouping metadata only and never names the file.
    */
   async output(data: any, options: OutputOptions = {}): Promise<boolean> {
     try {
-      // Extract session ID from metadata
       const sessionId = options.metadata?.sessionId;
+      const fileKey =
+        typeof options.metadata?.statsKey === 'string' && options.metadata.statsKey
+          ? options.metadata.statsKey
+          : sessionId;
 
-      if (!sessionId) {
-        // No session ID, skip output
+      if (!fileKey) {
+        // No file key, skip output
         return false;
       }
+      // Defense in depth: the key lands in a filesystem path, so strip path
+      // separators and traversal sequences even though adapter-validated ids
+      // already exclude them (custom outputOptions may supply arbitrary keys).
+      const safeKey = fileKey.replace(/[^A-Za-z0-9_.-]/g, '_').slice(0, 200);
 
       // Prepare output data
       const outputData = {
@@ -108,7 +121,7 @@ export class TempFileOutputHandler implements OutputHandler {
       };
 
       // Write to file
-      const filePath = this.getFilePath(sessionId);
+      const filePath = this.getFilePath(safeKey);
       writeFileSync(filePath, JSON.stringify(outputData, null, 2), 'utf-8');
 
       return true;

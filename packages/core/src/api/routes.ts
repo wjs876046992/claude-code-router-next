@@ -572,7 +572,7 @@ async function handleFallback(
       scenarioType,
       modelFamily: (req as any).modelFamily,
       errorMessage: error?.message || String(error),
-      sessionId: (req as any).usageSessionId || req.id,
+      sessionId: (req as any).sessionId || (req as any).usageSessionId || req.id,
       stream: (req.body as any).stream,
       inputTokens: (req as any).tokenCount || 0,
       req,
@@ -835,7 +835,7 @@ async function handleFallback(
         scenarioType,
         modelFamily: (req as any).modelFamily,
         errorMessage: fallbackError?.message || String(fallbackError),
-        sessionId: (req as any).usageSessionId || req.id,
+        sessionId: (req as any).sessionId || (req as any).usageSessionId || req.id,
         stream: (req.body as any).stream,
         inputTokens: (req as any).tokenCount || 0,
         req,
@@ -989,16 +989,25 @@ function shouldBypassTransformers(
  * validated stableSessionId. LiteLLM reads x-litellm-session-id (its generic
  * x-<vendor>-session-id scan ignores x-session-affinity), so this is what
  * groups a whole conversation's spend logs under one session id instead of
- * a fresh trace id per request. applyClientAdapter already stripped the
- * client's raw carriers, so no passthrough value can shadow this one; we
- * still delete any conflicting case variants to guarantee the stable id wins.
- * Only clients with a real stableSessionId get a header — never a per-request
- * id, which would defeat upstream session grouping. Mutates headers in place.
+ * a fresh trace id per request.
+ *
+ * Scoped to pi deliberately: only pi sessions advertise their id through the
+ * managed session-affinity header, so only that value is safe to publish as a
+ * conversation identity upstream. Claude Code/ZCode/Qwen session ids stay
+ * internal (they are derived from transcripts and are not the client's own
+ * advertised identity), and forwarding them would leak internal identifiers to
+ * providers that have no relationship to the local session store.
+ * applyClientAdapter already strips the client's raw carriers, so no passthrough
+ * value can shadow this one; we still delete any conflicting case variants to
+ * guarantee the stable id wins. Mutates headers in place.
  */
 export function stampUpstreamSessionId(
   headers: Record<string, string>,
   req: any
 ): void {
+  if (req?.clientType !== "pi") {
+    return;
+  }
   const stableSessionId = req?.clientContext?.stableSessionId;
   if (typeof stableSessionId !== "string" || !stableSessionId) {
     return;

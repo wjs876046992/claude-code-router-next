@@ -526,12 +526,17 @@ export function registerRequestPipeline(serverInstance: any, config: any): void 
         await req.tokenSpeedCapturePromise;
       }
       const usageSessionId = getUsageSessionId(req);
-      // Token-speed stats files are keyed by the stable conversation id when the
-      // client advertises one (Pi session-affinity headers, mirrored onto
-      // req.sessionId by the client adapter), so the whole conversation's
-      // TTFT/speed history is grouped together instead of scattering per-request
-      // files. Fall back to the usage session id for clients without a stable
-      // session, matching the plugin's own keying logic.
+      // Two distinct keys with different jobs:
+      // - speedStatsKey: per-request stats-file key. It MUST equal the key the
+      //   token-speed plugin names its file with (usageSessionId || req.id), so
+      //   the TTFT/speed lookup joins THIS request's stats even when the
+      //   conversation has parallel requests in flight.
+      // - sessionId: grouping/display identity for the usage record. The stable
+      //   conversation id when the client advertises one (Pi session-affinity
+      //   headers, mirrored onto req.sessionId by the client adapter), so a
+      //   conversation's records group together in the usage UI; falls back to
+      //   the request-scoped id for clients without a stable session.
+      const speedStatsKey = usageSessionId;
       const sessionId = (req as any).sessionId || usageSessionId;
       // A hard HTTP failure never reached a successful upstream exchange, so the
       // session slot still holds the PREVIOUS request's usage (we intentionally
@@ -540,7 +545,7 @@ export function registerRequestPipeline(serverInstance: any, config: any): void 
       // slot on hard failure and fall back to the router's own token estimate.
       const hardFailed = reply.statusCode >= 400;
       const usage = hardFailed ? undefined : sessionUsageCache.get(getUsageCacheKey(req));
-      const speedStats = readTokenSpeedStats(sessionId);
+      const speedStats = readTokenSpeedStats(speedStatsKey);
       const healthStore = getHealthStore();
 
       // Extract error message if request failed
