@@ -6,6 +6,7 @@ Guidance for AI coding agents working in this repository.
 
 - Whenever you write or modify code, dispatch a separate subagent to perform a code review of the changes before considering the work done. Do not self-review.
 - Feed the reviewer the diff (or changed files) with enough context, then fix the reported issues (or explicitly justify why a finding is a non-issue) before continuing to the next step.
+- For large changes with clearly separable modules, split the work and develop with multiple subagents in parallel (one subagent per module), then integrate the results and review the combined diff.
 
 ## Pull Requests
 
