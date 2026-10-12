@@ -150,7 +150,8 @@ export interface TempFileOutputConfig {
   extension?: string;
 
   /**
-   * Whether to include timestamp in filename (default: true)
+   * Whether to include timestamp in filename (default: false).
+   * Exact-name readers require false; true keeps the explicitly requested timestamped format.
    */
   includeTimestamp?: boolean;
 
@@ -158,6 +159,12 @@ export interface TempFileOutputConfig {
    * Custom prefix for temp files (default: 'session')
    */
   prefix?: string;
+
+  /**
+   * File retention in milliseconds (default: 3600000).
+   * Non-finite values or values <= 0 disable pruning and cleanup timers.
+   */
+  retentionMs?: number;
 }
 
 /**

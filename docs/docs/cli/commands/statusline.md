@@ -299,6 +299,13 @@ All variables are accessible in module text using `{{variableName}}`:
 | `{{linesRemoved}}` | Lines removed | `25` |
 | `{{sessionId}}` | Session ID (first 8 chars) | `a1b2c3d4` |
 
+:::note Token speed data location
+Since v2.3.x, the token-speed data feeding `{{tokenSpeed}}` is stored under
+`<tmpdir>/claude-code-router/token-speed-v2` (one exact-name file per
+session). After upgrading, CCR automatically cleans up the legacy timestamped
+files older versions left in the previous flat directory.
+:::
+
 ## Environment Variables
 
 Control behavior with environment variables:

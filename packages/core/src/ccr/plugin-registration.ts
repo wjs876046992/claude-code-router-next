@@ -4,7 +4,7 @@
  *
  * Extracted from the legacy server's index.ts.
  */
-import { pluginManager, tokenSpeedPlugin } from "../plugins";
+import { pluginManager, tokenSpeedPlugin, tokenSpeedTempFileHandlerConfig } from "../plugins";
 
 interface PluginConfig {
   name: string;
@@ -32,12 +32,11 @@ export async function registerPluginsFromConfig(serverInstance: any, config: any
               {
                 type: 'temp-file',
                 enabled: true,
-                config: {
-                  subdirectory: 'claude-code-router',
-                  extension: 'json',
-                  includeTimestamp: true,
-                  prefix: 'session'
-                }
+                // Shared factory: keeps this registration identical to the
+                // default-reporter path in token-speed.ts (drift between the
+                // two copies is what caused the writer/reader mismatch behind
+                // the 3.23M temp-file incident).
+                config: tokenSpeedTempFileHandlerConfig()
               }
             ],
             ...options

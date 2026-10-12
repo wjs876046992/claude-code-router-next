@@ -1,4 +1,5 @@
 export * from "./constants";
+export * from "./temp-file-key";
 export * from "./client-integrations";
 export * from "./projectConfig";
 export * from "./self-provider";
