@@ -177,9 +177,16 @@ export const tokenSpeedPlugin: CCRPlugin = {
       if (!startTime) return;
       const requestId = (request as any).id || Date.now().toString();
 
-      // Prefer the adapter-owned usage session id so token-speed output joins
-      // usage records without accidentally sharing request-scoped clients.
-      let sessionId: string | undefined = (request as any).usageSessionId;
+      // Token-speed reporting groups by *conversation*, so prefer the client's
+      // stable session id (Pi advertises one via session-affinity headers) over
+      // the request-scoped usage id. The usage id stays the per-request key it
+      // was designed to be: it is what the usage store reads back with
+      // readTokenSpeedStats(sessionId), and parallel requests in one session
+      // must not overwrite each other's stats file. Only the displayed/grouped
+      // session id falls back to the metadata.user_id heuristic and finally the
+      // request id, matching the historical behavior for clients without a
+      // stable session.
+      let sessionId: string | undefined = (request as any).sessionId;
       if (!sessionId) {
         try {
           sessionId = extractSessionIdFromUserId((request.body as any)?.metadata?.user_id);

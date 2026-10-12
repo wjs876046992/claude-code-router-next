@@ -985,6 +985,33 @@ function shouldBypassTransformers(
 }
 
 /**
+ * Stamp a canonical upstream session-affinity carrier from the client's
+ * validated stableSessionId. LiteLLM reads x-litellm-session-id (its generic
+ * x-<vendor>-session-id scan ignores x-session-affinity), so this is what
+ * groups a whole conversation's spend logs under one session id instead of
+ * a fresh trace id per request. applyClientAdapter already stripped the
+ * client's raw carriers, so no passthrough value can shadow this one; we
+ * still delete any conflicting case variants to guarantee the stable id wins.
+ * Only clients with a real stableSessionId get a header — never a per-request
+ * id, which would defeat upstream session grouping. Mutates headers in place.
+ */
+export function stampUpstreamSessionId(
+  headers: Record<string, string>,
+  req: any
+): void {
+  const stableSessionId = req?.clientContext?.stableSessionId;
+  if (typeof stableSessionId !== "string" || !stableSessionId) {
+    return;
+  }
+  for (const key of Object.keys(headers)) {
+    if (key.toLowerCase() === "x-litellm-session-id") {
+      delete headers[key];
+    }
+  }
+  headers["x-litellm-session-id"] = stableSessionId;
+}
+
+/**
  * Detect if the request comes from a codex (OpenAI Codex CLI) client.
  * Codex sometimes switches from /v1/responses to /v1/messages mid-session,
  * so we need to detect it regardless of which endpoint it hits.
@@ -1068,6 +1095,8 @@ async function sendRequestToProvider(
     Authorization: `Bearer ${provider.apiKey}`,
     ...(config?.headers || {}),
   };
+
+  stampUpstreamSessionId(requestHeaders, context?.req);
 
   for (const key in requestHeaders) {
     if (requestHeaders[key] === "undefined") {

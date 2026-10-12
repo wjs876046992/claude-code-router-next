@@ -79,6 +79,7 @@ describe("Pi managed models", () => {
     const models = readJson(join(piDir, "models.json")).providers.ccr.models;
     expect(models.map((model: any) => model.id)).toEqual(["ccr-opus", "ccr-sonnet"]);
     expect(models.every((model: any) => model.contextWindow === 420000)).toBe(true);
+    expect(models.every((model: any) => model.compat?.sendSessionAffinityHeaders === true)).toBe(true);
     expect(readJson(join(piDir, "settings.json")).defaultModel).toBe("ccr-opus");
   });
 
@@ -101,6 +102,7 @@ describe("Pi managed models", () => {
     expect(provider.models[0]).toMatchObject({
       id: "ccr-sonnet",
       contextWindow: 260000,
+      compat: { sendSessionAffinityHeaders: true },
     });
     expect(readJson(join(piDir, "settings.json")).defaultModel).toBe("ccr-sonnet");
   });
@@ -158,6 +160,7 @@ describe("Pi managed models", () => {
         [CCR_PROJECT_HEADER]: getClaudeProjectId(projectDir),
       },
     });
+    expect(provider.models.every((model: any) => model.compat?.sendSessionAffinityHeaders === true)).toBe(true);
   });
 
   it("preserves Desktop modelOverrides across takeover refresh", () => {

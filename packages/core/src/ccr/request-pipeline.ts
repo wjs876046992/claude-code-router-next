@@ -525,7 +525,14 @@ export function registerRequestPipeline(serverInstance: any, config: any): void 
       if (req.tokenSpeedCapturePromise) {
         await req.tokenSpeedCapturePromise;
       }
-      const sessionId = getUsageSessionId(req);
+      const usageSessionId = getUsageSessionId(req);
+      // Token-speed stats files are keyed by the stable conversation id when the
+      // client advertises one (Pi session-affinity headers, mirrored onto
+      // req.sessionId by the client adapter), so the whole conversation's
+      // TTFT/speed history is grouped together instead of scattering per-request
+      // files. Fall back to the usage session id for clients without a stable
+      // session, matching the plugin's own keying logic.
+      const sessionId = (req as any).sessionId || usageSessionId;
       // A hard HTTP failure never reached a successful upstream exchange, so the
       // session slot still holds the PREVIOUS request's usage (we intentionally
       // keep it as the next request's routing baseline). Reading it here would
