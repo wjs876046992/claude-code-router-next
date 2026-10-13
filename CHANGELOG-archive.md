@@ -62,6 +62,8 @@ This document archives the older release summaries that fall outside the "latest
 
 | **v2.3.2402** | <ul><li>**formatResponse SSE 识别放宽**: 之前仅对 `application/json` 头 peek,上游用非标准 Content-Type(`text/plain`/空)返回 SSE 仍会报 non-JSON;现对任何非流式响应都先 peek 判 SSE。</li></ul> |
 
+| **v2.3.2403** | <ul><li>**修复 Pi 项目级路由未生效**: Pi 项目接管不再复用无法标识项目的全局 `ccr` provider；每个项目改用携带受管项目 ID 的独立 provider，服务端直接加载对应项目 Router。旧接管会自动迁移，关闭全局 Pi 接管不会破坏项目接管，无效映射也不会静默回落到全局模型。</li></ul> |
+
 ## English
 
 | Version | Release Details |
@@ -115,3 +117,4 @@ This document archives the older release summaries that fall outside the "latest
 | **v2.0.87** | <ul><li>**Web Console Quota Display**: Fully integrated and displayed real-time Web console quota usage details for Zhipu GLM and Aliyun Qwen.</li><li>**Health Store Failure Tracking**: Correctly recorded HTTP 429 Rate Limit responses as health check failures to trigger fallback mechanism early.</li></ul> |
 | **v2.3.2400** | <ul><li>**Thorough multi-layer fix for SSE mislabeled as JSON**: v2.3.2397–2399 judged from a single first chunk, so an empty leading buffer, heartbeat (`: ping`) or split fragment (`ev`/`ent:`) still misclassified and errored. Detection now accumulates across chunks and is unified across formatResponse, both transformers, the hidden-error-check, and validateStreamingResponse — mislabeled SSE streams through cleanly.</li></ul> |
 | **v2.3.2402** | <ul><li>**Broaden formatResponse SSE detection**: Previously peek ran only for application/json Content-Type, so an SSE body with a non-standard Content-Type (text/plain/empty) still threw non-JSON; now any non-stream response is peeked first.</li></ul> |
+| **v2.3.2403** | <ul><li>**Fix Pi project routing being ignored**: Pi project takeover no longer reuses a global `ccr` provider that cannot identify the project. Each project gets a dedicated provider carrying a managed project ID, letting the server load that project's Router directly. Legacy takeovers migrate automatically, disabling global Pi takeover preserves project providers, and invalid mappings cannot silently fall back to global models.</li></ul> |
