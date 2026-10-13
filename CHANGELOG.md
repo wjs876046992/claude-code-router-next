@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [2.3.2411] - 2026-10-13
+
+### Added
+
+- **AMD Radeon Cloud 转换器** (#66): 新增 `amd` transformer。请求侧把统一 reasoning 意图归一为单个 `reasoning_effort`，按解析后的请求模型族映射（GLM 将 xhigh/max 降为 high；Qwen high/max 提为 xhigh；DeepSeek 保留原生档位；未知模型保守取 low/medium/high），禁用拼写（`reasoning.enabled:false` 等）映射到各文档支持的关闭档位否则丢弃；响应侧把 `message.reasoning`/`delta.reasoning` 提升为 `thinking.content`（流式保留 metadata，处理 JSON、误标 JSON 的 SSE、跨 chunk 边界、usage-only chunk、取消与错误传播）。官方 OpenAI/DeepSeek 转换器零改动；推荐 provider 链 `use:["OpenAI","amd"]`。
+- **Pi 稳定会话粘连** (#65): 仅凭 `x-session-affinity` 请求头即可独立识别 pi 客户端并生成稳定会话 ID（256 长度上限、temp-file 键清洗、adapter 幂等）。并发优先模式的会话槽位以稳定 ID 粘附，错误切换时 `rebindSessionModel` 迁移在途租约；token-speed 统计键与用量记录改用稳定会话 ID（读回 join 键一致，仅展示分组用稳定 ID）；识别 LiteLLM `x-litellm-session-id` 用于用量分组；上游会话头戳记收敛到 pi 客户端；pi 侧可通过模型 `compat.sendSessionAffinityHeaders=true` 启用，接管刷新后自动写入。
+
+### Fixed
+
+- **token-speed 临时文件堆积导致服务卡死** (#67): 修复 `includeTimestamp:true` 按请求写临时文件且永不清理的问题（实测单机 9.5 个月累积 3,231,671 个文件，`readTokenSpeedStats()` 每请求全目录 `readdirSync` 阻塞事件循环约 33 秒，服务周期性假死）。读写两侧统一 `sanitizeTempFileKey`，写入改为 `<final>.ccr-tmp-<pid>-<uuid>.tmp` 原子发布；新文件迁移到 `token-speed-v2` 子目录与旧版本进程隔离；新增默认 1 小时保留期（流式 `opendir` 扫描，每 64 项让出事件循环 10ms）；CLI statusline 由每次渲染全目录扫描改为单文件精确读取；服务启动时 `startLegacyTokenSpeedCleanup()` 自愈——仅清理旧目录中文件名 13 位时间戳与 mtime 均超过 1 小时的 legacy 文件（unlink 前 inode/mtime 复查），不 rename/不 rm -rf 共享目录、不触碰用量库与配置、新旧版本可并存；两处 temp-file 注册收敛为 `tokenSpeedTempFileHandlerConfig()` 单一工厂防止配置漂移。
+
+
 ## [2.3.2410] - 2026-10-03
 
 ### Changed
