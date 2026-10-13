@@ -1,5 +1,6 @@
 export * from "./constants";
 export * from "./temp-file-key";
+export * from "./sqlite-driver";
 export * from "./client-integrations";
 export * from "./projectConfig";
 export * from "./self-provider";

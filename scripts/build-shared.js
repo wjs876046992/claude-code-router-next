@@ -24,7 +24,7 @@ try {
 
   // Build the shared package
   console.log('Building shared package...');
-  execSync('pnpm exec esbuild src/index.ts --bundle --platform=node --minify --tree-shaking=true --outfile=dist/index.js', {
+  execSync('pnpm exec esbuild src/index.ts --bundle --platform=node --minify --tree-shaking=true --external:better-sqlite3 --outfile=dist/index.js', {
     stdio: 'inherit',
     cwd: sharedDir
   });
