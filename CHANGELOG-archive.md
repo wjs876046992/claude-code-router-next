@@ -58,6 +58,8 @@ This document archives the older release summaries that fall outside the "latest
 | **v2.1.2** | <ul><li>**状态栏 Token 缓存计数**：支持 CLI 状态栏 (statusline) 中的 Token 计数正确显示缓存命中详情，并在响应速度及文字格式上完成多项优化。</li></ul> |
 | **v2.0.87** | <ul><li>**Web 控制台额度支持**：正式打通并适配智谱 GLM 与百炼 Qwen 等主流渠道的额度使用详情实时分析。</li><li>**健康失败记录优化**：修复 HTTP 429 速率限制请求在健康监测系统中未被记录为失败并导致熔断延迟的 Bug。</li></ul> |
 
+| **v2.3.2400** | <ul><li>**SSE 误标 JSON 的多层彻底修复**: v2.3.2397–2399 只看首个 chunk,遇空首块/心跳(`: ping`)/分片(`ev`/`ent:`)仍误判报错;现改为累积多 chunk 判定,并统一修复 formatResponse、两个 transformer、hidden-error-check 与 validateStreamingResponse 四处,误标 SSE 全部按流式透传。</li></ul> |
+
 ## English
 
 | Version | Release Details |
@@ -109,3 +111,4 @@ This document archives the older release summaries that fall outside the "latest
 | **v2.1.7** | <ul><li>**Gemini Thinking Mode & Signature Support**: Cleanly supports Gemini thinking mode and handles thought signatures, preventing 400 validation failures and blocking API key leaks.</li><li>**Runtime Debug Logging**: Introduced a system debug logging system with one-click toggles and Web UI integration for easier troubleshooting.</li></ul> |
 | **v2.1.2** | <ul><li>**Status Bar Cache Tokens**: Fixed the CLI statusline token count display to correctly account for cache hits, and implemented multiple visual/speed optimizations.</li></ul> |
 | **v2.0.87** | <ul><li>**Web Console Quota Display**: Fully integrated and displayed real-time Web console quota usage details for Zhipu GLM and Aliyun Qwen.</li><li>**Health Store Failure Tracking**: Correctly recorded HTTP 429 Rate Limit responses as health check failures to trigger fallback mechanism early.</li></ul> |
+| **v2.3.2400** | <ul><li>**Thorough multi-layer fix for SSE mislabeled as JSON**: v2.3.2397–2399 judged from a single first chunk, so an empty leading buffer, heartbeat (`: ping`) or split fragment (`ev`/`ent:`) still misclassified and errored. Detection now accumulates across chunks and is unified across formatResponse, both transformers, the hidden-error-check, and validateStreamingResponse — mislabeled SSE streams through cleanly.</li></ul> |

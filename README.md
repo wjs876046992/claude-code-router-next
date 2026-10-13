@@ -93,6 +93,7 @@ npm install -g @wengine-ai/claude-code-router-next@latest && ccr restart
 
 | 版本 | 发布内容 |
 | --- | --- |
+| **v2.3.2411** | <ul><li>**AMD Radeon Cloud 转换器**: 新增 `amd` 转换器：统一 reasoning 意图按目标模型族映射为 AMD 端点支持的 `reasoning_effort` 档位（GLM/Qwen/DeepSeek 分别适配，禁用拼写正确透传），响应侧把 `reasoning` 内容提升为 `thinking`（含 SSE 误标 JSON 边界处理）；推荐 provider 链 `use:["OpenAI","amd"]`。</li><li>**Pi 会话粘连**: 识别 `x-session-affinity` 等会话标识头生成稳定会话 ID：并发优先模式的会话槽位跨请求稳定粘附，token-speed 统计与用量记录按稳定会话 ID 分组，兼容 LiteLLM `x-litellm-session-id`，接管刷新后自动写入 pi 配置。</li><li>**修复 token-speed 临时文件堆积导致服务卡死**: 修复按请求写时间戳临时文件且永不清理的问题（单机曾累积 323 万文件，每次请求全目录扫描阻塞事件循环约 33 秒）。写入改为精确文件名原子覆盖并迁移到 `token-speed-v2` 子目录（新旧版本可并存），读取 O(1)；新增默认 1 小时保留期自动清理；升级后服务启动自愈，仅清理旧目录中文件名时间戳与修改时间均超过 1 小时的历史文件，不触碰用量库与配置。</li></ul> |
 | **v2.3.2410** | <ul><li>**并发优先模式开关移至通用配置**: 开关从 Router 配置区移到全局设置页「通用配置」区（「去除 Claude Code Attribution 动态头」下方），作为全局开关；配置仍存于 Router 节点，项目 Router 可通过 JSON 覆盖；项目级编辑器不再展示该开关。</li></ul> |
 | **v2.3.2409** | <ul><li>**并发优先模式（会话粘连 + 场景级溢出分流）**: 多项目共用一个 CCR 实例时，大量并发打到同一个模型会导致排队变慢。新增 `Router.enableConcurrencyPriority`（默认关闭）与 `Router.concurrencyThreshold`（默认 3），叠加在现有路由结果之上：路由选中模型（default/think/longContext/extendedContext/webSearch/image/background/模型族默认值）在途并发达到阈值后，新会话直接分流到该场景 fallback 列表（模型族优先于全局）中负载最低的健康模型；会话按槽位（session+模型族+场景）粘连首配模型保持 prompt 缓存命中，仅报错走 fallback 成功才切换；`provider,model` 显式路由与 `&lt;CCR-SUBAGENT-MODEL&gt;` 子代理覆盖不受影响。UI 全局设置页「通用配置」新增「并发优先模式」全局开关与阈值（中英文）。</li></ul> |
 | **v2.3.2408** | <ul><li>**Pi 项目 provider 自动换成可读名**: 2.3.2405 之前接管的项目仍是 `ccr-project-&lt;hash&gt;` 旧名且刷新不迁移；现在自动改为 `ccr-project-&lt;项目名&gt;-&lt;hash&gt;` 并删除孤儿条目，关闭接管也能清掉旧名。</li><li>**修复测试数据污染真实用量库**: 测试写的假请求（demo/global/project 等）此前会写进真实 `usage.sqlite`，已隔离；历史假记录已提供清理方案。</li><li>**npm 包页面补上仓库链接**（repository/homepage/bugs 与作者信息）。</li></ul> |
@@ -102,7 +103,6 @@ npm install -g @wengine-ai/claude-code-router-next@latest && ccr restart
 | **v2.3.2404** | <ul><li>**opencode provider 默认携带 x-opencode-session 会话头**: OpenCode Go 端点强制要求 `x-opencode-session`（缺失直接 400），而 CCR 非透传模式重建上游请求时只带 `Authorization`，客户端会话头全部丢弃，导致 opencode go 供应商（如 `omen-alpha`）全部 400。opencode transformer 现按优先级复用稳定会话 ID：客户端原生 `x-opencode-session` 头 → client adapter 提取的 Claude Code 会话 ID（`metadata.user_id`）→ 请求体兜底提取 → Codex 原生 `session_id` 头 → 回退每请求 UUID；同一会话内值稳定，命中 Go 的路由与 prompt cache 优化。</li></ul> |
 | **v2.3.2403** | <ul><li>**修复 Pi 项目级路由未生效**: Pi 项目接管不再复用无法标识项目的全局 `ccr` provider；每个项目改用携带受管项目 ID 的独立 provider，服务端直接加载对应项目 Router。旧接管会自动迁移，关闭全局 Pi 接管不会破坏项目接管，无效映射也不会静默回落到全局模型。</li></ul> |
 | **v2.3.2402** | <ul><li>**formatResponse SSE 识别放宽**: 之前仅对 `application/json` 头 peek,上游用非标准 Content-Type(`text/plain`/空)返回 SSE 仍会报 non-JSON;现对任何非流式响应都先 peek 判 SSE。</li></ul> |
-| **v2.3.2400** | <ul><li>**SSE 误标 JSON 的多层彻底修复**: v2.3.2397–2399 只看首个 chunk,遇空首块/心跳(`: ping`)/分片(`ev`/`ent:`)仍误判报错;现改为累积多 chunk 判定,并统一修复 formatResponse、两个 transformer、hidden-error-check 与 validateStreamingResponse 四处,误标 SSE 全部按流式透传。</li></ul> |
 
 > 仅保留最近 10 个版本，更早版本的发布摘要见 [CHANGELOG-archive.md](./CHANGELOG-archive.md)，完整详细变更记录见 [CHANGELOG.md](./CHANGELOG.md)。
 
