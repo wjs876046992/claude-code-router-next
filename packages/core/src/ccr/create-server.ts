@@ -31,6 +31,7 @@ import {
 import { initializeClaudeConfig } from "./claude-config-init";
 import { initDir, initConfig, writeConfigFile } from "./config";
 import { startPinoLogRetention } from "./pino-retention";
+import { startLegacyTokenSpeedCleanup } from "../plugins/output/temp-file-retention";
 import { registerPluginsFromConfig } from "./plugin-registration";
 import { registerAdminRoutes } from "./admin-routes";
 import { registerRequestPipeline, createCcrPreHandlerCallbacks } from "./request-pipeline";
@@ -82,6 +83,18 @@ export async function createCcrServer(options: CcrRunOptions = {}) {
   const servicePort = process.env.SERVICE_PORT
     ? parseInt(process.env.SERVICE_PORT)
     : port;
+
+  // Best-effort cleanup of legacy token-speed temp files. Before v2.3.x the
+  // token-speed plugin wrote one timestamped session-<id>-<ts>.json file per
+  // request into the flat temp root, which real installs accumulated into
+  // millions of files (it once stalled every stats read by ~33s). New writers
+  // publish exact-name files into the token-speed-v2 subdirectory, so legacy
+  // files are never read again; this pass removes only expired legacy
+  // timestamped files (streaming scan, unrefed timers, per-directory dedupe).
+  // Deliberately outside the logger branch: it must run regardless of logging
+  // config, independently of the token-speed plugin's enabled state. It is
+  // fire-and-forget — never awaited on the request path and never throws.
+  startLegacyTokenSpeedCleanup();
 
   // Configure logger based on config settings or external options
   const pad = (num: number) => (num > 9 ? "" : "0") + num;
