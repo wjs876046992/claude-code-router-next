@@ -1303,6 +1303,15 @@ function getPiPaths(config: Record<string, any>): PiPaths {
 function getPiModels(config: Record<string, any>): { models: any[]; defaultModel: string } {
   const contextWindow = getContextWindow(config);
   const normalizePiAlias = (id: string) => id.replace(/\[1m\]$/i, "");
+  // Send Pi's stable conversation id as an x-session-affinity header so CCR can
+  // build a sticky concurrency-priority binding and forward a constant
+  // x-litellm-session-id to upstream gateways (LiteLLM spend logs then group a
+  // whole conversation under one id instead of a fresh trace id per request).
+  // The header is only emitted when pi resolves the model's own session id,
+  // which is always the case for a normal conversation. This is a per-model
+  // compat flag (not a provider header) so it rides along with every managed
+  // CCR family alias, including the fallback single-alias case.
+  const compat = { sendSessionAffinityHeaders: true };
   const makeModel = (id: string, label: string) => ({
     id: normalizePiAlias(id),
     name: label,
@@ -1311,6 +1320,7 @@ function getPiModels(config: Record<string, any>): { models: any[]; defaultModel
     input: ["text", "image"],
     contextWindow,
     maxTokens: 64000,
+    compat,
   });
 
   if (hasFamiliesConfig(config)) {
@@ -1463,13 +1473,38 @@ function ensurePiCcrProvider(
 
   const models = readJsonObject(paths.models);
   if (!isObject(models.providers)) models.providers = {};
+  // Preserve user/external edits on the provider entry (Desktop writes
+  // `modelOverrides` for contextWindow/maxTokens/thinkingLevelMap edits; other
+  // tools may add their own keys). Replacing the whole object silently wiped
+  // them on every takeover refresh. Managed fields below still win.
+  const existingProvider = isObject(models.providers[providerName])
+    ? models.providers[providerName]
+    : {};
+  // The model SET is CCR-managed, but fields on individual model entries are
+  // not: pi's `thinkingLevelMap` / `samplingParamsByThinkingLevel` edits and
+  // keys written by other tools live on the models[] entries. Merge each
+  // generated entry over the prior same-id entry so managed fields win while
+  // per-entry custom fields survive refreshes — same preserve semantics as
+  // the provider shell above (issue #69: replacing the whole array silently
+  // wiped them on every CCR start / project takeover).
+  const priorModels = Array.isArray(existingProvider.models)
+    ? existingProvider.models.filter(isObject)
+    : [];
+  const priorById = new Map(
+    priorModels.map((entry: Record<string, any>) => [String(entry.id), entry])
+  );
   models.providers[providerName] = {
+    ...existingProvider,
     name: "Claude Code Router",
     baseUrl: getCcrBaseUrl(config),
     api: PI_ANTHROPIC_API,
     apiKey: config.APIKEY || "test",
     ...(headers ? { headers } : {}),
-    models: ccrModels,
+    models: ccrModels.map((model: any) => {
+      const prior = priorById.get(String(model.id));
+      // Managed fields (`...model`) still win over the prior entry.
+      return prior ? { ...prior, ...model } : model;
+    }),
   };
   writeJsonObject(paths.models, models);
   return { defaultModel };

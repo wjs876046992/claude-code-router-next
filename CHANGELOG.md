@@ -15,6 +15,26 @@ All notable changes to this project will be documented in this file.
 - **`ccr code` 按项目 Router 计算窗口与别名（避免覆盖项目接管的上限）**: `ccr code` 在项目目录里启动时，此前只读全局配置，因此只给全局口径的值；但 Claude Code 的 env 层（`ccr code` 会同时写 `--settings` 与进程 env）优先于包括项目 `.claude/settings.local.json` 在内的所有 settings 层，这会覆盖掉项目接管写入的 200k 上限。典型场景：全局默认 family 启用 `[1m]` 且 `ContextWindow=1000000`，而某项目自带 Router 未启用扩展上下文——项目接管正确地封顶 200k，`ccr code` 却把会话重新拉到 1M，上下文超过 200k 后又因严格项目路由无法逃逸到全局扩展模型，最终无可用模型。现在 `ccr code` 经 `readProjectConfig(process.cwd())` + `buildProjectTakeoverConfig`（自 projectConfig 导出）取得「全局连接/界面参数 + 项目 Router」的有效配置，与项目接管同源；项目无自有 Router、或项目配置损坏时回退全局（损坏不再阻断 `ccr code`，请求路径仍会报项目路由错误）。
 - **统一 `ccr code` 与接管的 family 别名与压缩比例（消除两套实现）**: 两条写入路径本各有一份实现，导致三处分歧——① `enableFamilyRouting: false` 时接管会正确地不发 `ccr-*[1m]` 别名，`ccr code` 却仍发，留下无 family 路由可解析的陈旧 `[1m]` 别名（同时把窗口留在 1M）；② `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` 在 CLI 里是 `"85"`、在接管里是 `"90"`；③ 别名取值逻辑重复。现在抽出纯函数 `getClaudeFamilyEnv`（family 别名）与 `CLAUDE_AUTO_COMPACT_PCT_OVERRIDE` 常量（自 shared 导出）供两条路径共用；接管侧 `applyClaudeModelFamilies` 改为先清陈旧 `ccr-*` 别名再 `Object.assign` 共享结果。压缩比例统一取 `"90"`：此前 `ccr code` 的 `"85"` 因 env 层优先级而实际生效，接管写的 `"90"` 被静默忽略；因为该变量只会**下调**压缩阈值，统一后压缩点从 85% 略延后到 90%（如需回到更保守的 85%，改 `packages/shared/src/client-integrations.ts` 的 `CLAUDE_AUTO_COMPACT_PCT_OVERRIDE` 一处即可）。新增 `claude-family-env` 单测覆盖别名、think 路由优先、family 路由显式关闭、窗口封顶与共享常量，shared 51 项、core 325 项全通过。
 
+## [2.3.2412] - 2026-10-13
+
+### Fixed
+
+- **用量/套餐接口在 Node ABI 不匹配时全部失效** (#70): 运行时 Node 的 `NODE_MODULE_VERSION` 与安装 better-sqlite3 时不同（典型：桌面应用把自带 node 注入 PATH 后执行 `ccr start/restart`）时，原生模块 `ERR_DLOPEN_FAILED`，`/api/usage*` 与 `/api/providers/quota` 全部 500，UI 用量页与套餐限额条消失而数据无损。新增 ABI 弹性 SQLite 驱动：仍优先 better-sqlite3，仅在加载失败（`ERR_DLOPEN_FAILED`/模块缺失/bindings 找不到）时自动回退 Node 内置 `node:sqlite`（≥22.5），运行时 SQLite 错误不会被误判；完整模拟 CCR 用到的 `pragma({simple})`/`wal_checkpoint`/`transaction`/具名参数/`changes` 计数语义；`usage-store`（读写）、`zcode-session-project`（只读）、CLI statusline（只读）三个调用点全部切换；回退时输出一次性显眼日志。已在 node 26（147，原生）与 node 22（127，回退）双 ABI 实测读写正常。`build-shared` 增加 `--external:better-sqlite3`，修复此前 native wrapper 被内联导致 bare require 从未执行的问题。
+- **pi 模型条目自定义字段被刷新抹除** (#71, fixes #69): `ensurePiCcrProvider` 刷新 pi `models.json` 时整组替换 `models[]`，pi 的 `thinkingLevelMap` / `samplingParamsByThinkingLevel` 等条目级自定义字段在每次 CCR 启动或 `ccr-project-*` 项目接管注册时被静默清掉。现在模型集合仍完全由 CCR 管理（仅映射生成清单，删除的模型不复活），每个生成条目按同 id 与旧条目合并：受管字段（id/name/api/reasoning/input/contextWindow/maxTokens/compat）以 CCR 为准，条目级自定义字段跨刷新保留；`ccr-project-*` 走同一代码路径自动获益。
+
+
+## [2.3.2411] - 2026-10-13
+
+### Added
+
+- **AMD Radeon Cloud 转换器** (#66): 新增 `amd` transformer。请求侧把统一 reasoning 意图归一为单个 `reasoning_effort`，按解析后的请求模型族映射（GLM 将 xhigh/max 降为 high；Qwen high/max 提为 xhigh；DeepSeek 保留原生档位；未知模型保守取 low/medium/high），禁用拼写（`reasoning.enabled:false` 等）映射到各文档支持的关闭档位否则丢弃；响应侧把 `message.reasoning`/`delta.reasoning` 提升为 `thinking.content`（流式保留 metadata，处理 JSON、误标 JSON 的 SSE、跨 chunk 边界、usage-only chunk、取消与错误传播）。官方 OpenAI/DeepSeek 转换器零改动；推荐 provider 链 `use:["OpenAI","amd"]`。
+- **Pi 稳定会话粘连** (#65): 仅凭 `x-session-affinity` 请求头即可独立识别 pi 客户端并生成稳定会话 ID（256 长度上限、temp-file 键清洗、adapter 幂等）。并发优先模式的会话槽位以稳定 ID 粘附，错误切换时 `rebindSessionModel` 迁移在途租约；token-speed 统计键与用量记录改用稳定会话 ID（读回 join 键一致，仅展示分组用稳定 ID）；识别 LiteLLM `x-litellm-session-id` 用于用量分组；上游会话头戳记收敛到 pi 客户端；pi 侧可通过模型 `compat.sendSessionAffinityHeaders=true` 启用，接管刷新后自动写入。
+
+### Fixed
+
+- **token-speed 临时文件堆积导致服务卡死** (#67): 修复 `includeTimestamp:true` 按请求写临时文件且永不清理的问题（实测单机 9.5 个月累积 3,231,671 个文件，`readTokenSpeedStats()` 每请求全目录 `readdirSync` 阻塞事件循环约 33 秒，服务周期性假死）。读写两侧统一 `sanitizeTempFileKey`，写入改为 `<final>.ccr-tmp-<pid>-<uuid>.tmp` 原子发布；新文件迁移到 `token-speed-v2` 子目录与旧版本进程隔离；新增默认 1 小时保留期（流式 `opendir` 扫描，每 64 项让出事件循环 10ms）；CLI statusline 由每次渲染全目录扫描改为单文件精确读取；服务启动时 `startLegacyTokenSpeedCleanup()` 自愈——仅清理旧目录中文件名 13 位时间戳与 mtime 均超过 1 小时的 legacy 文件（unlink 前 inode/mtime 复查），不 rename/不 rm -rf 共享目录、不触碰用量库与配置、新旧版本可并存；两处 temp-file 注册收敛为 `tokenSpeedTempFileHandlerConfig()` 单一工厂防止配置漂移。
+
+
 ## [2.3.2410] - 2026-10-03
 
 ### Changed

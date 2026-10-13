@@ -1,6 +1,45 @@
 import { randomUUID } from "node:crypto";
 import { CCR_PROJECT_HEADER } from "@wengine-ai/claude-code-router-shared";
-import { extractSessionIdFromUserId } from "../utils/session-id";
+import { extractSessionIdFromUserId, normalizeSessionId } from "../utils/session-id";
+
+/**
+ * Headers a Pi session may carry to advertise its stable conversation id.
+ * Pi sends `x-session-affinity` when the managed CCR model declares
+ * `compat.sendSessionAffinityHeaders: true`; LiteLLM/gateways may also send a
+ * vendor-less `x-session-id`. The affinity header is checked first so Pi's own
+ * value wins; LiteLLM's `x-litellm-session-id` is accepted last as a generic
+ * carrier so a downstream gateway that already stamped one is honored.
+ */
+const PI_SESSION_HEADERS = [
+  "x-session-affinity",
+  "x-session-id",
+  "x-litellm-session-id",
+] as const;
+
+/** Session ids longer than this are rejected: they flow into file paths and
+ *  usage-store/log fields, so an abusive value must not bloat them. */
+const MAX_SESSION_ID_LENGTH = 256;
+
+/**
+ * Read and validate a Pi session id from the incoming request headers.
+ * Returns the normalized id or undefined when no valid carrier is present.
+ * Invalid values (non-string, empty, path/control chars, overly long) are
+ * rejected so they never reach filesystem paths or upstream logs.
+ */
+function isValidPiSessionId(value: unknown): value is string {
+  return typeof value === "string" && value.length <= MAX_SESSION_ID_LENGTH;
+}
+
+function extractPiSessionIdFromHeaders(req: any): string | undefined {
+  if (!req?.headers || typeof req.headers !== "object") return undefined;
+  for (const name of PI_SESSION_HEADERS) {
+    const { value } = getHeader(req, name);
+    if (!isValidPiSessionId(value)) continue;
+    const normalized = normalizeSessionId(value);
+    if (normalized) return normalized;
+  }
+  return undefined;
+}
 
 export const CLIENT_TYPES = [
   "claude-code",
@@ -128,8 +167,31 @@ const piAdapter: ClientAdapter = {
     // default target model's usable window (which other models may not support),
     // not pi's own client window, so a uniform absolute value is correct.
     const projectHeader = getHeader(req, CCR_PROJECT_HEADER);
+    // Pi exposes its stable conversation id through session-affinity headers
+    // (see PI_SESSION_HEADERS). When present and valid, surface it as
+    // stableSessionId so the concurrency-priority router can build a sticky
+    // session:family:scenario binding and the upstream provider (e.g. LiteLLM)
+    // receives a constant x-litellm-session-id across the whole conversation.
+    // Usage bookkeeping stays request-scoped: a Pi session can issue parallel
+    // requests (compaction + user turn, subagents), and a session-scoped usage
+    // cache would let one stream overwrite another's partial usage frame.
+    const stableSessionId =
+      extractPiSessionIdFromHeaders(req) ||
+      // Idempotency: re-applying the adapter on the same request object after
+      // the raw headers were stripped must keep the same stable id (this is an
+      // exported API also used outside the main pipeline).
+      (typeof req?.__ccrSessionAffinity === "string" ? req.__ccrSessionAffinity : undefined) ||
+      extractSessionIdFromUserId(req?.body?.metadata?.user_id);
+    // Enforce the documented length cap on the FINAL id regardless of source:
+    // metadata-extracted ids bypass the header path's isValidPiSessionId check,
+    // and the value flows into token-speed file names, concurrency slot keys,
+    // usage-store fields and the upstream x-litellm-session-id header.
+    const cappedSessionId = isValidPiSessionId(stableSessionId)
+      ? stableSessionId
+      : undefined;
     return {
       ...requestScopeContext("pi", false),
+      stableSessionId: cappedSessionId,
       projectId: projectHeader.value,
       projectHeaderPresent: projectHeader.present,
     };
@@ -222,7 +284,14 @@ export function detectClientType(req: any): ClientType {
   if (/\bYou are opencode\b/i.test(sysHead)) {
     return "opencode";
   }
+  // Pi management headers rank with the project header. Only the pi-specific
+  // affinity carrier is strong enough to identify a client on its own: generic
+  // session headers (x-session-id, x-litellm-session-id) are also sent by
+  // Codex/ZCode/LiteLLM-fronted clients and must never re-classify them. For
+  // requests already identified as pi below, those generic headers are still
+  // consumed as data carriers by the pi adapter.
   if (getHeader(req, CCR_PROJECT_HEADER).present) return "pi";
+  if (getHeader(req, "x-session-affinity").present) return "pi";
   // Header fingerprint, ahead of the Claude Code heuristics below: ZCode sends
   // a ccr-* alias plus Claude Code style metadata, which would otherwise
   // resolve to claude-code.
@@ -283,7 +352,16 @@ export function applyClientAdapter(
 ): ClientContext {
   const clientType = detectClientType(req);
   const context = getClientAdapter(clientType).createContext(req, config);
-  const usageSessionId = context.stableSessionId || requestScopeId(req);
+  // Usage bookkeeping follows the adapter's declared usageScope, not the
+  // presence of a stableSessionId. Pi carries a stableSessionId for routing
+  // stickiness and upstream session affinity while remaining request-scoped
+  // for usage, so a per-request id keeps parallel streams' usage frames
+  // isolated. Session-scoped clients (Claude Code, Qwen Code, ZCode) keep
+  // using their stableSessionId for usage too, preserving existing behavior.
+  const usageSessionId =
+    context.usageScope === "session" && context.stableSessionId
+      ? context.stableSessionId
+      : requestScopeId(req);
   const scopeLabel = context.usageScope === "session" ? "session" : "request";
 
   req.clientType = clientType;
@@ -302,6 +380,17 @@ export function applyClientAdapter(
   // context, but never let passthrough providers forward even an invalid or
   // empty instance of the header upstream.
   removeHeader(req, CCR_PROJECT_HEADER);
+  // Session-affinity headers are consumed here: they must not be forwarded to
+  // upstream providers verbatim. LiteLLM does not recognize x-session-affinity
+  // (its generic scan only matches x-<vendor>-session-id), and leaking a raw
+  // carrier could collide with another gateway's session semantics. The
+  // canonical upstream carrier is stamped in sendRequestToProvider from the
+  // validated stableSessionId (x-litellm-session-id), so strip all carriers
+  // regardless of validity to avoid passthrough leakage.
+  if (clientType === "pi" && context.stableSessionId) {
+    req.__ccrSessionAffinity = context.stableSessionId;
+  }
+  for (const name of PI_SESSION_HEADERS) removeHeader(req, name);
   req.usageSessionId = usageSessionId;
   req.usageCacheKey = `${clientType}:${scopeLabel}:${usageSessionId}`;
   return context;

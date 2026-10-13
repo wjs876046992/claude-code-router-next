@@ -2,7 +2,7 @@ import { existsSync } from "fs";
 import { readFile, readdir } from "fs/promises";
 import { homedir } from "os";
 import { isAbsolute, join, normalize } from "path";
-import Database from "better-sqlite3";
+import { openSqliteDatabase } from "@wengine-ai/claude-code-router-shared";
 
 /**
  * ZCode puts no project identity on the wire — its request headers only carry
@@ -83,9 +83,9 @@ function lookupWorkspaceInTaskIndex(
   taskIndexFile: string,
   candidates: string[]
 ): string | null {
-  let db: Database.Database | undefined;
+  let db: import("@wengine-ai/claude-code-router-shared").SqliteDatabase | undefined;
   try {
-    db = new Database(taskIndexFile, { readonly: true, fileMustExist: true });
+    db = openSqliteDatabase(taskIndexFile, { readonly: true }).db;
     const statement = db.prepare(
       "SELECT workspace_path FROM tasks WHERE task_id = ? OR acp_session_id = ? ORDER BY updated_at DESC LIMIT 1"
     );

@@ -37,6 +37,10 @@ function readJson(filePath: string): any {
   return JSON.parse(readFileSync(filePath, "utf8"));
 }
 
+function writeJson(filePath: string, doc: any): void {
+  writeFileSync(filePath, JSON.stringify(doc, null, 2));
+}
+
 afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
@@ -75,7 +79,42 @@ describe("Pi managed models", () => {
     const models = readJson(join(piDir, "models.json")).providers.ccr.models;
     expect(models.map((model: any) => model.id)).toEqual(["ccr-opus", "ccr-sonnet"]);
     expect(models.every((model: any) => model.contextWindow === 420000)).toBe(true);
+    expect(models.every((model: any) => model.compat?.sendSessionAffinityHeaders === true)).toBe(true);
     expect(readJson(join(piDir, "settings.json")).defaultModel).toBe("ccr-opus");
+  });
+
+  it("preserves per-model custom fields across refreshes while managed fields win (#69)", () => {
+    const { piDir } = createFixture();
+    const config = {
+      APIKEY: "test-key",
+      PORT: 3456,
+      ContextWindow: 420000,
+      Clients: { pi: { configPath: piDir, modelAlias: "ccr-opus[1m]" } },
+    };
+
+    enableClient(config, "pi");
+
+    // User edits a model ENTRY (pi writes thinkingLevelMap here) + a stale
+    // managed field, then CCR refreshes with a different context window.
+    const modelsPath = join(piDir, "models.json");
+    const doc = readJson(modelsPath);
+    doc.providers.ccr.models = doc.providers.ccr.models.map((model: any) =>
+      model.id === "ccr-opus"
+        ? { ...model, contextWindow: 1, thinkingLevelMap: { max: "max" } }
+        : model
+    );
+    doc.providers.ccr.models.push({ id: "user-extra", name: "User model" });
+    writeJson(modelsPath, doc);
+
+    enableClient(config, "pi");
+
+    const provider = readJson(modelsPath).providers.ccr;
+    const opus = provider.models.find((m: any) => m.id === "ccr-opus");
+    expect(opus.thinkingLevelMap).toEqual({ max: "max" });          // custom survives
+    expect(opus.contextWindow).toBe(420000);                        // managed wins
+    expect(opus.compat?.sendSessionAffinityHeaders).toBe(true);     // managed wins
+    expect(provider.models.some((m: any) => m.id === "user-extra")).toBe(false); // set is CCR-managed
+    expect(provider.baseUrl).toBe("http://127.0.0.1:3456");         // shell still managed
   });
 
   it("removes [1m] from the fallback alias", () => {
@@ -97,6 +136,7 @@ describe("Pi managed models", () => {
     expect(provider.models[0]).toMatchObject({
       id: "ccr-sonnet",
       contextWindow: 260000,
+      compat: { sendSessionAffinityHeaders: true },
     });
     expect(readJson(join(piDir, "settings.json")).defaultModel).toBe("ccr-sonnet");
   });
@@ -153,6 +193,43 @@ describe("Pi managed models", () => {
       headers: {
         [CCR_PROJECT_HEADER]: getClaudeProjectId(projectDir),
       },
+    });
+    expect(provider.models.every((model: any) => model.compat?.sendSessionAffinityHeaders === true)).toBe(true);
+  });
+
+  it("preserves Desktop modelOverrides across takeover refresh", () => {
+    // Desktop (pi-desktop) writes model modelOverrides (contextWindow/maxTokens
+    // edits from its model page) into the provider entry. The managed refresh
+    // must keep them instead of regenerating the provider from scratch.
+    const { piDir, projectDir } = createFixture();
+    const config = {
+      APIKEY: "test-key",
+      PORT: 4567,
+      Router: { default: "provider,project-model" },
+      Clients: { pi: { configPath: piDir } },
+    };
+
+    applyPiProjectTakeover(projectDir, config);
+
+    const providerName = getPiProjectProviderName(projectDir);
+    const modelsPath = join(piDir, "models.json");
+    const doc = readJson(modelsPath);
+    doc.providers[providerName].modelOverrides = {
+      "ccr-opus": { contextWindow: 200000, maxTokens: 32000 },
+    };
+    writeJson(modelsPath, doc);
+
+    // Simulate a later takeover refresh (server restart / config change).
+    applyPiProjectTakeover(projectDir, config);
+
+    const provider = readJson(modelsPath).providers[providerName];
+    expect(provider.modelOverrides).toEqual({
+      "ccr-opus": { contextWindow: 200000, maxTokens: 32000 },
+    });
+    // Managed fields still win.
+    expect(provider).toMatchObject({
+      baseUrl: "http://127.0.0.1:4567",
+      name: "Claude Code Router",
     });
   });
 

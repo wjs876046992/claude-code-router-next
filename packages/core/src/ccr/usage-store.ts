@@ -1,8 +1,16 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync } from "fs";
 import { join, resolve } from "path";
 import { tmpdir } from "os";
-import Database from "better-sqlite3";
-import { PROFILES_DIR, resolveDataDir } from "@wengine-ai/claude-code-router-shared";
+import {
+  openSqliteDatabase,
+  type SqliteDatabase,
+  type SqliteStatement,
+  HOME_DIR,
+  PROFILES_DIR,
+  resolveDataDir,
+  sanitizeTempFileKey,
+  TOKEN_SPEED_TEMP_SUBDIRECTORY,
+} from "@wengine-ai/claude-code-router-shared";
 
 // Data directory is shared across all profiles (like logs and plugins).
 // Tests that point CCR_CONFIG_DIR at an isolated temp dir outside PROFILES_DIR
@@ -109,8 +117,8 @@ export interface UsageQueryResult {
   pageSize: number;
 }
 
-let dbInstance: Database.Database | null = null;
-let insertStatement: Database.Statement | null = null;
+let dbInstance: SqliteDatabase | null = null;
+let insertStatement: SqliteStatement | null = null;
 let lastRetentionPruneAt = 0;
 
 function ensureDataDir(): void {
@@ -119,11 +127,21 @@ function ensureDataDir(): void {
   }
 }
 
-function getDb(): Database.Database {
+function getDb(): SqliteDatabase {
   if (dbInstance) return dbInstance;
 
   ensureDataDir();
-  const db = new Database(USAGE_DB_FILE);
+  const opened = openSqliteDatabase(USAGE_DB_FILE);
+  const db = opened.db;
+  if (opened.driver === "node:sqlite") {
+    // One-time loud notice: the native addon did not load under this Node
+    // (ABI mismatch, e.g. a desktop app injecting its own node into PATH).
+    // node:sqlite keeps usage working; rebuilding better-sqlite3 restores it.
+    console.error(
+      `[usage] better-sqlite3 unavailable, using built-in node:sqlite fallback. ` +
+      `Reason: ${opened.fallbackReason}`
+    );
+  }
   db.pragma("journal_mode = WAL");
   db.pragma("synchronous = NORMAL");
   db.pragma("busy_timeout = 5000");
@@ -170,7 +188,7 @@ function getDb(): Database.Database {
   return dbInstance;
 }
 
-function initializeSchema(db: Database.Database): void {
+function initializeSchema(db: SqliteDatabase): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS usage_records (
       id TEXT PRIMARY KEY,
@@ -211,14 +229,14 @@ function initializeSchema(db: Database.Database): void {
   `);
 }
 
-function getMeta(db: Database.Database, key: string): string | undefined {
+function getMeta(db: SqliteDatabase, key: string): string | undefined {
   const row = db
     .prepare("SELECT value FROM usage_meta WHERE key = ?")
     .get(key) as { value: string } | undefined;
   return row?.value;
 }
 
-function setMeta(db: Database.Database, key: string, value: string): void {
+function setMeta(db: SqliteDatabase, key: string, value: string): void {
   db.prepare(`
     INSERT INTO usage_meta (key, value)
     VALUES (?, ?)
@@ -226,7 +244,7 @@ function setMeta(db: Database.Database, key: string, value: string): void {
   `).run(key, value);
 }
 
-function migrateLegacyUsageJsonl(db: Database.Database): void {
+function migrateLegacyUsageJsonl(db: SqliteDatabase): void {
   if (getMeta(db, LEGACY_MIGRATION_META_KEY) || !existsSync(LEGACY_USAGE_FILE)) {
     return;
   }
@@ -270,7 +288,7 @@ function migrateLegacyUsageJsonl(db: Database.Database): void {
   migrate();
 }
 
-function migrateProfileUsageDatabases(db: Database.Database): void {
+function migrateProfileUsageDatabases(db: SqliteDatabase): void {
   if (!existsSync(PROFILES_DIR)) {
     return;
   }
@@ -295,9 +313,10 @@ function migrateProfileUsageDatabases(db: Database.Database): void {
       continue;
     }
 
-    let profileDb: Database.Database | null = null;
+    let profileDb: SqliteDatabase | null = null;
     try {
-      profileDb = new Database(profileDbPath, { readonly: true, fileMustExist: true });
+      const opened = openSqliteDatabase(profileDbPath, { readonly: true });
+      profileDb = opened.db;
       const tableCheck = profileDb
         .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'usage_records'")
         .get();
@@ -363,7 +382,7 @@ function isMigrationCandidate(value: unknown): value is UsageRecord {
     typeof record.timestamp === "string" && record.timestamp.length > 0;
 }
 
-function getInsertStatement(db: Database.Database, insertMode = "INSERT"): Database.Statement {
+function getInsertStatement(db: SqliteDatabase, insertMode = "INSERT"): SqliteStatement {
   return db.prepare(`
     ${insertMode} INTO usage_records (
       id, timestamp, session_id, provider, original_model, model, upstream_model, model_family,
@@ -485,7 +504,7 @@ function retentionCutoffTimestamp(): string {
   return new Date(Date.now() - USAGE_RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
 }
 
-function pruneExpiredRecords(db: Database.Database, force = false): void {
+function pruneExpiredRecords(db: SqliteDatabase, force = false): void {
   const now = Date.now();
   if (!force && now - lastRetentionPruneAt < RETENTION_PRUNE_INTERVAL_MS) return;
 
@@ -568,7 +587,7 @@ interface SummaryBucketRow extends SummaryBucket {
 }
 
 function readSummaryBuckets(
-  db: Database.Database,
+  db: SqliteDatabase,
   where: QueryWhereClause,
   keyExpression: string,
   // MUST be a compile-time literal (never user input). It is concatenated into
@@ -604,7 +623,7 @@ function readSummaryBuckets(
   return map;
 }
 
-function computeSummarySQL(db: Database.Database, filters: UsageQueryFilters): UsageSummary {
+function computeSummarySQL(db: SqliteDatabase, filters: UsageQueryFilters): UsageSummary {
   const where = buildWhereClause(filters);
 
   const totals = db
@@ -738,53 +757,42 @@ function parseNumericTokenSpeedValue(value: any): number | null {
   return isNaN(num) ? null : num;
 }
 
-// Read token-speed temp file for a session to get TTFT and speed
+/**
+ * Read token-speed temp file for a session to get TTFT and speed.
+ *
+ * The file name must be reconstructed exactly the way the writer side
+ * (TempFileOutputHandler, configured by ccr/plugin-registration.ts and the
+ * token-speed plugin's default reporter) builds it:
+ * - v2 subdirectory TOKEN_SPEED_TEMP_SUBDIRECTORY under the OS temp root
+ *   (keeps exact-name files away from the legacy flat root where old CCR
+ *   processes still write timestamped files);
+ * - default prefix `session` and extension `json` -> `session-<key>.json`;
+ * - the key must go through the same sanitizeTempFileKey() as the writer,
+ *   or the reader will look for a file that does not exist.
+ * There is deliberately no directory-scan fallback: scanning
+ * tmpdir/claude-code-router once blocked the event loop for ~33s per request
+ * when the directory grew to millions of stale timestamped files.
+ */
 export function readTokenSpeedStats(sessionId: string): {
   ttft: number | null;
   tokensPerSecond: number | null;
 } {
-  const baseDir = join(tmpdir(), "claude-code-router");
+  const file = join(
+    tmpdir(),
+    TOKEN_SPEED_TEMP_SUBDIRECTORY,
+    `session-${sanitizeTempFileKey(sessionId)}.json`
+  );
 
-  // Try exact filename first without timestamp.
-  const exactFile = join(baseDir, `session-${sessionId}.json`);
-  if (existsSync(exactFile)) {
-    try {
-      const content = readFileSync(exactFile, "utf-8");
-      const data = JSON.parse(content);
-      return {
-        ttft: parseNumericTokenSpeedValue(data.timeToFirstToken),
-        tokensPerSecond: parseNumericTokenSpeedValue(data.tokensPerSecond),
-      };
-    } catch {
-      // Continue to search for timestamped files.
-    }
-  }
-
-  // Search for timestamped session files and use the most recent match.
   try {
-    const files = readdirSync(baseDir);
-    const pattern = new RegExp(`^session-${sessionId}-\\d+\\.json$`);
-    const matchingFiles = files.filter(f => pattern.test(f));
-
-    if (matchingFiles.length > 0) {
-      const sortedFiles = matchingFiles.sort().reverse();
-      const latestFile = join(baseDir, sortedFiles[0]);
-      try {
-        const content = readFileSync(latestFile, "utf-8");
-        const data = JSON.parse(content);
-        return {
-          ttft: parseNumericTokenSpeedValue(data.timeToFirstToken),
-          tokensPerSecond: parseNumericTokenSpeedValue(data.tokensPerSecond),
-        };
-      } catch {
-        return { ttft: null, tokensPerSecond: null };
-      }
-    }
+    const data = JSON.parse(readFileSync(file, "utf-8"));
+    return {
+      ttft: parseNumericTokenSpeedValue(data.timeToFirstToken),
+      tokensPerSecond: parseNumericTokenSpeedValue(data.tokensPerSecond),
+    };
   } catch {
-    // Directory does not exist or cannot be read.
+    // Missing file, unparsable JSON, or unexpected payload: report "no data".
+    return { ttft: null, tokensPerSecond: null };
   }
-
-  return { ttft: null, tokensPerSecond: null };
 }
 
 export function getOldestRecordTimestamp(provider: string, startTime: string, endTime: string): string | undefined {

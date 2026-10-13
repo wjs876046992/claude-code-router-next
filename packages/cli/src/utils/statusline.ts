@@ -2,7 +2,19 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { execSync } from "child_process";
 import { tmpdir, homedir } from "node:os";
-import { resolveConfigFilePath, resolveProfileHomeDir, resolveDataDir, readPresetFile, getPresetDir, loadConfigFromManifest } from "@wengine-ai/claude-code-router-shared";
+import {
+    CONFIG_FILE,
+    HOME_DIR,
+    readPresetFile,
+    getPresetDir,
+    loadConfigFromManifest,
+    openSqliteDatabase,
+    sanitizeTempFileKey,
+    TOKEN_SPEED_TEMP_SUBDIRECTORY,
+    resolveConfigFilePath,
+    resolveProfileHomeDir,
+    resolveDataDir,
+} from "@wengine-ai/claude-code-router-shared";
 import JSON5 from "json5";
 
 export interface StatusLineModuleConfig {
@@ -481,38 +493,22 @@ type TokenSpeedTiming = {
     timestamp: number;
 };
 
-// Read timing data from token-speed temp files.
+// Read timing data from the token-speed temp file. Since v2.3.x metrics live
+// at <tmpdir>/claude-code-router/token-speed-v2/session-<sanitized id>.json;
+// the server overwrites that one exact-name file per session (latest write
+// wins), so a single readFile replaces the old whole-directory scan that ran
+// on every statusline render. The key goes through the same
+// sanitizeTempFileKey() the server-side writer applies, so the name
+// reconstructed here always matches what was published.
 async function getTokenSpeedTiming(sessionId: string): Promise<TokenSpeedTiming | null> {
     try {
-        const tempDir = path.join(tmpdir(), 'claude-code-router');
-        try { await fs.access(tempDir); } catch { return null; }
-
-        const files = await fs.readdir(tempDir);
-        const exactFile = `session-${sessionId}.json`;
-        const timestampedPattern = new RegExp(`^session-${sessionId}-\\d+\\.json$`);
-        const candidateFiles = files.filter((file) => file === exactFile || timestampedPattern.test(file));
-        if (candidateFiles.length === 0) return null;
-
-        let latestData: any = null;
-        let latestTimestamp = 0;
-        for (const file of candidateFiles) {
-            try {
-                const filePath = path.join(tempDir, file);
-                const content = await fs.readFile(filePath, 'utf-8');
-                const data = JSON.parse(content);
-                const filenameTimestamp = parseNumericValue(file.match(/-(\\d+)\\.json$/)?.[1]);
-                const fileStats = await fs.stat(filePath);
-                const timestamp = parseNumericValue(data.timestamp) || filenameTimestamp || fileStats.mtimeMs;
-                if (!latestData || timestamp >= latestTimestamp) {
-                    latestData = data;
-                    latestTimestamp = timestamp;
-                }
-            } catch {
-                // Ignore corrupt temp files and continue scanning candidates.
-            }
-        }
-        if (!latestData) return null;
-        const data = latestData;
+        const file = path.join(
+            tmpdir(),
+            TOKEN_SPEED_TEMP_SUBDIRECTORY,
+            `session-${sanitizeTempFileKey(sessionId)}.json`
+        );
+        const content = await fs.readFile(file, 'utf-8');
+        const data = JSON.parse(content);
 
         // Parse duration (e.g. "9.99s") and TTFT (e.g. "9994ms")
         const durationMs = parseDurationToMs(data.duration);
@@ -526,6 +522,7 @@ async function getTokenSpeedTiming(sessionId: string): Promise<TokenSpeedTiming 
             timestamp: data.timestamp || 0
         };
     } catch {
+        // Missing file, unparsable JSON, or unexpected payload: no timing data.
         return null;
     }
 }
@@ -584,8 +581,7 @@ function calculateEstimatedTokenSpeed(outputTokens: number, durationMs: number, 
 
 function readLatestUsageSpeedFromSqlite(sessionId: string): number {
     try {
-        const Database = require('better-sqlite3');
-        const db = new Database(getUsageDbFile(), { readonly: true, fileMustExist: true });
+        const { db } = openSqliteDatabase(getUsageDbFile(), { readonly: true });
         try {
             const row = db.prepare(`
                 SELECT tokens_per_second
