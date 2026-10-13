@@ -60,6 +60,8 @@ This document archives the older release summaries that fall outside the "latest
 
 | **v2.3.2400** | <ul><li>**SSE 误标 JSON 的多层彻底修复**: v2.3.2397–2399 只看首个 chunk,遇空首块/心跳(`: ping`)/分片(`ev`/`ent:`)仍误判报错;现改为累积多 chunk 判定,并统一修复 formatResponse、两个 transformer、hidden-error-check 与 validateStreamingResponse 四处,误标 SSE 全部按流式透传。</li></ul> |
 
+| **v2.3.2402** | <ul><li>**formatResponse SSE 识别放宽**: 之前仅对 `application/json` 头 peek,上游用非标准 Content-Type(`text/plain`/空)返回 SSE 仍会报 non-JSON;现对任何非流式响应都先 peek 判 SSE。</li></ul> |
+
 ## English
 
 | Version | Release Details |
@@ -112,3 +114,4 @@ This document archives the older release summaries that fall outside the "latest
 | **v2.1.2** | <ul><li>**Status Bar Cache Tokens**: Fixed the CLI statusline token count display to correctly account for cache hits, and implemented multiple visual/speed optimizations.</li></ul> |
 | **v2.0.87** | <ul><li>**Web Console Quota Display**: Fully integrated and displayed real-time Web console quota usage details for Zhipu GLM and Aliyun Qwen.</li><li>**Health Store Failure Tracking**: Correctly recorded HTTP 429 Rate Limit responses as health check failures to trigger fallback mechanism early.</li></ul> |
 | **v2.3.2400** | <ul><li>**Thorough multi-layer fix for SSE mislabeled as JSON**: v2.3.2397–2399 judged from a single first chunk, so an empty leading buffer, heartbeat (`: ping`) or split fragment (`ev`/`ent:`) still misclassified and errored. Detection now accumulates across chunks and is unified across formatResponse, both transformers, the hidden-error-check, and validateStreamingResponse — mislabeled SSE streams through cleanly.</li></ul> |
+| **v2.3.2402** | <ul><li>**Broaden formatResponse SSE detection**: Previously peek ran only for application/json Content-Type, so an SSE body with a non-standard Content-Type (text/plain/empty) still threw non-JSON; now any non-stream response is peeked first.</li></ul> |
