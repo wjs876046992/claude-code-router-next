@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [2.3.2412] - 2026-10-13
+
+### Fixed
+
+- **用量/套餐接口在 Node ABI 不匹配时全部失效** (#70): 运行时 Node 的 `NODE_MODULE_VERSION` 与安装 better-sqlite3 时不同（典型：桌面应用把自带 node 注入 PATH 后执行 `ccr start/restart`）时，原生模块 `ERR_DLOPEN_FAILED`，`/api/usage*` 与 `/api/providers/quota` 全部 500，UI 用量页与套餐限额条消失而数据无损。新增 ABI 弹性 SQLite 驱动：仍优先 better-sqlite3，仅在加载失败（`ERR_DLOPEN_FAILED`/模块缺失/bindings 找不到）时自动回退 Node 内置 `node:sqlite`（≥22.5），运行时 SQLite 错误不会被误判；完整模拟 CCR 用到的 `pragma({simple})`/`wal_checkpoint`/`transaction`/具名参数/`changes` 计数语义；`usage-store`（读写）、`zcode-session-project`（只读）、CLI statusline（只读）三个调用点全部切换；回退时输出一次性显眼日志。已在 node 26（147，原生）与 node 22（127，回退）双 ABI 实测读写正常。`build-shared` 增加 `--external:better-sqlite3`，修复此前 native wrapper 被内联导致 bare require 从未执行的问题。
+- **pi 模型条目自定义字段被刷新抹除** (#71, fixes #69): `ensurePiCcrProvider` 刷新 pi `models.json` 时整组替换 `models[]`，pi 的 `thinkingLevelMap` / `samplingParamsByThinkingLevel` 等条目级自定义字段在每次 CCR 启动或 `ccr-project-*` 项目接管注册时被静默清掉。现在模型集合仍完全由 CCR 管理（仅映射生成清单，删除的模型不复活），每个生成条目按同 id 与旧条目合并：受管字段（id/name/api/reasoning/input/contextWindow/maxTokens/compat）以 CCR 为准，条目级自定义字段跨刷新保留；`ccr-project-*` 走同一代码路径自动获益。
+
+
 ## [2.3.2411] - 2026-10-13
 
 ### Added
