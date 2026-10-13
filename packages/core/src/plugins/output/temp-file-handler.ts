@@ -55,10 +55,21 @@ export class TempFileOutputHandler implements OutputHandler {
 
   async output(data: any, options: OutputOptions = {}): Promise<boolean> {
     try {
-      const sessionId = options.metadata?.sessionId;
-      if (!sessionId) return false;
+      // The file key MUST match the key readTokenSpeedStats reconstructs for
+      // its exact-name lookup. token-speed puts the per-request key in
+      // metadata.statsKey (= usageSessionId || requestId) and the stable
+      // conversation id in metadata.sessionId; the reader uses usageSessionId.
+      // Prefer statsKey so the file lands where the reader looks; fall back to
+      // sessionId for callers that only set the display id (issue: #65 statsKey
+      // was lost during the #67 merge resolution, making TTFT always null).
+      const fileKey =
+        typeof options.metadata?.statsKey === 'string' && options.metadata.statsKey
+          ? options.metadata.statsKey
+          : options.metadata?.sessionId;
+      if (!fileKey) return false;
+      const sessionId = options.metadata?.sessionId ?? fileKey;
       const serialized = JSON.stringify({ ...data, timestamp: Date.now(), sessionId }, null, 2);
-      const filePath = this.getFilePath(sessionId);
+      const filePath = this.getFilePath(fileKey);
       // A writer never waits for an entire cleanup pass, only its destination's short critical section.
       return await withTempFilePathLock(filePath, async () => {
         // Recover directories removed by temp cleanup tools before each publication.
