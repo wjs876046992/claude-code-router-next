@@ -110,6 +110,34 @@ describe("token speed temp file round-trip", () => {
     });
   });
 
+  it("uses metadata.statsKey for the file name when provided (matches the reader)", async () => {
+    // token-speed puts the per-request key in metadata.statsKey (= usageSessionId ||
+    // requestId) and the conversation UUID in metadata.sessionId. The file MUST
+    // be named with statsKey so readTokenSpeedStats(speedStatsKey) finds it;
+    // naming with sessionId would make TTFT always null (the regression that
+    // motivated this test).
+    const statsKey = `stats-key-${suffix}`;
+    const conversationId = `conv-${suffix}`;
+    const written = await handler.output(
+      {
+        requestId: "req-statskey",
+        stream: true,
+        tokenCount: 50,
+        timeToFirstToken: 999,
+        tokensPerSecond: 30.0,
+      },
+      { metadata: { sessionId: conversationId, statsKey } }
+    );
+    expect(written).toBe(true);
+
+    // File is named session-<statsKey>.json, NOT session-<conversationId>.json
+    expect(existsSync(join(BASE_DIR, `session-${sanitizeTempFileKey(statsKey)}.json`))).toBe(true);
+    expect(existsSync(join(BASE_DIR, `session-${sanitizeTempFileKey(conversationId)}.json`))).toBe(false);
+
+    // Reader uses speedStatsKey (= usageSessionId = statsKey) and finds the file
+    expect(readTokenSpeedStats(statsKey)).toEqual({ ttft: 999, tokensPerSecond: 30.0 });
+  });
+
   it("resolves the v2 subdirectory and never falls back to the legacy flat path", () => {
     const key = `legacy-layout-${suffix}`;
     const legacyDir = join(TEST_TMP_ROOT, "claude-code-router");
