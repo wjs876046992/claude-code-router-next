@@ -8,6 +8,7 @@ import {
     readPresetFile,
     getPresetDir,
     loadConfigFromManifest,
+    openSqliteDatabase,
     sanitizeTempFileKey,
     TOKEN_SPEED_TEMP_SUBDIRECTORY,
 } from "@wengine-ai/claude-code-router-shared";
@@ -576,8 +577,7 @@ function calculateEstimatedTokenSpeed(outputTokens: number, durationMs: number, 
 
 function readLatestUsageSpeedFromSqlite(sessionId: string): number {
     try {
-        const Database = require('better-sqlite3');
-        const db = new Database(USAGE_DB_FILE, { readonly: true, fileMustExist: true });
+        const { db } = openSqliteDatabase(USAGE_DB_FILE, { readonly: true });
         try {
             const row = db.prepare(`
                 SELECT tokens_per_second
