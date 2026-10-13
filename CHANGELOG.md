@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [2.3.2413] - 2026-10-13
+
+### Fixed
+
+- **TTFT 永久为空** (#73, #65/#67 合并冲突回归): #65（pi 会话粘连）在写入的 `metadata` 里放了 `statsKey`（= `usageSessionId || requestId`）作为文件标识，期望 handler 用它命名文件，使 `readTokenSpeedStats(speedStatsKey)`（`speedStatsKey = usageSessionId`）能精确查找。但 #67 重写了 handler（合并冲突时采纳了 #67 版本），handler 用 `metadata.sessionId`（会话 UUID）命名文件，**忽略了 `statsKey`**。结果 writer 写 `session-<会话UUID>.json`、reader 找 `session-<requestId>.json` → 永久不匹配 → 所有流式请求 `ttft` 为 null、`tokens_per_second` 退化为按完整时长重算（非从文件读的真实速度）。修复后 handler 优先用 `metadata.statsKey` 命名文件（对齐 reader），无 `statsKey` 时 fallback 到 `sessionId`；`sessionId` 仍嵌入文件体供展示。
+
+
 ## [2.3.2412] - 2026-10-13
 
 ### Fixed
