@@ -22,6 +22,7 @@ import { ForceReasoningTransformer } from "./forcereasoning.transformer"
 import { KimiTransformer } from "./kimi.transformer"
 import { OpenCodeTransformer } from "./opencode.transformer"
 import { DefaultThinkingTransformer } from "./defaultthinking.transformer"
+import { AmdTransformer } from "./amd.transformer"
 
 export default {
   AnthropicTransformer,
@@ -47,5 +48,6 @@ export default {
   ForceReasoningTransformer,
   KimiTransformer,
   OpenCodeTransformer,
-  DefaultThinkingTransformer
+  DefaultThinkingTransformer,
+  AmdTransformer
 };

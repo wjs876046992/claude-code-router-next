@@ -1,41 +1,21 @@
-import { OutputHandler, OutputOptions } from './types';
-import { writeFileSync, existsSync, mkdirSync } from 'fs';
-import { join } from 'path';
-import { tmpdir } from 'os';
+import type { OutputHandler, OutputOptions, TempFileOutputConfig } from './types';
+import { lstat, mkdir, open, rename, unlink } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { sanitizeTempFileKey } from '@wengine-ai/claude-code-router-shared';
+import { basename, join, resolve } from 'node:path';
+import { tmpdir } from 'node:os';
+import { pruneTempFileOutputFiles, scheduleTempFileCleanup, withTempFilePathLock } from './temp-file-retention';
 
-/**
- * Temp file output handler configuration
- */
-export interface TempFileOutputConfig {
-  /**
-   * Subdirectory under system temp directory (default: 'claude-code-router')
-   */
-  subdirectory?: string;
+// Preserve the existing import location while maintaining one canonical configuration type.
+export type { TempFileOutputConfig } from './types';
 
-  /**
-   * File extension (default: 'json')
-   */
-  extension?: string;
-
-  /**
-   * Whether to include timestamp in filename (default: true)
-   */
-  includeTimestamp?: boolean;
-
-  /**
-   * Custom prefix for temp files (default: 'session')
-   */
-  prefix?: string;
-}
-
-/**
- * Temp file output handler
- * Writes data to temporary files in system temp directory
- */
+/** Writes disposable metrics with exclusive, atomic publication and bounded async retention. */
 export class TempFileOutputHandler implements OutputHandler {
   type = 'temp-file' as const;
   private config: TempFileOutputConfig;
   private baseDir: string;
+  private readonly controller = new AbortController();
+  private readonly stopSchedule?: () => void;
 
   constructor(config: TempFileOutputConfig = {}) {
     this.config = {
@@ -43,97 +23,83 @@ export class TempFileOutputHandler implements OutputHandler {
       extension: 'json',
       includeTimestamp: false,
       prefix: 'session',
-      ...config
+      retentionMs: 3600000,
+      ...config,
     };
-
-    // Use system temp directory
-    const systemTempDir = tmpdir();
-    this.baseDir = join(systemTempDir, this.config.subdirectory!);
-
-    // Ensure directory exists
-    this.ensureDir();
-  }
-
-  /**
-   * Ensure directory exists
-   */
-  private ensureDir(): void {
-    try {
-      if (!existsSync(this.baseDir)) {
-        mkdirSync(this.baseDir, { recursive: true });
-      }
-    } catch (error) {
-      // Silently fail
+    this.baseDir = resolve(join(tmpdir(), this.config.subdirectory!));
+    if (Number.isFinite(this.config.retentionMs) && this.config.retentionMs! > 0) {
+      const scheduleKey = JSON.stringify([
+        this.baseDir, this.config.prefix, this.config.extension, this.config.retentionMs,
+      ]);
+      this.stopSchedule = scheduleTempFileCleanup(`handler:${scheduleKey}`,
+        (signal) => this.pruneOldFiles(signal), 60000);
     }
   }
 
-  /**
-   * Get file path for temp file
-   */
+  private async ensureDir(): Promise<void> {
+    await mkdir(this.baseDir, { recursive: true });
+    const info = await lstat(this.baseDir);
+    if (!info.isDirectory() || info.isSymbolicLink()) throw new Error('Unsafe temp output directory');
+  }
+
   private getFilePath(sessionId: string): string {
     const prefix = this.config.prefix || 'session';
-    const ext = this.config.extension ? `.${this.config.extension}` : '';
-
-    let filename: string;
-    if (this.config.includeTimestamp) {
-      // Include timestamp in filename: prefix-sessionId-timestamp.ext
-      const timestamp = Date.now();
-      filename = `${prefix}-${sessionId}-${timestamp}${ext}`;
-    } else {
-      // Simple filename: prefix-sessionId.ext
-      filename = `${prefix}-${sessionId}${ext}`;
+    const extension = this.config.extension ? `.${this.config.extension}` : '';
+    const timestamp = this.config.includeTimestamp ? `-${Date.now()}` : '';
+    const filename = `${prefix}-${sanitizeTempFileKey(sessionId)}${timestamp}${extension}`;
+    if (basename(filename) !== filename || filename.includes('\\')) {
+      throw new Error('Temp file configuration must not contain path separators');
     }
-
     return join(this.baseDir, filename);
   }
 
-  /**
-   * Output data to temp file
-   *
-   * The file key is `options.metadata?.statsKey` when provided (per-request:
-   * parallel requests inside one conversation each get their own file, and the
-   * usage pipeline reads the exact same key back with readTokenSpeedStats(),
-   * so joins stay correct under concurrency). `options.metadata?.sessionId` is
-   * display/grouping metadata only and never names the file.
-   */
   async output(data: any, options: OutputOptions = {}): Promise<boolean> {
     try {
       const sessionId = options.metadata?.sessionId;
-      const fileKey =
-        typeof options.metadata?.statsKey === 'string' && options.metadata.statsKey
-          ? options.metadata.statsKey
-          : sessionId;
-
-      if (!fileKey) {
-        // No file key, skip output
-        return false;
-      }
-      // Defense in depth: the key lands in a filesystem path, so strip path
-      // separators and traversal sequences even though adapter-validated ids
-      // already exclude them (custom outputOptions may supply arbitrary keys).
-      const safeKey = fileKey.replace(/[^A-Za-z0-9_.-]/g, '_').slice(0, 200);
-
-      // Prepare output data
-      const outputData = {
-        ...data,
-        timestamp: Date.now(),
-        sessionId
-      };
-
-      // Write to file
-      const filePath = this.getFilePath(safeKey);
-      writeFileSync(filePath, JSON.stringify(outputData, null, 2), 'utf-8');
-
-      return true;
-    } catch (error) {
-      // Silently fail to avoid disrupting main flow
+      if (!sessionId) return false;
+      const serialized = JSON.stringify({ ...data, timestamp: Date.now(), sessionId }, null, 2);
+      const filePath = this.getFilePath(sessionId);
+      // A writer never waits for an entire cleanup pass, only its destination's short critical section.
+      return await withTempFilePathLock(filePath, async () => {
+        // Recover directories removed by temp cleanup tools before each publication.
+        await this.ensureDir();
+        const tempPath = join(this.baseDir, `.ccr-tmp-${process.pid}-${randomUUID()}.tmp`);
+        return withTempFilePathLock(tempPath, async () => {
+        let created = false;
+        try {
+          // Exclusive creation: a collision must neither overwrite nor remove another writer's file.
+          // Track ownership before writing so a partial-write failure also removes our file.
+          const file = await open(tempPath, 'wx');
+          created = true;
+          try {
+            await file.writeFile(serialized, 'utf-8');
+          } finally {
+            await file.close();
+          }
+          await rename(tempPath, filePath);
+          return true;
+        } finally {
+          if (created) await unlink(tempPath).catch(() => {});
+        }
+        });
+      });
+    } catch {
+      // Metrics publication must not disrupt request handling.
       return false;
     }
   }
 
-  /**
-   * Get the base directory where temp files are stored
-   */
+  pruneOldFiles(signal = this.controller.signal): Promise<number> {
+    return pruneTempFileOutputFiles(this.baseDir, this.config.prefix || 'session',
+      this.config.extension || '', this.config.retentionMs!, signal);
+  }
+
+  /** Stop owned scans and release the shared schedule. Does not remove any directory or files. */
+  dispose(): void {
+    this.controller.abort();
+    this.stopSchedule?.();
+  }
+
   getBaseDir(): string {
     return this.baseDir;
   }

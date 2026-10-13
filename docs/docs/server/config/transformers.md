@@ -174,6 +174,38 @@ Transforms requests to be compatible with Anthropic-style APIs:
 - Supports thinking/reasoning content blocks
 - Manages streaming responses
 
+### amd
+
+Specialized transformer for AMD Radeon Cloud's OpenAI-compatible chat completions endpoint:
+
+```json
+{
+  "transformer": {
+    "use": ["OpenAI", "amd"]
+  }
+}
+```
+
+**Features:**
+- Removes `reasoning.enabled`, `thinking`, and `enable_thinking`, which AMD rejects with HTTP 400. AMD requires `reasoning_effort` or `reasoning.effort`; this transformer normalizes effort into `reasoning_effort` and removes the unified `reasoning` object.
+- Maps effort using the resolved request model (case-insensitive family matching), including when a fallback selects another model:
+
+  | Model family | `low` / `medium` / `high` | `xhigh` | `max` |
+  | --- | --- | --- | --- |
+  | GLM | Unchanged | `high` | `high` |
+  | Qwen | Unchanged (`high` → `xhigh`) | `xhigh` | `xhigh` |
+  | DeepSeek | Unchanged | Unchanged | Unchanged |
+  | Other / unknown | Unchanged | `high` | `high` |
+
+- Maps `minimal` to `low` on non-DeepSeek models (DeepSeek keeps its native `minimal`) and unknown private effort strings to `medium`. `none` is sent as `reasoning_effort: "none"` only for models that document it (AMD DeepSeek and Qwen3.8-Flash-Next); other models omit the effort field, and omitting it does not guarantee that the upstream model disables thinking.
+- Honors disable intent: `reasoning.enabled: false`, and — when the unified `reasoning` object carries no intent — the `enable_thinking: false` / `thinking: {"type": "disabled"}` spellings, mapped to the model's disable tier where one is documented.
+- Converts AMD response `message.reasoning` / `delta.reasoning` into `thinking.content`, including object-shaped reasoning with string `content`. Existing thinking and `reasoning_content` are preserved; string `reasoning_content` is copied as a fallback when no thinking is present.
+- Supports JSON and SSE responses, all choices, fragmented UTF-8/data lines, comments, event boundaries, usage-only chunks, errors, and cancellation. Streaming object reasoning keeps its original metadata and copies only text to `thinking.content`, so an AMD signature cannot prematurely close an Anthropic thinking block.
+
+For Claude Code's `/v1/messages` requests, provider response transformers run first in reverse `use` order. The endpoint `AnthropicTransformer` then converts the OpenAI-shaped response to Anthropic format, reading `message.thinking.content` or `delta.thinking`. `OpenAI` itself only declares an endpoint, so `amd` is necessary to make AMD's reasoning visible. Adding `Anthropic` to the provider chain does not repeat this response conversion; `amd` leaves existing thinking and already-Anthropic payloads unchanged.
+
+Place `amd` after any request transformer that adds thinking parameters, so those rejected fields are removed before the request reaches AMD. The table describes this adapter's mapping policy, not every model's accepted enum: AMD currently documents Qwen3.8-27B as accepting `low` / `medium` / `xhigh` and rejecting `high`, so this adapter remaps Qwen `high` to `xhigh` instead of passing it through and triggering a 400.
+
 ### deepseek
 
 Specialized transformer for DeepSeek API:

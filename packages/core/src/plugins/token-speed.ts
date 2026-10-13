@@ -4,6 +4,36 @@ import { SSEParserTransform } from '../utils/sse';
 import { OutputHandlerConfig, OutputOptions, outputManager } from './output';
 import { ITokenizer, TokenizerConfig } from '../types/tokenizer';
 import { extractSessionIdFromUserId } from '../utils/session-id';
+import { TOKEN_SPEED_TEMP_SUBDIRECTORY } from '@wengine-ai/claude-code-router-shared';
+
+/**
+ * Single source of truth for the temp-file handler config the token-speed
+ * plugin registers. Both registration paths (plugin-registration.ts and the
+ * default-reporter path below) MUST call this factory instead of inlining a
+ * copy — divergent copies of this config are exactly what produced the
+ * writer/reader drift behind the 3.23M-file temp directory incident.
+ * The reader side (usage-store.readTokenSpeedStats, CLI statusline) reconstructs
+ * the same path from TOKEN_SPEED_TEMP_SUBDIRECTORY + sanitizeTempFileKey.
+ */
+export function tokenSpeedTempFileHandlerConfig() {
+  return {
+    // v2 subdirectory: exact-name files live under
+    // <tmpdir>/claude-code-router/token-speed-v2, so old CCR processes still
+    // publishing timestamped files into the legacy flat root can never collide
+    // with them.
+    subdirectory: TOKEN_SPEED_TEMP_SUBDIRECTORY,
+    extension: 'json',
+    // The session key (usageSessionId -> user_id extraction -> x-request-id ->
+    // requestId) already uniquely identifies one dataset. Overwriting the same
+    // file means "latest write wins" and matches the reader, which
+    // reconstructs this exact file name (session-<sanitized key>.json).
+    // includeTimestamp: true produced a new file per request that the reader
+    // could never find by exact name - it once accumulated 3.23M files in the
+    // temp directory and stalled every stats read.
+    includeTimestamp: false as const,
+    prefix: 'session'
+  };
+}
 
 /**
  * Token statistics interface
@@ -92,12 +122,7 @@ export const tokenSpeedPlugin: CCRPlugin = {
           handlersToRegister.push({
             type: 'temp-file',
             enabled: true,
-            config: {
-              subdirectory: 'claude-code-router',
-              extension: 'json',
-              includeTimestamp: true,
-              prefix: 'session'
-            }
+            config: tokenSpeedTempFileHandlerConfig()
           });
         } else if (reporter === 'webhook') {
           // Webhook requires explicit config, skip auto-registration

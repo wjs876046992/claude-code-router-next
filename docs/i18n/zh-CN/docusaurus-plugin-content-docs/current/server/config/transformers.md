@@ -175,6 +175,38 @@ interface UnifiedMessage {
 - 支持思考/推理内容块
 - 管理流式响应
 
+### amd
+
+专门用于 AMD Radeon Cloud 的 OpenAI 兼容 chat completions 端点：
+
+```json
+{
+  "transformer": {
+    "use": ["OpenAI", "amd"]
+  }
+}
+```
+
+**功能：**
+- 删除 AMD 会以 HTTP 400 拒绝的 `reasoning.enabled`、`thinking` 和 `enable_thinking`。AMD 要求使用 `reasoning_effort` 或 `reasoning.effort`；转换器将 effort 统一为 `reasoning_effort`，并删除统一格式的 `reasoning` 对象。
+- 根据已经解析的请求模型映射档位（模型家族名称不区分大小写），fallback 切换模型时也会重新映射：
+
+  | 模型家族 | `low` / `medium` / `high` | `xhigh` | `max` |
+  | --- | --- | --- | --- |
+  | GLM | 保持原样 | `high` | `high` |
+  | Qwen | 保持原样（`high` → `xhigh`） | `xhigh` | `xhigh` |
+  | DeepSeek | 保持原样 | 保持原样 | 保持原样 |
+  | 其他 / 未知 | 保持原样 | `high` | `high` |
+
+- 非 DeepSeek 模型将 `minimal` 映射为 `low`（DeepSeek 保留原生的 `minimal`），未知的供应商私有档名映射为 `medium`。仅对文档声明支持关闭思考的模型（AMD DeepSeek 和 Qwen3.8-Flash-Next）把 `none` 下发为 `reasoning_effort: "none"`；其他模型省略 effort 字段，省略并不保证上游模型会关闭思考。
+- 尊重禁用意图：`reasoning.enabled: false`，以及（当统一 `reasoning` 对象未表达意图时）`enable_thinking: false` / `thinking: {"type": "disabled"}` 拼写，在文档支持关闭的模型上映射为对应的关闭档位。
+- 将 AMD 响应的 `message.reasoning` / `delta.reasoning` 转为 `thinking.content`，也支持包含字符串 `content` 的对象形式。保留已有的 thinking 和 `reasoning_content`；没有 thinking 时，将字符串 `reasoning_content` 复制为后备思考内容。
+- 支持 JSON 和 SSE、多 choices、跨 chunk 的 UTF-8 / data 行、注释、事件边界、usage-only chunk、错误和取消传播。流式对象 reasoning 保留原始 metadata，仅将文本复制到 `thinking.content`，避免 AMD signature 提前关闭 Anthropic 思考块。
+
+Claude Code 请求 `/v1/messages` 时，provider 响应转换器先按 `use` 逆序执行，随后端点的 `AnthropicTransformer` 将 OpenAI 格式转换为 Anthropic 格式，并读取 `message.thinking.content` 或 `delta.thinking`。`OpenAI` 自身只声明端点，因此需要 `amd` 才能让 AMD 的 reasoning 被识别。即使 provider 链中也包含 `Anthropic`，响应转换也不会重复执行；`amd` 不覆盖已有 thinking，也不修改已是 Anthropic 格式的内容。
+
+将 `amd` 放在添加思考参数的请求转换器之后，确保这些被拒绝的字段在发往 AMD 前被删除。上表描述的是本适配器的映射策略，不是所有模型的完整支持列表：AMD 当前文档列明 Qwen3.8-27B 只接受 `low` / `medium` / `xhigh`，拒绝 `high`。因此本适配器将 Qwen 的 `high` 重映射为 `xhigh`，而不是原样下发导致 400。
+
 ### deepseek
 
 专门用于 DeepSeek API 的转换器：
