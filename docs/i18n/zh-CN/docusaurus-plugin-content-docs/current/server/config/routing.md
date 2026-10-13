@@ -231,9 +231,41 @@ sidebar_position: 3
 
 - 分流池来自对应场景的备用列表，请为需要生效的场景至少配置一个备用模型。候选按在途负载最低挑选——所有候选都忙碌时，负载最低的仍会接管溢出流量。
 - 如果备用列表为空或所有候选都不可用，新会话继续使用忙碌模型，不会失败。
-- 粘连依赖稳定的 session id（Claude Code 会提供）。没有 session id 的请求参与溢出分流但不做固定，每次请求重新评估负载最低的目标。
+- 粘连依赖稳定的 session id：Claude Code 通过 `metadata.user_id` 提供；Pi 通过 session-affinity 请求头提供（见下节）。没有 session id 的请求参与溢出分流但不做固定，每次请求重新评估负载最低的目标。
 - 配置了 `CUSTOM_ROUTER_PATH` 时，并发层仍会作用于自定义路由返回的模型（视为 default 场景流量，受粘连与溢出影响）；如需自定义路由拥有最终决定权，请关闭本模式。
 - 在途并发数与会话绑定保存在内存中，服务重启后重置。
+
+### Pi 会话亲和
+
+Pi 在受管 CCR 模型声明 `compat.sendSessionAffinityHeaders: true` 时会随请求携带稳定的会话 id（CCR 的 Pi 接管会自动写入该标记；升级后需刷新接管或重启 CCR 服务生效）。
+
+携带该请求头时，CCR 会：
+
+1. 依次读取 `x-session-affinity`（再 `x-session-id`、`x-litellm-session-id`）作为会话的稳定 id，并做校验（字母/数字/`-`/`_`，最长 256 字符），非法值直接忽略。
+2. 将其用于并发优先的会话粘连：同一 Pi 会话的所有请求共享路由槽位，会话在每个场景下固定在同一个模型上。用量与 token 速度统计保持请求级隔离，同一会话内的并行请求（compaction、子代理）不会互相覆盖统计数据。
+3. 向上游转发时统一改写为 `x-litellm-session-id` 请求头（含 fallback 尝试），LiteLLM 等网关即可把整个会话的 spend logs 归到同一个 session id，而不是每个请求一个新 trace id。
+4. 转发前剥离入站的 session-affinity 请求头，避免不识别它们的供应商收到陌生头。
+
+如果 Pi 模型是手工配置的（未走 CCR 接管），在 `models.json` 中为每个模型添加 compat 标记：
+
+```json
+{
+  "providers": {
+    "ccr": {
+      "baseUrl": "http://127.0.0.1:3456",
+      "api": "anthropic-messages",
+      "models": [
+        {
+          "id": "ccr-opus",
+          "compat": { "sendSessionAffinityHeaders": true }
+        }
+      ]
+    }
+  }
+}
+```
+
+没有该标记（或 pi 侧配置 `cacheRetention: "none"` 导致请求不携带会话 id）时，Pi 请求保持请求级：溢出分流仍然生效，但会话不固定，LiteLLM 侧每条请求各自记录 session id。
 
 ## 项目级路由
 

@@ -1267,6 +1267,15 @@ function getPiPaths(config: Record<string, any>): PiPaths {
 function getPiModels(config: Record<string, any>): { models: any[]; defaultModel: string } {
   const contextWindow = getContextWindow(config);
   const normalizePiAlias = (id: string) => id.replace(/\[1m\]$/i, "");
+  // Send Pi's stable conversation id as an x-session-affinity header so CCR can
+  // build a sticky concurrency-priority binding and forward a constant
+  // x-litellm-session-id to upstream gateways (LiteLLM spend logs then group a
+  // whole conversation under one id instead of a fresh trace id per request).
+  // The header is only emitted when pi resolves the model's own session id,
+  // which is always the case for a normal conversation. This is a per-model
+  // compat flag (not a provider header) so it rides along with every managed
+  // CCR family alias, including the fallback single-alias case.
+  const compat = { sendSessionAffinityHeaders: true };
   const makeModel = (id: string, label: string) => ({
     id: normalizePiAlias(id),
     name: label,
@@ -1275,6 +1284,7 @@ function getPiModels(config: Record<string, any>): { models: any[]; defaultModel
     input: ["text", "image"],
     contextWindow,
     maxTokens: 64000,
+    compat,
   });
 
   if (hasFamiliesConfig(config)) {

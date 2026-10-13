@@ -41,6 +41,8 @@ export function tokenSpeedTempFileHandlerConfig() {
 interface TokenStats {
   requestId: string;
   sessionId?: string;
+  /** Per-request stats-file key; equals readTokenSpeedStats() lookup key. */
+  statsKey?: string;
   startTime: number;
   firstTokenTime?: number;
   lastTokenTime: number;
@@ -202,19 +204,25 @@ export const tokenSpeedPlugin: CCRPlugin = {
       if (!startTime) return;
       const requestId = (request as any).id || Date.now().toString();
 
-      // Prefer the adapter-owned usage session id so token-speed output joins
-      // usage records without accidentally sharing request-scoped clients.
-      let sessionId: string | undefined = (request as any).usageSessionId;
+      // Two distinct keys with different jobs:
+      // - statsKey: per-request file/request identity. It MUST match the key
+      //   the usage pipeline reads back with readTokenSpeedStats() (request-
+      //   pipeline.ts getUsageSessionId()), so TTFT/speed land on the right
+      //   usage record. Using a per-request id keeps parallel requests inside
+      //   one conversation (compaction, subagents) from overwriting each
+      //   other's stats file.
+      // - sessionId (display/grouping): the stable conversation id when the
+      //   client advertises one (Pi session-affinity headers), falling back to
+      //   the metadata.user_id heuristic and finally the request id — matching
+      //   the historical behavior for clients without a stable session.
+      const statsKey: string = (request as any).usageSessionId || requestId;
+      let sessionId: string | undefined = (request as any).sessionId;
       if (!sessionId) {
         try {
-          sessionId = extractSessionIdFromUserId((request.body as any)?.metadata?.user_id);
+          sessionId = extractSessionIdFromUserId((request.body as any)?.metadata?.user_id) || statsKey;
         } catch (error) {
+          sessionId = statsKey;
         }
-      }
-      if (!sessionId) {
-        const requestIdHeader = request.headers?.["x-request-id"];
-        const requestIdFromHeader = Array.isArray(requestIdHeader) ? requestIdHeader[0] : requestIdHeader;
-        sessionId = (typeof requestIdFromHeader === 'string' ? requestIdFromHeader : undefined) || requestId;
       }
 
       // Get tokenizer for this specific request
@@ -226,6 +234,7 @@ export const tokenSpeedPlugin: CCRPlugin = {
         requestStats.set(requestId, {
           requestId,
           sessionId,
+          statsKey,
           startTime,
           lastTokenTime: startTime,
           tokenCount: 0,
@@ -436,6 +445,7 @@ export const tokenSpeedPlugin: CCRPlugin = {
         const stats: TokenStats = {
           requestId,
           sessionId,
+          statsKey,
           startTime,
           lastTokenTime: endTime,
           tokenCount,
@@ -502,7 +512,12 @@ async function outputStats(
   const outputOptions = {
     prefix,
     metadata: {
-      sessionId: stats.sessionId
+      sessionId: stats.sessionId,
+      // Per-request file key: readTokenSpeedStats() in request-pipeline.ts
+      // reads back the exact same key (req.sessionId || usageSessionId), so
+      // each parallel request in a conversation joins its own stats file
+      // instead of racing on one session-named file.
+      statsKey: stats.statsKey
     },
     ...options
   };

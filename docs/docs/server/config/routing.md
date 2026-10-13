@@ -230,9 +230,41 @@ When multiple projects share one CCR instance, heavy concurrent traffic against 
 
 - The overflow pool is the scenario-matching fallback list; configure at least one fallback model for a scenario for the mode to take effect on that scenario. Candidates are chosen by least in-flight load — when every candidate is busy, the least-loaded one still receives the overflow.
 - If the fallback list is empty or every candidate is unhealthy, new sessions stay on the busy model rather than failing.
-- Stickiness requires a stable session id (Claude Code provides one). Requests without a session id participate in overflow balancing but are never pinned; each request re-evaluates the least-loaded target.
+- Stickiness requires a stable session id. Claude Code provides one via `metadata.user_id`. Pi provides one through session-affinity headers (see below). Requests without a session id participate in overflow balancing but are never pinned; each request re-evaluates the least-loaded target.
 - When `CUSTOM_ROUTER_PATH` is configured, the concurrency layer still applies to the model the custom router returns (treated as default-scenario traffic, subject to stickiness and overflow). Disable the mode if your custom router must have the final say.
 - In-flight counts and session bindings live in memory and reset on restart.
+
+### Pi Session Affinity
+
+Pi exposes its stable conversation id when the managed CCR model declares `compat.sendSessionAffinityHeaders: true` (CCR's Pi takeover writes this automatically; refresh the takeover or restart the CCR server after upgrading).
+
+With the header present, CCR:
+
+1. Reads `x-session-affinity` (then `x-session-id`, then `x-litellm-session-id`) as the conversation's stable session id and validates it (alphanumeric/`-`/`_`, max 256 chars). Invalid values are ignored.
+2. Uses it for concurrency-priority stickiness: all requests of one Pi conversation share a routing slot, so the conversation stays on one model per scenario. Usage/token-speed bookkeeping stays request-scoped, so parallel requests inside one conversation (compaction, subagents) never overwrite each other's stats.
+3. Forwards the id upstream as `x-litellm-session-id` on every provider request — including fallback attempts — so gateways such as LiteLLM group the whole conversation's spend logs under one session id instead of a fresh trace id per request.
+4. Strips the inbound session-affinity headers before forwarding, so they never leak to providers that do not understand them.
+
+If your Pi models are configured manually (not through the CCR takeover), add the compat flag to each model in `models.json`:
+
+```json
+{
+  "providers": {
+    "ccr": {
+      "baseUrl": "http://127.0.0.1:3456",
+      "api": "anthropic-messages",
+      "models": [
+        {
+          "id": "ccr-opus",
+          "compat": { "sendSessionAffinityHeaders": true }
+        }
+      ]
+    }
+  }
+}
+```
+
+Without the flag (or with pi's `cacheRetention: "none"`, which drops session ids from requests), Pi requests stay request-scoped: overflow balancing still works, but sessions are not pinned and LiteLLM logs each request under its own id.
 
 ## Project-Level Routing
 
