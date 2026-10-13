@@ -1444,6 +1444,19 @@ function ensurePiCcrProvider(
   const existingProvider = isObject(models.providers[providerName])
     ? models.providers[providerName]
     : {};
+  // The model SET is CCR-managed, but fields on individual model entries are
+  // not: pi's `thinkingLevelMap` / `samplingParamsByThinkingLevel` edits and
+  // keys written by other tools live on the models[] entries. Merge each
+  // generated entry over the prior same-id entry so managed fields win while
+  // per-entry custom fields survive refreshes — same preserve semantics as
+  // the provider shell above (issue #69: replacing the whole array silently
+  // wiped them on every CCR start / project takeover).
+  const priorModels = Array.isArray(existingProvider.models)
+    ? existingProvider.models.filter(isObject)
+    : [];
+  const priorById = new Map(
+    priorModels.map((entry: Record<string, any>) => [String(entry.id), entry])
+  );
   models.providers[providerName] = {
     ...existingProvider,
     name: "Claude Code Router",
@@ -1451,7 +1464,11 @@ function ensurePiCcrProvider(
     api: PI_ANTHROPIC_API,
     apiKey: config.APIKEY || "test",
     ...(headers ? { headers } : {}),
-    models: ccrModels,
+    models: ccrModels.map((model: any) => {
+      const prior = priorById.get(String(model.id));
+      // Managed fields (`...model`) still win over the prior entry.
+      return prior ? { ...prior, ...model } : model;
+    }),
   };
   writeJsonObject(paths.models, models);
   return { defaultModel };

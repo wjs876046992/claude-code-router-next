@@ -83,6 +83,40 @@ describe("Pi managed models", () => {
     expect(readJson(join(piDir, "settings.json")).defaultModel).toBe("ccr-opus");
   });
 
+  it("preserves per-model custom fields across refreshes while managed fields win (#69)", () => {
+    const { piDir } = createFixture();
+    const config = {
+      APIKEY: "test-key",
+      PORT: 3456,
+      ContextWindow: 420000,
+      Clients: { pi: { configPath: piDir, modelAlias: "ccr-opus[1m]" } },
+    };
+
+    enableClient(config, "pi");
+
+    // User edits a model ENTRY (pi writes thinkingLevelMap here) + a stale
+    // managed field, then CCR refreshes with a different context window.
+    const modelsPath = join(piDir, "models.json");
+    const doc = readJson(modelsPath);
+    doc.providers.ccr.models = doc.providers.ccr.models.map((model: any) =>
+      model.id === "ccr-opus"
+        ? { ...model, contextWindow: 1, thinkingLevelMap: { max: "max" } }
+        : model
+    );
+    doc.providers.ccr.models.push({ id: "user-extra", name: "User model" });
+    writeJson(modelsPath, doc);
+
+    enableClient(config, "pi");
+
+    const provider = readJson(modelsPath).providers.ccr;
+    const opus = provider.models.find((m: any) => m.id === "ccr-opus");
+    expect(opus.thinkingLevelMap).toEqual({ max: "max" });          // custom survives
+    expect(opus.contextWindow).toBe(420000);                        // managed wins
+    expect(opus.compat?.sendSessionAffinityHeaders).toBe(true);     // managed wins
+    expect(provider.models.some((m: any) => m.id === "user-extra")).toBe(false); // set is CCR-managed
+    expect(provider.baseUrl).toBe("http://127.0.0.1:3456");         // shell still managed
+  });
+
   it("removes [1m] from the fallback alias", () => {
     const { piDir } = createFixture();
     const config = {
