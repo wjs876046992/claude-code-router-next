@@ -3,6 +3,8 @@ use crate::{
     lifecycle,
     settings::ConnectionSettings,
 };
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
     Arc, Mutex,
@@ -39,6 +41,11 @@ pub struct Controller {
     loaded: AtomicBool,
     wake: Notify,
     launcher: Mutex<Option<std::process::Child>>,
+    // Set when the user manually hides the window; recovery never re-shows it.
+    user_hidden: AtomicBool,
+    // Signature of the last tray menu actually applied, to avoid rebuilding
+    // an identical NSMenu every 30s poll.
+    applied: Mutex<Option<u64>>,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -48,6 +55,9 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 }
 
 pub fn open_window(app: &tauri::AppHandle) {
+    if let Some(controller) = app.try_state::<Arc<Controller>>() {
+        controller.user_hidden.store(false, Ordering::SeqCst);
+    }
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
         let _ = window.set_focus();
@@ -87,6 +97,27 @@ fn bounded_indices(len: usize, limit: usize, current: Option<usize>) -> Vec<usiz
         indices.push(index);
     }
     indices
+}
+
+// Content signature so unchanged views skip tray menu rebuilds. Revision alone is
+// not enough: periodic refreshes bump it even when nothing changed.
+fn view_hash(view: &View) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    view.status.hash(&mut hasher);
+    view.online.hash(&mut hasher);
+    view.switching.hash(&mut hasher);
+    match &view.snapshot {
+        Some(snapshot) => {
+            1u8.hash(&mut hasher);
+            snapshot.current_default.hash(&mut hasher);
+            snapshot.family_routing.hash(&mut hasher);
+            snapshot.providers.hash(&mut hasher);
+            snapshot.quota_lines.hash(&mut hasher);
+            snapshot.quota_warning.hash(&mut hasher);
+        }
+        None => 0u8.hash(&mut hasher),
+    }
+    hasher.finish()
 }
 
 fn concise(text: &str) -> String {
@@ -295,6 +326,8 @@ impl Controller {
             loaded: AtomicBool::new(false),
             wake: Notify::new(),
             launcher: Mutex::new(None),
+            user_hidden: AtomicBool::new(false),
+            applied: Mutex::new(None),
         });
         let initial = menu(app, &lock(&controller.view)).map_err(|e| e.to_string())?;
         let events = Arc::clone(&controller);
@@ -350,6 +383,11 @@ impl Controller {
                 return;
             }
             if let Some(tray) = app.tray_by_id(TRAY_ID) {
+                let signature = view_hash(&view);
+                if lock(&controller.applied).as_ref() == Some(&signature) {
+                    return;
+                }
+                *lock(&controller.applied) = Some(signature);
                 match menu(&app, &view) {
                     Ok(menu) => {
                         let _ = tray.set_menu(Some(menu));
@@ -389,14 +427,23 @@ impl Controller {
         }
         let url = self.settings.ui_url();
         let app = self.app.clone();
+        let controller = Arc::clone(self);
         let _ = self.app.run_on_main_thread(move || {
             if let Some(window) = app.get_webview_window("main") {
                 if let Ok(url) = url.parse() {
                     let _ = window.navigate(url);
                 }
-                let _ = window.show();
+                // Navigate to the live UI, but never steal the window back once the
+                // user has manually hidden it.
+                if !controller.user_hidden.load(Ordering::SeqCst) {
+                    let _ = window.show();
+                }
             }
         });
+    }
+
+    pub fn mark_user_hidden(&self) {
+        self.user_hidden.store(true, Ordering::SeqCst);
     }
 
     pub fn start(self: &Arc<Self>) {

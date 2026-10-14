@@ -138,6 +138,9 @@ fn config_text_matches<F: Fn(&str) -> Option<String>>(
     if !config.is_object() {
         return false;
     }
+    // Only PORT/HOST/SERVICE_PORT prove the endpoint. Unresolvable APIKEY or provider
+    // placeholders (common for GUI apps launched from Finder) must not block auto-start
+    // proof, so they are deliberately ignored here.
     let resolver = |name: &str| {
         if name.starts_with("CCR_DESKTOP_") {
             None
@@ -145,23 +148,38 @@ fn config_text_matches<F: Fn(&str) -> Option<String>>(
             env(name)
         }
     };
-    let Ok(cli_settings) = ConnectionSettings::from_config_text(raw, &resolver) else {
+    let config_port = match config.get("PORT") {
+        None | Some(serde_json::Value::Null) => "3456".to_string(),
+        Some(serde_json::Value::String(text)) => {
+            match crate::settings::interpolate(text, &resolver) {
+                Ok(port) => port,
+                Err(_) => return false,
+            }
+        }
+        Some(serde_json::Value::Number(number)) => number.to_string(),
+        _ => return false,
+    };
+    let Ok(mut port) = config_port.parse::<u16>() else {
         return false;
     };
-    let Ok(cli_addr) = endpoint(&cli_settings.base_url) else {
+    if port == 0 {
         return false;
-    };
+    }
     // SERVICE_PORT is a CLI/runtime override, unlike the desktop-only port.
-    let port = match env("SERVICE_PORT") {
-        Some(value) => match value.parse::<u16>() {
-            Ok(port) if port != 0 => port,
+    if let Some(value) = env("SERVICE_PORT") {
+        match value.parse::<u16>() {
+            Ok(override_port) if override_port != 0 => port = override_port,
             _ => return false,
-        },
-        None => cli_addr.port(),
-    };
+        }
+    }
     let host = match config.get("HOST") {
-        None => "127.0.0.1",
-        Some(serde_json::Value::String(host)) => host,
+        None => "127.0.0.1".to_string(),
+        Some(serde_json::Value::String(host)) => {
+            match crate::settings::interpolate(host, &resolver) {
+                Ok(host) => host,
+                Err(_) => return false,
+            }
+        }
         _ => return false,
     };
     let host_matches = host

@@ -79,7 +79,10 @@ fn config_path<F: Fn(&str) -> Option<String>>(resolver: &F) -> Result<PathBuf, S
 }
 
 /// Match $NAME and ${NAME} without recursively expanding the resolved secret.
-fn interpolate<F: Fn(&str) -> Option<String>>(text: &str, resolver: &F) -> Result<String, String> {
+pub(crate) fn interpolate<F: Fn(&str) -> Option<String>>(
+    text: &str,
+    resolver: &F,
+) -> Result<String, String> {
     let invalid = || "Unresolved CCR environment placeholder".to_string();
     let mut result = String::new();
     let mut rest = text;

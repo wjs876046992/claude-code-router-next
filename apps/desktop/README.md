@@ -10,7 +10,8 @@ CCR Desktop 是现有 CCR gateway 的管理伴侣，而不是独占 sidecar。�
 - 每 30 秒、手动 `Refresh`、成功切换后刷新菜单和 tooltip，不重复创建 tray。
 - 模型切换只修改 `Router.default`。**模型族配置、think/background 等场景路由仍可能覆盖全局 default**；有模型族配置时菜单会明确提示。
 - 主列表最多显示 15 个 provider，每个 provider 默认最多 12 个 model；超限显示 `More in Web UI…`。当前 default 对应的 provider/model 即使超限也保留（最多额外各一项）。
-- 离线时保留最后已知列表并禁用模型切换；status 行显示连接/切换失败，quota 不伪造为零。连接恢复后 `Refresh` 自动打开 Web UI。quota 摘要不是系统通知，通知功能尚未实现。
+- 离线时保留最后已知列表并禁用模型切换；status 行显示连接/切换失败，quota 不伪造为零。quota 摘要不是系统通知，通知功能尚未实现。
+- 离线启动显示帮助页；当网关首次变为可达时，desktop 会自动导航到 Web UI 并显示窗口一次。若用户已手动关闭/隐藏过窗口，则不再自动弹出，需从托盘 `Open CCR UI` 打开。切换保存超时会先 readback 对账，避免菜单停留在旧状态。
 
 ## 生命周期与安全边界
 
@@ -21,7 +22,7 @@ CCR Desktop 是现有 CCR gateway 的管理伴侣，而不是独占 sidecar。�
 5. 只连接 `http://127.0.0.1:<port>`，Rust admin transport 禁用 proxy 和 redirect，凭据不会转发给远程主机。外部 Web UI 没有任何 Tauri native permission，也没有 shell plugin / remote capability。内置帮助页使用严格 CSP，无 script、网络连接或内联样式。
 6. Rust 托盘带 `X-API-Key` 调 admin API。Web UI 仍使用原有自己的鉴权流程；Rust 不把 key 注入网页、URL 或日志。
 
-**限制**：现有 `/api/config` 只支持完整 config 写入。托盘先读最新 raw config，再只改 default、保存并 readback 校验；这不是原子 PATCH，仍可能与同时打开的 Web UI 保存操作产生竞争。避免同时在两个客户端编辑配置。
+**限制**：现有 `/api/config` 只支持完整 config 写入。托盘先读最新 raw config，再只改 default、保存并 readback 校验；这不是原子 PATCH，仍可能与同时打开的 Web UI 保存操作产生竞争。避免同时在两个客户端编辑配置。另外，服务端保存会把 config.json 重写为规范化的 JSON（JSON5 注释、尾逗号与键序会丢失），这与 Web UI 保存行为一致，服务端保存前会自动备份——但托盘切换让这件事变成高频一键操作，请知悉。
 
 ## 安装前提与环境
 
@@ -69,6 +70,6 @@ macOS 输出：`apps/desktop/src-tauri/target/release/bundle/macos/CCR Desktop.a
 ### 本次实际验证（2026-10-14）
 
 - macOS arm64 / Rust 1.99.0 / Tauri CLI 2.12.2。
-- `cargo fmt --check`、`cargo check`、`cargo test`（26/26）、`cargo clippy --all-targets -- -D warnings`；测试全用独立 ephemeral loopback endpoints/pure settings，无 live config 修改。
+- `cargo fmt --check`、`cargo check`、`cargo test`（28/28）、`cargo clippy --all-targets -- -D warnings`；测试全用独立 ephemeral loopback endpoints/pure settings，无 live config 修改。
 - 未签名 `.app` 构建成功，bundle 输出 **3.56 MiB**（仅 arm64 desktop 壳，不包含 Node/CCR/runtime，不能外推为 universal/DMG/installer 大小）。最终产物大小以实际 build 输出为准。
 - 图标 `icon.icns`、`icon.ico` 文件格式已验证。签名、公证、Windows/Linux、真实 gateway spawn→exit 与 native menu 手测不在上述结果内；不得为验证而停止或重启正在使用的 CCR。

@@ -4,13 +4,13 @@ use reqwest::{header::HeaderValue, redirect::Policy, Client, Method};
 use serde_json::{json, Value};
 use std::{collections::HashSet, time::Duration};
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Hash)]
 pub struct TrayProvider {
     pub name: String,
     pub models: Vec<String>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Hash)]
 pub struct TraySnapshot {
     pub providers: Vec<TrayProvider>,
     pub current_default: Option<String>,
@@ -67,6 +67,17 @@ impl AdminClient {
         path: &str,
         body: Option<&Value>,
     ) -> Result<reqwest::Response, String> {
+        self.request_with_timeout(method, path, body, Duration::from_secs(5))
+            .await
+    }
+
+    async fn request_with_timeout(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<&Value>,
+        timeout: Duration,
+    ) -> Result<reqwest::Response, String> {
         let operation = format!("{method} {path}");
         let mut request = self
             .client
@@ -78,6 +89,7 @@ impl AdminClient {
             request = request.json(body);
         }
         let response = request
+            .timeout(timeout)
             .send()
             .await
             .map_err(|_| format!("{operation} failed"))?;
@@ -163,12 +175,32 @@ impl AdminClient {
         router.insert("default".into(), Value::String(target.clone()));
         // Existing API only supports full config writes: concurrent UI saves can race this
         // read/modify/write. This is NOT an atomic patch. Mutate only Router.default locally.
-        let saved = self
-            .request(Method::POST, "/api/config", Some(&config))
-            .await?
-            .json::<Value>()
-            .await
-            .map_err(|_| "POST /api/config returned invalid JSON".to_string())?;
+        // Saving runs backup + reload + provider rebuild server-side, so allow far longer
+        // than reads before giving up on the response.
+        let post = self
+            .request_with_timeout(
+                Method::POST,
+                "/api/config",
+                Some(&config),
+                Duration::from_secs(20),
+            )
+            .await;
+        let saved = match post {
+            Ok(response) => response
+                .json::<Value>()
+                .await
+                .map_err(|_| "POST /api/config returned invalid JSON".to_string())?,
+            // The server may have persisted despite an unreadable response (timeout,
+            // connection drop). Reconcile via readback instead of reporting a stale menu.
+            Err(post_error) => {
+                if let Ok(current) = self.config().await {
+                    if default_value(&current).as_deref() == Some(target.as_str()) {
+                        return Ok(self.snapshot_from_config(&current).await);
+                    }
+                }
+                return Err(post_error);
+            }
+        };
         if saved.get("success").and_then(Value::as_bool) != Some(true) {
             return Err("POST /api/config did not confirm success".into());
         }

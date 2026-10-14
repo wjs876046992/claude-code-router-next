@@ -44,6 +44,11 @@ pub fn run() {
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 if window.app_handle().tray_by_id("ccr-tray").is_some() && window.hide().is_ok() {
+                    if let Some(controller) =
+                        window.app_handle().try_state::<Arc<tray::Controller>>()
+                    {
+                        controller.mark_user_hidden();
+                    }
                     api.prevent_close();
                 }
             }
@@ -57,6 +62,10 @@ pub fn run() {
                 }
             }
         }),
-        Err(e) => eprintln!("Could not start CCR Desktop: {e}"),
+        Err(e) => {
+            eprintln!("Could not start CCR Desktop: {e}");
+            // Surface fatal startup errors to launchers/automation.
+            std::process::exit(1);
+        }
     }
 }
