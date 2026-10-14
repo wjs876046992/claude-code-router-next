@@ -1,245 +1,81 @@
-# CCR Tauri 桌面客户端 调研与设计
+# CCR Tauri 桌面客户端：当前设计与边界
 
-> 真实意图：给 CCR 加一个可选的菜单栏桌面客户端，让用户不用开浏览器就能切 provider/模型、看用量/套餐、收 quota 通知。对标 magpie 的桌面体验，但 web UI 不变（web 优先，Tauri 是可选薄壳）。
-> 日期：2026-10-14 / 状态：草案，可直接进入实现
+> 日期：2026-10-14。第二步实现中的管理伴侣设计；实际构建、验证和使用方式见 `apps/desktop/README.md`。
+>
+> **修正第一步生命周期**：desktop 不独占 gateway。退出 desktop 不能停止 gateway，否则会打断 agent 的 LLM 请求。此前的 `child.kill()` / PID 清理 / `ccr stop` 方案撤销，不作为验收目标。
 
-## 1. 现状与接入点
+## 1. 目标与复用边界
 
-### 数据流（改动前）
-
-```
-用户浏览器 ──HTTP──→ fastify server (127.0.0.1:3456)
-                      ├─ /v1/messages    (LLM 路由，agent 用)
-                      ├─ /api/config      (admin API，X-API-Key 鉴权)
-                      ├─ /api/providers/* (health/quota)
-                      ├─ /api/usage/*     (用量统计)
-                      └─ /ui/             (@fastify/static serve 单文件 index.html 3.8MB)
-```
-
-UI 用 `vite-plugin-singlefile` 打成单 `index.html`，`base: './'`，全内联（无外部 chunk）。CLI start 用 `spawn("node", [cliPath, "start"], {detached:true})` 起 detached server 进程，写 PID 文件。
-
-### 同类实现参考（项目内）
-
-- **CLI start（`packages/cli/src/utils/index.ts:287`）**：已用 `spawn` detached 起 server——这正是 sidecar 的现成模式。
-- **CLI restart（`index.ts:239`）**：`spawn("ccr", ["restart"], {detached:true})` 延迟重启——Tauri 托盘「重启 server」菜单可复用。
-- **admin API 鉴权**：`X-API-Key` header（`packages/ui/src/lib/api.ts`），Tauri 壳调 API 时带同一个 key。
-- **PID 文件**：`~/.claude-code-router/.claude-code-router.pid`——sidecar 退出清理可双保险。
-
-### 要动的文件清单
-
-| 文件 | 职责 | 改动类型 |
-|---|---|---|
-| `apps/desktop/`（新建）| Tauri 项目目录 | 新增 |
-| `apps/desktop/src-tauri/Cargo.toml` | Rust 依赖（tauri + tray-icon + reqwest） | 新增 |
-| `apps/desktop/src-tauri/tauri.conf.json` | Tauri 配置（externalBin=null, webview URL） | 新增 |
-| `apps/desktop/src-tauri/src/main.rs` | Rust 壳：spawn ccr sidecar + webview load + 托盘 | 新增 |
-| `apps/desktop/src-tauri/src/tray.rs` | 托盘菜单构建 + on_menu_event 调 admin API | 新增 |
-| `packages/ui/src/lib/desktop.ts`（新建）| `isDesktop()` 检测 + 托盘相关 UI 条件渲染 | 新增（极薄） |
-| `packages/ui/src/lib/api.ts` | Tauri 模式下 baseUrl 用绝对 URL | 微调（1 行） |
-| `package.json`（root）| `desktop:dev` / `desktop:build` script | 新增 2 行 |
-
-**零改动**：`packages/core/`（server 代码完全不动）、`packages/cli/`（CLI 命令不动）、`packages/shared/`。server 不感知客户端是浏览器还是 Tauri。
-
-### 已知约束与坑
-
-- **native addon 打包地狱**：better-sqlite3 是 native addon，官方推荐的 pkg 编译 Node sidecar **必崩**（vercel/pkg #837/#690，yao-pkg #275/#82 一手证据）。→ **决定不内嵌 node**。
-- **macOS sidecar 签名坑**（Tauri #16211，v2.12.1 未修）：sidecar 被强制用 app entitlement 签名，受限 entitlement（associated-domains 等）致 AMFI kill（exit 137），codesign/notarize 全 pass 不报错。→ 避免 deep-link `domains` 配置。
-- **sidecar 退出不自动 kill**（Tauri #14443 未合并）：Tauri 退出时 sidecar 成孤儿。→ Rust 侧手动 kill（复用 CCR PID 文件 + `ccr stop`）。
-- **Windows Defender 误报**（#2486）：无代码签名易触发 `Trojan:Script/Wacatac.B!ml`。→ 建议配代码签名证书。
-
-## 2. 外部调研
-
-### 2.1 Tauri v2 sidecar（手动 spawn 路线）
-
-官方 `externalBin` + `Command::new_sidecar` 路线坑多（签名/AppImage/NSIS，#8689/#15134/#16211）。**推荐手动 `std::process::Command` spawn**（`tauri-webui-packager` / `sqlui-native` 实战路线）：
-
-```rust
-use std::process::{Command, Stdio, Child};
-
-// Tauri setup 里 spawn ccr server
-let child: Child = Command::new("ccr")
-    .arg("start")
-    .stdout(Stdio::piped())
-    .stderr(Stdio::piped())
-    .spawn()?;
-// 存到 Tauri State 里，退出时 child.kill()
-```
-
-来源：Tauri 官方 `develop/sidecar.mdx` + issue #14360/#14443；`sqlui-native`（`SIDECAR_PORT=0` 动态端口 + bundled_node fallback）；`forgedev` 架构文档（"Tauri's sidecar feature is designed for exactly this"）。
-
-### 2.2 Tauri v2 托盘（TrayIconBuilder）
-
-v1→v2 breaking：`SystemTray` → `TrayIconBuilder`。官方 `examples/api/src-tauri/src/tray.rs` 可直接抄：
-
-```rust
-use tauri::tray::{TrayIconBuilder, TrayIconEvent};
-use tauri::menu::{Menu, MenuItem, Submenu};
-
-let providers = MenuItem::with_id(app, "providers", "Providers", true, None::<&str>)?;
-let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-let menu = Menu::with_items(app, &[&providers, &quit])?;
-
-TrayIconBuilder::with_id("ccr-tray")
-    .tooltip("CCR")
-    .icon(app.default_window_icon().unwrap().clone())
-    .menu(&menu)
-    .on_menu_event(|app, event| match event.id.as_ref() {
-        "quit" => { app.exit(0); }
-        "providers" => { /* 唤起主窗口 */ }
-        id if id.starts_with("model:") => { /* 调 admin API 切模型 */ }
-        _ => {}
-    })
-    .build(app)?;
-```
-
-动态刷新：`app.tray_by_id("ccr-tray")` → `.set_menu()` / `.set_tooltip()` 更新当前模型。
-
-### 2.3 webview 加载方式
-
-**推荐方案 A**：Tauri webview 直接 `WebviewUrl::External("http://127.0.0.1:3456/ui/")` 加载 fastify serve 的同一份 UI。
-
-- UI↔后端走 admin API（HTTP + X-API-Key），**不需要 `window.__TAURI__` IPC 注入**，规避 issue #5088。
-- 浏览器版和 Tauri 版**完全共用后端 + UI**，零改动。
-- `base: './'` 无需改（singlefile 全内联，无外部 chunk）。
-- 来源：Tauri config reference + issue #5088（External URL 可加载但 IPC 未内置）。
-
-**备选方案 B**：`frontendDist` 指 CCR 单文件 index.html，Tauri 直接加载本地文件。但需处理 IPC + CSP，比方案 A 复杂。
-
-### 2.4 体积（一手数据）
-
-| 平台 | 壳不内嵌 node（推荐） | 内嵌 node sidecar（不推荐） |
-|---|---|---|
-| macOS DMG universal | ~7-15 MB | +40-70 MB（node + better-sqlite3），~50-80 MB |
-| Windows NSIS | ~5-10 MB (+WebView2) | 同上 |
-| Linux AppImage | ~8-12 MB (+webkit2gtk) | 同上 |
-
-对比：magpie（Go+Wails）macOS DMG 21.6 MB。壳不内嵌 node 时 **与 magpie 同级或更小**。来源：discussion #16021（27MB 含 Rust whisper.cpp 重计算）、#16154（delta updater 714KB vs 15.9MB）。
-
-## 3. 方案对比与推荐
-
-### 方案 A（推荐）：Tauri 壳 + webview load fastify UI + 手动 spawn ccr
+提供可选的 native 托盘客户端，快速切换全局 default、查看当前路由和 quota，直接加载现有 Web UI。server、CLI、React UI 与浏览器使用方式保持不变。
 
 ```
-Tauri 壳 (~7-15MB)
-├─ Rust setup: spawn "ccr start"（用户全局装的 ccr，不内嵌 node）
-├─ webview: WebviewUrl::External("http://127.0.0.1:3456/ui/")
-│           ↑ 同一份 React UI，浏览器和 Tauri 共用
-├─ 托盘菜单: 调 admin API（/api/config, /api/providers/quota）
-│   ├─ 快速切 provider/模型（高频操作）
-│   ├─ 当前 quota 状态（tooltip）
-│   └─ Quit（kill sidecar + exit）
-└─ 退出清理: child.kill() + ccr stop（PID 文件双保险）
+CCR Desktop
+├─ 内置本地帮助页（strict CSP，无 native permission）
+├─ readiness 后 navigate → http://127.0.0.1:<port>/ui/
+│                            └─ 完全复用现有 Web UI / admin API
+├─ native tray → Rust AdminClient → /api/config、/api/providers/quota
+└─ connect-first；仅 refused port + known config 才尝试 ccr start
+
+现有 browser / agent ──→ 同一个 gateway（desktop quit 后继续运行）
 ```
 
-- **改动面**：新增 `apps/desktop/`，server/UI 零改动
-- **风险**：低（不碰 native addon、不碰 server 代码）
-- **侵入度**：极低（独立 app 目录，不影响现有 monorepo 构建）
-- **体积**：~7-15MB
+**不内嵌 Node/CCR runtime**。用户需要另行安装 Node 与 CCR。现有项目曾使用 native SQLite addon，当前也有 `node:sqlite` 路径；native addon 分发、SEA/pkg 资源加载与平台签名需要针对具体版本验证。不存在“pkg / SEA 必崩”的通用结论。此方案只是避免在本切片引入 runtime bundling、资源定位与 native ABI 支持成本，而不是证明其他打包方案不可行。
 
-### 方案 B（备选）：Tauri 壳 + frontendDist 加载本地 UI + 内嵌 SEA ccr
+## 2. 模块与权限
 
-- 内嵌 Node SEA（单二进制 ccr），Tauri 加载本地 index.html
-- **否决**：Node SEA experimental + better-sqlite3 native addon 必崩 + 体积 50-80MB + macOS 签名坑
+| 文件 | 职责 |
+|---|---|
+| `apps/desktop/src-tauri/src/lib.rs` | 单实例、主窗口、初始化、hide-to-tray、只停 desktop 的退出路径 |
+| `src/lifecycle.rs` | loopback endpoint、TCP 占用判定、config 匹配、安全 launcher/PATH、launcher 回收 |
+| `src/settings.rs` | JSON5 / 环境变量 / API key / port discovery |
+| `src/api.rs` | no-proxy/no-redirect authenticated admin API、snapshot、default 更新与 readback |
+| `src/tray.rs` | 单一 tray、动态菜单/tooltip、串行 Controller、模型 payload、状态与 quota |
+| `tauri.conf.json` / `capabilities/default.json` | 本地帮助页严格 CSP；permissions 为空；无 remote native grants |
+| `apps/desktop/src/` | offline/help 页面，不是复制的 CCR React app |
 
-### 为什么不用 Electron
+- single-instance plugin 必须最先注册，重复启动只唤起原窗口。
+- external CCR UI 只有 HTTP 能力，不授予 Tauri native permissions。不添加 shell plugin，不使用 `window.__TAURI__` 探测，不需要修改 React API baseUrl。
+- Rust API key 不注入网页。Web UI 继续走原有鉴权 UI；environment/settings 错误不泄露 config 内容或 key。
+- GUI setup 不进行 blocking network 等待。健康/启动/轮询在 async task，native menu 与 window 更新排到 main thread。
 
-- 150MB+（含 Chromium），完全违背"轻量"目标
-- 唯一优势（纯 JS、API 全）不抵体积代价
+## 3. 生命周期：管理伴侣而非 owned sidecar
 
-### 为什么不用 Wails
+1. 先尝试 health，再短暂重试现有 gateway 的 readiness。
+2. health 失败且 TCP port LISTEN 时（包括非 CCR 服务、hung server、鉴权错误），显示 offline，不 spawn、不 reclaim、不 kill。
+3. 只有 TCP connection refused 且已知 config 的实际端口匹配，才寻找 `CCR_BIN` / PATH / 常见 npm global executable，再复查端口后执行 `ccr start`。把 bin 父目录和常见 Node bin 目录加入环境 PATH；stdio null 避免 pipe fill。
+4. Webview 最初加载本地帮助页且隐藏；readiness 成功后 navigate 到 HTTP UI 再显示。失败则显示本地帮助页及 tray status，不留下白屏。
+5. close 隐藏到 tray；左击 tray 只展开菜单，与 toggle 窗口不冲突；`Open CCR UI` 独立显示窗口。
+6. `Quit Desktop (gateway stays running)` 停轮询并退出桌面。launcher 只 `try_wait` 回收已退出进程；不杀子进程、不动 PID file、不执行 stop/restart。已启动 gateway 故意持久存在。
 
-- Wails v3 仍 beta，需把 fastify 迁到 Go（CCR 不会做）
-- Tauri v2 stable，让 Node 逻辑留在 Node，Rust 壳只管窗口/托盘
+自动启动是 best-effort，端口探测与 CLI bind 之间仍有系统竞争窗口；desktop 不负责终止任何其他监听者。真实 spawn→exit 测试必须选独立服务环境，不能拿用户正在运行的 gateway 验证。
 
-## 4. 详细设计（方案 A）
+## 4. 托盘第二步
 
-### 数据流（改动后）
+- tray 创建一次；30s poll、`Refresh`、成功 switch 后 `set_menu` / `set_tooltip`。
+- `CheckMenuItem` 表示当前全局 `Router.default`。model action ID 包含固定 provider/model payload，而不是刷新后会变义的索引；服务端 fresh GET 验证 target 仍可用，stale click 不会切到另一个模型。
+- Controller 的 async Mutex 串行化 refresh/switch；switch 接受时增加 atomic epoch，忽略旧 refresh 结果；main-thread rendering 有 revision 检查避免倒序更新。
+- 15 个 provider / 每 provider 12 个 model 为菜单默认上限；超限明确显示 `More in Web UI…`，当前 default 超限时仍保留。不静默丢弃第 16 个 provider / 第 13 个 model。
+- connected、switching、API unavailable、switch failed 都有可见 status。snapshot 错误保留最后已知列表但禁用 switch，并提示 quota 数据可能过期。quota error 单独警告，不当作 zero usage。
+- 多个 quota 行最多显示 5 行并提示完整 Web UI；tooltip 带当前 default 与 quota 摘要。
+- switch 只修改 raw config 的 `Router.default`，保留其他字段和 secret placeholders；POST success + fresh GET readback 才算完成。
 
-```
-┌─────────────────────────────────────────────────┐
-│ apps/desktop/ (Tauri 壳, ~7-15MB)                │
-│                                                   │
-│  Rust setup ──spawn──→ "ccr start" (用户全局装的)  │
-│       │                           │               │
-│       │ child 句柄存 State        │ detached       │
-│       │                           ▼               │
-│  webview ──load──→ http://127.0.0.1:3456/ui/     │
-│       │                    │                      │
-│       │                    │ 同一份 React UI      │
-│  托盘菜单 ──HTTP──→ /api/config, /api/providers/*  │
-│       │                    │                      │
-│  退出 ──kill child──→ ccr stop (PID 文件双保险)    │
-└────────────────────────────────────────────────────┘
+**路由范围**：只是全局 default。`Router.families` 与场景路由可能覆盖它，菜单明确提示。**竞争限制**：已有 config API 是 whole-config read/modify/write，不是原子 PATCH，与 Web UI 同时保存仍可能产生 lost update；当前切片没有宣称解决跨客户端并发写。
 
-浏览器用户（不变）──→ http://127.0.0.1:3456/ui/
-```
+## 5. 打包与性能声明
 
-### 文件级改动清单
+本切片不签名、不公证、不实现 auto-update，不声称通过 Windows/Linux 验收。图标源为原创 RGBA 几何图形，使用 Tauri CLI 生成 PNG/ICNS/ICO/Appx 套件。
 
-1. **`apps/desktop/src-tauri/Cargo.toml`**：tauri 2.x + tray-icon + reqwest（调 admin API）
-2. **`apps/desktop/src-tauri/tauri.conf.json`**：`build.devUrl` 指 vite dev server（dev 模式）；生产 webview 用 External URL
-3. **`apps/desktop/src-tauri/src/main.rs`**：spawn ccr sidecar + 健康检查（轮询 /health）→ webview show + 托盘
-4. **`apps/desktop/src-tauri/src/tray.rs`**：构建托盘菜单（provider/模型列表从 /api/config 拉），on_menu_event 调 /api/config POST 切模型
-5. **`packages/ui/src/lib/desktop.ts`**：`isDesktop()` = `typeof window.__TAURI__ !== 'undefined'`，条件渲染托盘相关 UI
-6. **`packages/ui/src/lib/api.ts`**：Tauri 模式下 baseUrl 从 `'/api'` 改为绝对 `http://127.0.0.1:3456/api`
-7. **`package.json`（root）**：`"desktop:dev": "cd apps/desktop && cargo tauri dev"` / `"desktop:build": "cd apps/desktop && cargo tauri build"`
+2026-10-14 macOS arm64 未签名 `.app` 首轮实际构建输出 **3.56 MiB**。这只是壳本体，不包括另行安装的 Node、CCR 与系统 WebView；不是 DMG、universal、Windows installer 或 Linux AppImage 的体积预测。启动时长、idle memory、frame rate 未测量，不记录性能达标结论。
 
-### 契约变更与兼容策略
+此前设计里的 `7–15 MB` / 各平台安装包范围只是估算，已移除。也不使用 issue 的历史症状证明当前上游仍有同样缺陷；签名/公证/native addon 分发均需在正式发布时依据目标版本和 OS 再验证。
 
-- **admin API 不变**：托盘菜单调的是现有 `/api/config`（GET 拉列表、POST 切模型），无需新端点。
-- **UI 不变**：`isDesktop()` 只控制是否显示「已在桌面运行」提示，不影响功能。
-- **server 不变**：不感知客户端类型。
-- **CLI 不变**：`ccr start` 行为不变，Tauri 只是又一个调它的入口。
+## 6. 验证与后续阶段
 
-### 分阶段实施
+本次检查：`cargo fmt --check`、`cargo check`、`cargo test`、`cargo clippy --all-targets -- -D warnings`、`cargo tauri build --bundles app --no-sign`。测试使用 ephemeral loopback mock 与纯函数；不停止、不重启、不修改 live CCR Router。
 
-**第一步（最小可验证切片）**：
-- `apps/desktop/` Tauri 项目骨架
-- `main.rs`：spawn `ccr start` → 轮询 `/health` 200 → webview load `http://127.0.0.1:3456/ui/` → 窗口显示
-- 退出时 `child.kill()`
-- **验证**：`cargo tauri dev` 能弹出窗口显示 CCR UI，关窗口时 ccr 进程也被杀
+- lifecycle：refused/occupied、remote 拒绝、config port 冲突、PATH resolver。
+- tray：stable payload、坏 ID 拒绝、bounds/current outlier；完整 native menu event/GUI 时序仍需专门验收。
+- backend：local settings、鉴权、snapshot/quota、raw config 保存、POST/verification failure、stale target 等独立 mock endpoint 测试。
+- 最终集成 diff 需父代理安排独立 reviewer；上述编译/测试不替代 independent code review。
 
-**第二步**：托盘菜单
-- `tray.rs`：从 `/api/config` 拉 provider 列表 → `MenuItem` 列表 → 点击调 POST `/api/config` 切模型
-- tooltip 显示当前模型 + quota 状态
-- 关窗口缩托盘（`ExitRequested` prevent_exit）
-
-**第三步**：quota 通知
-- 后台轮询 `/api/providers/quota` → 即将到限额时系统通知（Tauri notification API）
-
-**第四步**：打包发布
-- macOS .app + DMG（签名 + 公证）
-- Windows NSIS（代码签名避免 Defender 误报）
-- GitHub Releases 分发
-
-### 测试策略
-
-- **Rust 侧**：`cargo test`（sidecar spawn/kill 逻辑、托盘菜单构建）
-- **集成**：`cargo tauri dev` 手测（启动 → UI 可见 → 切模型 → 退出无孤儿进程）
-- **CI**：`cargo build --release`（跨平台编译验证）
-- **不测**：Tauri webview 本身（系统组件）、签名/公证（需 Apple Developer 账号）
-
-### 风险与回滚
-
-| 风险 | 影响 | 缓解 |
-|---|---|---|
-| macOS sidecar 签名 #16211 | sidecar 被 AMFI kill | 避免 deep-link `domains`；只用 `allow-jit`；手动重签 |
-| Windows Defender 误报 | 用户无法安装 | 配代码签名证书 |
-| sidecar flaky | server 没起来 → UI 空白 | 健康检查超时后显示「ccr 启动失败」兜底页 |
-| ccr 未全局安装 | Tauri 启动失败 | 启动时检测 `which ccr`，引导安装 |
-| 退出孤儿进程 | ccr 残留 | child.kill() + PID 文件 + `ccr stop` 双保险 |
-
-**回滚**：`apps/desktop/` 是独立目录，删除即回滚，不影响 server/CLI/UI。
-
-## 5. 盲区与待拍板
-
-### 未覆盖
-- **代码签名证书**：macOS 需 Apple Developer ID，Windows 需 EV/Azure cert。是否有？
-- **auto-update**：Tauri updater 集成未调研（第一步不做）。
-- **Linux webview 依赖**：webkit2gtk 用户需自行装（`apt install libwebkit2gtk-4.1-dev`）。
-- **Tauri 版本锁定**：设计基于 v2.12.x，后续 breaking 需跟进。
-
-### 需要用户拍板
-1. **代码签名**：macOS/Windows 是否有签名证书？没有的话首批只发未签名版（用户需手动允许）。
-2. **仓库位置**：`apps/desktop/` 放 CCR monorepo 内（共享 pnpm workspace），还是独立仓库？推荐放 monorepo 内（共享 UI 构建）。
-3. **第一步是否现在做**：我可以先搭 Tauri 骨架 + sidecar + webview（第一步），跑通 `cargo tauri dev` 弹窗显示 UI + 退出杀进程。做吗？
+后续独立切片：系统 quota notification（含去重/阈值）、跨平台 UI/installer 验收、代码签名与公证、可选 updater、安全安装文档。正式发布仍按仓库 release/PR 政策，不因 `.app` 已构建而自行 merge 或发版。

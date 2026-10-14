@@ -5,14 +5,13 @@
   "identifier": "com.claude-code-router.desktop",
   "build": {
     "frontendDist": "../src",
-    "devUrl": "http://127.0.0.1:3456/ui/",
     "beforeDevCommand": "",
     "beforeBuildCommand": ""
   },
   "app": {
     "windows": [],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; script-src 'none'; connect-src 'none'; img-src 'self'; style-src 'self'; base-uri 'none'; form-action 'none'; frame-src 'none'"
     }
   },
   "bundle": {
