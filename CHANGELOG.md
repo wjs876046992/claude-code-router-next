@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [2.3.2414] - 2026-10-16
+
+### Added
+
+- **CCR Desktop（可选 Tauri 桌面客户端）** (#75): 新增可选桌面管理客户端 `apps/desktop/`（Tauri v2，macOS 未签名 .app 实测 4.89 MiB，不捆绑 Node/CCR，需另行安装）。webview 加载 gateway 提供的同一份 Web UI，server/UI/CLI 零改动、浏览器用户不受影响；托盘显示全局 `Router.default` 并支持快速切换（每次切换新鲜读取 raw config、仅改 `Router.default`、要求 success 与 readback 校验）、provider/model 子菜单（有上限且永远保留当前项）、当前 provider 的 quota 摘要（5h/7d）、30 秒 + 手动 + 切换后刷新；单实例；关闭窗口隐藏到托盘。生命周期伴侣化：退出**不杀 gateway**（不打断其他客户端在路由的请求），仅当端口 connection-refused 且本地配置匹配时才尝试 `ccr start`，占用/未知端口一律 offline 不抢占；Rust admin 通道 loopback-only + `X-API-Key` + 禁 proxy/redirect，凭据不进 URL/网页/日志；外部 Web UI 无任何 native 权限，内置帮助页严格 CSP。图标 kit 由用户提供的原创图经 `cargo tauri icon` 生成。Windows/Linux、签名/公证、native 菜单手测不在本次验证范围；现有 `/api/config` 仅支持全量写入，托盘切换与 Web UI 同时保存存在竞争、保存会将 config 规范化重写（README 已明示）。
+
+### Fixed
+
+- **Pi 自定义模型配置在两条生命周期路径丢失** (#77, fixes #76): #69/#71 之后同名刷新已能保留自定义字段，但 `ccr restart` 的 disable→enable（disable 恢复接管前备份并删除全局 `ccr`，enable 只能按模板重建、merge 无数据可用）与 legacy bare-hash 项目 provider 改名迁移（先生成新 provider 再删孤儿）仍会删除用户 entry 级 `thinkingLevelMap` 与 provider 级 `modelOverrides`。现在 disable 在恢复备份前快照 live 托管 entry（CCR 自有状态文件、按 pi configPath 作用域、read-and-consume 不二次复活），enable 在 live 缺失时以其为合并源并复用 #71 的 per-model merge（managed 字段仍赢）；迁移将 legacy entry 作为 priorProvider，合并序 snapshot→prior→live（冲突 live 赢），`modelOverrides` 按 model id 深一层合并（孤儿独有模型的 override 不丢），孤儿删除发生在搬迁成功之后。disable 的备份恢复约定一字未动。
+
 ## [2.3.2413] - 2026-10-13
 
 ### Fixed
