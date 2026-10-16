@@ -42,6 +42,7 @@ function writeJson(filePath: string, doc: any): void {
 }
 
 afterEach(() => {
+  rmSync(join(process.env.CCR_CONFIG_DIR!, "pi-provider-snapshots.json"), { force: true });
   for (const dir of tempDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -410,5 +411,172 @@ describe("Pi legacy project provider migration", () => {
     const providers = readJson(join(piDir, "models.json")).providers;
     expect(providers[legacyName]).toBeUndefined();
     expect(providers[getPiProjectProviderName(projectDir)]).toBeUndefined();
+  });
+});
+
+describe("Pi custom config lifecycle (#76)", () => {
+  function familiesConfig(piDir: string) {
+    return {
+      APIKEY: "test-key",
+      PORT: 3456,
+      ContextWindow: 420000,
+      Router: {
+        default: "provider,model",
+        families: {
+          opus: { default: "provider,opus" },
+          sonnet: { default: "provider,sonnet" },
+        },
+      },
+      Clients: { pi: { configPath: piDir } },
+    };
+  }
+
+  function seedCustomFields(modelsPath: string) {
+    const doc = readJson(modelsPath);
+    doc.providers.ccr.modelOverrides = {
+      "ccr-opus": { thinkingLevelMap: { max: "max" }, maxTokens: 32000 },
+    };
+    doc.providers.ccr.models = doc.providers.ccr.models.map((model: any) =>
+      model.id === "ccr-opus" ? { ...model, thinkingLevelMap: { max: "max" } } : model
+    );
+    writeJson(modelsPath, doc);
+  }
+
+  it("preserves user custom fields across global disable → enable (restart lifecycle)", () => {
+    const { piDir } = createFixture();
+    const config = familiesConfig(piDir);
+    const modelsPath = join(piDir, "models.json");
+
+    enableClient(config, "pi");
+    seedCustomFields(modelsPath);
+
+    // `ccr restart` runs disable → enable around the server bounce; repeat the
+    // cycle to prove the carry-over is not a one-shot.
+    for (let cycle = 0; cycle < 2; cycle++) {
+      disableClient(config, "pi");
+      // While disabled pi is back to its pre-takeover state.
+      expect(readJson(modelsPath).providers.ccr).toBeUndefined();
+
+      enableClient(config, "pi");
+      const provider = readJson(modelsPath).providers.ccr;
+      expect(provider.modelOverrides).toEqual({
+        "ccr-opus": { thinkingLevelMap: { max: "max" }, maxTokens: 32000 },
+      });
+      const opus = provider.models.find((m: any) => m.id === "ccr-opus");
+      // Only the user's extension survives: no invented levels, no nulls.
+      expect(opus.thinkingLevelMap).toEqual({ max: "max" });
+      // Managed fields still win over the carried-over entry.
+      expect(opus.contextWindow).toBe(420000);
+      expect(opus.reasoning).toBe(true);
+      expect(provider.baseUrl).toBe("http://127.0.0.1:3456");
+      // Sibling model untouched by the carry-over stays template-clean.
+      const sonnet = provider.models.find((m: any) => m.id === "ccr-sonnet");
+      expect(sonnet.thinkingLevelMap).toBeUndefined();
+    }
+
+    // The snapshot is consumed on use, never left to resurrect fields later.
+    const snapshotPath = join(process.env.CCR_CONFIG_DIR!, "pi-provider-snapshots.json");
+    expect(existsSync(snapshotPath) ? readJson(snapshotPath) : {}).toEqual({});
+  });
+
+  it("carries user custom fields through legacy provider rename migration", () => {
+    const { piDir, projectDir } = createFixture();
+    const legacyName = "ccr-project-0c969bce85c52041";
+    mkdirSync(piDir, { recursive: true });
+    writeJson(join(piDir, "models.json"), {
+      providers: {
+        [legacyName]: {
+          name: "Claude Code Router",
+          baseUrl: "http://127.0.0.1:4567",
+          api: "anthropic-messages",
+          apiKey: "old-key",
+          modelOverrides: { "ccr-opus": { thinkingLevelMap: { max: "max" }, maxTokens: 32000 } },
+          models: [
+            { id: "ccr-opus", name: "CCR (opus)", thinkingLevelMap: { max: "max" } },
+            { id: "ccr-sonnet", name: "CCR (sonnet)", thinkingLevelMap: { low: "low" } },
+          ],
+        },
+      },
+    });
+    mkdirSync(join(projectDir, ".pi"), { recursive: true });
+    writeJson(join(projectDir, ".pi", "settings.json"), {
+      defaultProvider: legacyName,
+      defaultModel: "ccr-opus",
+    });
+
+    const config = familiesConfig(piDir);
+    applyPiProjectTakeover(projectDir, config);
+
+    const newName = getPiProjectProviderName(projectDir);
+    const providers = readJson(join(piDir, "models.json")).providers;
+    expect(providers[legacyName]).toBeUndefined();
+    const provider = providers[newName];
+    expect(provider.modelOverrides).toEqual({
+      "ccr-opus": { thinkingLevelMap: { max: "max" }, maxTokens: 32000 },
+    });
+    expect(provider.models.find((m: any) => m.id === "ccr-opus").thinkingLevelMap).toEqual({
+      max: "max",
+    });
+    expect(provider.models.find((m: any) => m.id === "ccr-sonnet").thinkingLevelMap).toEqual({
+      low: "low",
+    });
+    // Managed fields come from the current config, not from the orphan.
+    expect(provider.baseUrl).toBe("http://127.0.0.1:3456");
+    expect(provider.apiKey).toBe("test-key");
+
+    // A post-migration refresh keeps the carried fields.
+    applyPiProjectTakeover(projectDir, config);
+    const after = readJson(join(piDir, "models.json")).providers[newName];
+    expect(after.models.find((m: any) => m.id === "ccr-opus").thinkingLevelMap).toEqual({
+      max: "max",
+    });
+    expect(after.modelOverrides["ccr-opus"].maxTokens).toBe(32000);
+  });
+
+  it("lets the live target provider win over legacy fields on conflict", () => {
+    const { piDir, projectDir } = createFixture();
+    const legacyName = "ccr-project-0c969bce85c52041";
+    const newName = getPiProjectProviderName(projectDir);
+    mkdirSync(piDir, { recursive: true });
+    writeJson(join(piDir, "models.json"), {
+      providers: {
+        [legacyName]: {
+          baseUrl: "http://127.0.0.1:4567",
+          legacyTag: true,
+          modelOverrides: {
+            "ccr-opus": { maxTokens: 1000 },
+            "ccr-sonnet": { maxTokens: 1111 },
+          },
+          models: [{ id: "ccr-opus", thinkingLevelMap: { max: "max" } }],
+        },
+        [newName]: {
+          baseUrl: "http://127.0.0.1:4567",
+          modelOverrides: { "ccr-opus": { maxTokens: 2000 } },
+          models: [{ id: "ccr-opus", thinkingLevelMap: { low: "low" } }],
+        },
+      },
+    });
+    mkdirSync(join(projectDir, ".pi"), { recursive: true });
+    writeJson(join(projectDir, ".pi", "settings.json"), {
+      defaultProvider: legacyName,
+      defaultModel: "ccr-opus",
+    });
+
+    applyPiProjectTakeover(projectDir, familiesConfig(piDir));
+
+    const modelsPath = join(piDir, "models.json");
+    const provider = readJson(modelsPath).providers[newName];
+    // Conflicts resolve in favor of the live target entry per model id, while
+    // orphan-only model keys are carried over instead of dropped wholesale.
+    expect(provider.modelOverrides).toEqual({
+      "ccr-opus": { maxTokens: 2000 },
+      "ccr-sonnet": { maxTokens: 1111 },
+    });
+    expect(provider.models.find((m: any) => m.id === "ccr-opus").thinkingLevelMap).toEqual({
+      low: "low",
+    });
+    // Non-conflicting legacy provider-level custom fields still survive.
+    expect(provider.legacyTag).toBe(true);
+    expect(readJson(modelsPath).providers[legacyName]).toBeUndefined();
   });
 });
