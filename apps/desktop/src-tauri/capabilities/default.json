@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "No native permissions, including for the external CCR web UI",
+  "windows": [],
+  "permissions": []
+}

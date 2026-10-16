@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>CCR Desktop — connection help</title>
+    <link rel="stylesheet" href="help.css">
+  </head>
+  <body>
+    <main>
+      <p class="eyebrow">CCR DESKTOP · LOCAL CONNECTION</p>
+      <h1>Your gateway stays yours.</h1>
+      <p>Connecting to your local Claude Code Router. If the gateway is offline, this page remains available instead of a blank window.</p>
+      <section>
+        <h2>Get connected</h2>
+        <ol>
+          <li>Install Node.js and CCR separately, then run <code>ccr start</code> in your terminal.</li>
+          <li>Check your local <code>config.json</code> and API key. The desktop reads <code>CCR_CONFIG_DIR</code>, <code>CCR_DESKTOP_PORT</code> and <code>CCR_DESKTOP_API_KEY</code> when supplied.</li>
+          <li>Choose <strong>Refresh</strong> from the tray menu. Its status row reports connection and switch errors; the full Web UI opens after readiness.</li>
+        </ol>
+      </section>
+      <p class="note">An occupied or unresponsive port is never reclaimed. Closing this window hides it to the tray. “Quit Desktop” stops only the desktop — your gateway keeps running.</p>
+      <p>Configuration changes made after launch require relaunching the desktop (not the gateway). Consult <code>apps/desktop/README.md</code> for build and authentication details.</p>
+    </main>
+  </body>
+</html>
