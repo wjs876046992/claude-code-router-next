@@ -438,6 +438,42 @@ function restoreLatestBackup(clientId: string, filePath: string): string | null 
   return backupPath;
 }
 
+/**
+ * Sidecar state that carries user custom fields of a removed managed pi
+ * provider across disable→enable cycles (issue #76 path A: `ccr restart`
+ * disables and re-enables client takeovers around the server restart). Lives
+ * in CCR's own config dir so it never touches pi's files, and stays isolated
+ * under CCR_CONFIG_DIR in tests.
+ */
+const PI_PROVIDER_SNAPSHOT_FILE = path.join(HOME_DIR, "pi-provider-snapshots.json");
+
+function savePiProviderSnapshot(
+  scopeDir: string,
+  providerName: string,
+  entry: Record<string, any>
+): void {
+  const snapshots = readJsonObject(PI_PROVIDER_SNAPSHOT_FILE);
+  const scope = isObject(snapshots[scopeDir]) ? snapshots[scopeDir] : {};
+  scope[providerName] = entry;
+  snapshots[scopeDir] = scope;
+  writeJsonObject(PI_PROVIDER_SNAPSHOT_FILE, snapshots);
+}
+
+/** Read-and-consume: a stale snapshot must never resurrect fields later. */
+function takePiProviderSnapshot(
+  scopeDir: string,
+  providerName: string
+): Record<string, any> | undefined {
+  const snapshots = readJsonObject(PI_PROVIDER_SNAPSHOT_FILE);
+  const scope = snapshots[scopeDir];
+  const entry = isObject(scope) ? scope[providerName] : undefined;
+  if (!isObject(entry)) return undefined;
+  delete scope[providerName];
+  if (Object.keys(scope).length === 0) delete snapshots[scopeDir];
+  writeJsonObject(PI_PROVIDER_SNAPSHOT_FILE, snapshots);
+  return entry;
+}
+
 function readJsonObject(filePath: string): Record<string, any> {
   if (!fs.existsSync(filePath)) return {};
 
@@ -1407,6 +1443,15 @@ const piAdapter: ClientAdapter = {
     // exactly the currently registered project providers while restoring the
     // user's pre-takeover global models file.
     const currentModels = readJsonObject(paths.models);
+    // Remember user custom fields on the managed global provider before the
+    // restore below returns pi to its pre-takeover file: without a snapshot the
+    // next enable would rebuild the provider from template and silently drop
+    // entry-level thinkingLevelMap / provider-level modelOverrides edits
+    // (issue #76 path A). Project providers survive via `projectProviders`.
+    const liveCcr = isObject(currentModels.providers)
+      ? currentModels.providers[PI_PROVIDER_NAME]
+      : undefined;
+    if (isObject(liveCcr)) savePiProviderSnapshot(paths.dir, PI_PROVIDER_NAME, liveCcr);
     const projectProviders = isObject(currentModels.providers)
       ? Object.fromEntries(
           Object.entries(currentModels.providers)
@@ -1467,6 +1512,7 @@ function ensurePiCcrProvider(
   config: Record<string, any>,
   providerName = PI_PROVIDER_NAME,
   headers?: Record<string, string>,
+  options?: { priorProvider?: Record<string, any> },
 ): { defaultModel: string } {
   const paths = getPiPaths(config);
   const { models: ccrModels, defaultModel } = getPiModels(config);
@@ -1477,22 +1523,51 @@ function ensurePiCcrProvider(
   // `modelOverrides` for contextWindow/maxTokens/thinkingLevelMap edits; other
   // tools may add their own keys). Replacing the whole object silently wiped
   // them on every takeover refresh. Managed fields below still win.
-  const existingProvider = isObject(models.providers[providerName])
+  const liveProvider = isObject(models.providers[providerName])
     ? models.providers[providerName]
-    : {};
+    : undefined;
+  // Carry-over sources for custom fields when the live entry is gone or being
+  // replaced:
+  // - `priorProvider`: the entry this call supersedes (legacy bare-hash project
+  //   provider rename migration, issue #76 path B).
+  // - snapshot: the entry saved when the managed provider was last removed by
+  //   disableClient (restart lifecycle, issue #76 path A); consumed on use.
+  // Live fields always win over both on conflict.
+  const priorProvider =
+    options?.priorProvider && isObject(options.priorProvider) ? options.priorProvider : undefined;
+  const snapshotProvider =
+    liveProvider || priorProvider
+      ? undefined
+      : takePiProviderSnapshot(paths.dir, providerName);
+  const existingProvider: Record<string, any> = {
+    ...snapshotProvider,
+    ...priorProvider,
+    ...liveProvider,
+  };
+  // `modelOverrides` is a per-model map: merge it one level deeper than the
+  // shell spread so orphan-only model keys survive a target-already-exists
+  // migration while live values still win per model id.
+  const overrideSources = [snapshotProvider, priorProvider, liveProvider]
+    .map((source) => source?.modelOverrides)
+    .filter((value): value is Record<string, any> => isObject(value));
+  if (overrideSources.length > 0) {
+    existingProvider.modelOverrides = Object.assign({}, ...overrideSources);
+  }
   // The model SET is CCR-managed, but fields on individual model entries are
   // not: pi's `thinkingLevelMap` / `samplingParamsByThinkingLevel` edits and
   // keys written by other tools live on the models[] entries. Merge each
   // generated entry over the prior same-id entry so managed fields win while
   // per-entry custom fields survive refreshes — same preserve semantics as
   // the provider shell above (issue #69: replacing the whole array silently
-  // wiped them on every CCR start / project takeover).
-  const priorModels = Array.isArray(existingProvider.models)
-    ? existingProvider.models.filter(isObject)
-    : [];
-  const priorById = new Map(
-    priorModels.map((entry: Record<string, any>) => [String(entry.id), entry])
-  );
+  // wiped them on every CCR start / project takeover). Per-model priors apply
+  // in carry-over order (snapshot → prior → live); later sources win.
+  const priorById = new Map<string, Record<string, any>>();
+  for (const source of [snapshotProvider, priorProvider, liveProvider]) {
+    if (!source || !Array.isArray(source.models)) continue;
+    for (const entry of source.models.filter(isObject)) {
+      priorById.set(String(entry.id), entry);
+    }
+  }
   models.providers[providerName] = {
     ...existingProvider,
     name: "Claude Code Router",
@@ -1560,6 +1635,16 @@ function isLegacyPiProjectProviderName(value: unknown, projectPath: string): boo
   return /^[0-9a-f]+$/.test(hash) && value !== getPiProjectProviderName(projectPath);
 }
 
+/** Read one provider entry from pi's global models.json, if present. */
+function readPiProviderEntry(
+  modelsPath: string,
+  providerName: string
+): Record<string, any> | undefined {
+  const models = readJsonObject(modelsPath);
+  const entry = isObject(models.providers) ? models.providers[providerName] : undefined;
+  return isObject(entry) ? entry : undefined;
+}
+
 /** Delete one provider entry from pi's global models.json, if present. */
 function deletePiProviderEntry(modelsPath: string, providerName: string | undefined): void {
   if (!providerName) return;
@@ -1606,14 +1691,25 @@ function addPiProjectTrust(projectPath: string, config: Record<string, any>): vo
  */
 export function applyPiProjectTakeover(projectPath: string, config: Record<string, any>): void {
   const providerName = getPiProjectProviderName(projectPath);
-  const { defaultModel } = ensurePiCcrProvider(config, providerName, {
-    [CCR_PROJECT_HEADER]: getClaudeProjectId(projectPath),
-  });
-  addPiProjectTrust(projectPath, config);
-
   const settingsPath = getPiProjectSettingsPath(projectPath);
   const settings = readJsonObject(settingsPath);
   const previousProvider = settings.defaultProvider;
+  // Legacy bare-hash rename migration: read the orphaned entry BEFORE the new
+  // provider is (re)generated so its user custom fields can be carried over;
+  // the orphan is deleted only after the carry-over succeeded (issue #76 B).
+  const priorProvider = isLegacyPiProjectProviderName(previousProvider, projectPath)
+    ? readPiProviderEntry(getPiPaths(config).models, previousProvider)
+    : undefined;
+  const { defaultModel } = ensurePiCcrProvider(
+    config,
+    providerName,
+    {
+      [CCR_PROJECT_HEADER]: getClaudeProjectId(projectPath),
+    },
+    priorProvider ? { priorProvider } : undefined
+  );
+  addPiProjectTrust(projectPath, config);
+
   settings.defaultProvider = providerName;
   settings.defaultModel = defaultModel;
   writeJsonObject(settingsPath, settings);
