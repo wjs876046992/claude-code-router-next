@@ -317,7 +317,7 @@ export function detectClientType(req: any): ClientType {
   if (userAgent.includes("QwenCode")) return "qwen-code";
 
   const originalModel = req?.originalModel || body.model || "";
-  if (/^ccr-(opus|sonnet|haiku)(\[1m\])?$/i.test(originalModel)) {
+  if (/^ccr-(fable|opus|sonnet|haiku)(\[1m\])?$/i.test(originalModel)) {
     if (userAgent.includes("Anthropic/")) return "pi";
     if (userAgent.includes("claude-cli") || userAgent.includes("Claude-CLI")) return "qwen-code";
     if (typeof headers["x-stainless-package-version"] === "string") return "pi";

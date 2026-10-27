@@ -334,16 +334,16 @@ export function extractModelFamily(modelName: string): { family: string | null; 
   const extended = normalized.includes("[1m]") || normalized.endsWith("[1m");
   const cleanModel = normalized.replace(/\[1m\]|\[1m$/g, "");
 
-  // Match ccr-opus, ccr-sonnet, ccr-haiku format (injected by CCR into Claude Code settings)
-  const ccrMatch = cleanModel.match(/^ccr-(opus|sonnet|haiku)$/i);
+  // Match ccr-fable, ccr-opus, ccr-sonnet, ccr-haiku format (injected by CCR into Claude Code settings)
+  const ccrMatch = cleanModel.match(/^ccr-(fable|opus|sonnet|haiku)$/i);
   if (ccrMatch) {
     return { family: ccrMatch[1].toLowerCase(), extended, isCcrAlias: true };
   }
 
   // Match standard Claude model names: claude-opus-4-20250514, claude-sonnet-4-20250514, etc.
   const claudeMatch = cleanModel.match(
-    /claude-(?:\d+-\d+-|\d+-)?(sonnet|opus|haiku)(?:-|$)/i
-  ) || cleanModel.match(/claude-(sonnet|opus|haiku)(?:-|$)/i);
+    /claude-(?:\d+-\d+-|\d+-)?(fable|sonnet|opus|haiku)(?:-|$)/i
+  ) || cleanModel.match(/claude-(fable|sonnet|opus|haiku)(?:-|$)/i);
   if (claudeMatch) {
     return { family: claudeMatch[1].toLowerCase(), extended, isCcrAlias: false };
   }
@@ -912,7 +912,7 @@ const getUseModel = async (
   // fully-qualified "provider,model" override from the client. Strict project
   // mode still skips the explicit shortcut below (project Router authoritative).
   //
-  // Model family routing: extract opus/sonnet/haiku and use family-specific config
+  // Model family routing: extract fable/opus/sonnet/haiku and use family-specific config
   const { family, extended: modelExtended, isCcrAlias } = extractModelFamily(req.body.model);
   const familyConfig = Router?.families?.[family || ''] as RouterFamilyConfig | undefined;
   if (familyConfig && Router?.enableFamilyRouting) {
@@ -957,7 +957,7 @@ const getUseModel = async (
     req.log.warn(`No fallback available for explicit model ${req.body.model}, continuing through routing logic`);
   }
 
-  // ccr-opus/ccr-sonnet/ccr-haiku are aliases CCR injects for family routing.
+  // ccr-fable/ccr-opus/ccr-sonnet/ccr-haiku are aliases CCR injects for family routing.
   // When family routing is disabled, treat them as plain unmapped models so
   // they fall through to scenario-based default routing, rather than being
   // intercepted by a Router.models[alias] entry written during client takeover.

@@ -27,7 +27,7 @@ export interface Provider {
   [key: string]: any;
 }
 
-export const MODEL_FAMILIES = ["opus", "sonnet", "haiku"] as const;
+export const MODEL_FAMILIES = ["fable", "opus", "sonnet", "haiku"] as const;
 export type ModelFamily = typeof MODEL_FAMILIES[number];
 
 export interface ModelFamilyFallback {

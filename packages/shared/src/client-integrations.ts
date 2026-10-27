@@ -146,6 +146,7 @@ const LEGACY_STATUSLINE_BACKUP_PATH = path.join(HOME_DIR, ".statusline-backup.js
 const LEGACY_MODEL_BACKUP_PATH = path.join(HOME_DIR, ".model-env-backup.json");
 const CLAUDE_MODEL_ENV_KEYS = [
   "ANTHROPIC_MODEL",
+  "ANTHROPIC_DEFAULT_FABLE_MODEL",
   "ANTHROPIC_DEFAULT_SONNET_MODEL",
   "ANTHROPIC_DEFAULT_OPUS_MODEL",
   "ANTHROPIC_DEFAULT_HAIKU_MODEL",
@@ -174,6 +175,7 @@ const CLAUDE_AUTO_COMPACT_ENV = {
 
 /** Family name -> the Claude Code env var that selects its `ccr-*` alias. */
 const CLAUDE_FAMILY_ENV_KEYS: Record<string, string> = {
+  fable: "ANTHROPIC_DEFAULT_FABLE_MODEL",
   opus: "ANTHROPIC_DEFAULT_OPUS_MODEL",
   sonnet: "ANTHROPIC_DEFAULT_SONNET_MODEL",
   haiku: "ANTHROPIC_DEFAULT_HAIKU_MODEL",
@@ -537,7 +539,7 @@ function getSupportedClaudeFamilyNames(config: Record<string, any>): string[] {
 
   const families = config.Router.families;
   return Object.keys(families).filter(
-    (family) => ["opus", "sonnet", "haiku"].includes(family) && isObject(families[family])
+    (family) => ["fable", "opus", "sonnet", "haiku"].includes(family) && isObject(families[family])
   );
 }
 
@@ -782,6 +784,7 @@ function getClaudeActiveModel(settings: Record<string, any>): string | undefined
   const env = isObject(settings.env) ? settings.env : {};
   return (
     env.ANTHROPIC_MODEL ||
+    env.ANTHROPIC_DEFAULT_FABLE_MODEL ||
     env.ANTHROPIC_DEFAULT_SONNET_MODEL ||
     env.ANTHROPIC_DEFAULT_OPUS_MODEL ||
     env.ANTHROPIC_DEFAULT_HAIKU_MODEL
@@ -1158,6 +1161,7 @@ function cleanShellEnvVars(content: string): string {
   const ccrEnvKeys = new Set([
     "ANTHROPIC_API_KEY",
     "ANTHROPIC_BASE_URL",
+    "ANTHROPIC_DEFAULT_FABLE_MODEL",
     "ANTHROPIC_DEFAULT_HAIKU_MODEL",
     "ANTHROPIC_DEFAULT_OPUS_MODEL",
     "ANTHROPIC_DEFAULT_SONNET_MODEL",
@@ -1361,7 +1365,7 @@ function getPiModels(config: Record<string, any>): { models: any[]; defaultModel
 
   if (hasFamiliesConfig(config)) {
     const families = config.Router.families;
-    const order = ["opus", "sonnet", "haiku"].filter((f) => families[f]);
+    const order = ["fable", "opus", "sonnet", "haiku"].filter((f) => families[f]);
     const models = order.map((family) =>
       makeModel(`ccr-${family}`, `CCR (${family})`)
     );
@@ -1805,7 +1809,7 @@ function getQwenModels(config: Record<string, any>): { providers: any[]; default
 
   if (hasFamiliesConfig(config)) {
     const families = config.Router.families;
-    const order = ["opus", "sonnet", "haiku"].filter((f) => families[f]);
+    const order = ["fable", "opus", "sonnet", "haiku"].filter((f) => families[f]);
     const providers = order.map((family) => {
       const extendedSuffix = hasExtendedContext(families[family]) ? "[1m]" : "";
       return make(`ccr-${family}${extendedSuffix}`);
@@ -2061,7 +2065,7 @@ function getOpencodeModels(config: Record<string, any>): { models: Record<string
 
   if (hasFamiliesConfig(config)) {
     const families = config.Router.families;
-    for (const family of ["opus", "sonnet", "haiku"].filter((f) => families[f])) {
+    for (const family of ["fable", "opus", "sonnet", "haiku"].filter((f) => families[f])) {
       const extendedSuffix = hasExtendedContext(families[family]) ? "[1m]" : "";
       add(`ccr-${family}${extendedSuffix}`, `CCR (${family})`);
     }

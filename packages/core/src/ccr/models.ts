@@ -70,9 +70,11 @@ export function listAnthropicCompatibleModels(config: any): AnthropicModelInfo[]
     models.set(id, createAnthropicModelInfo(id, displayName));
   };
 
+  addModel("ccr-fable", "CCR Fable");
   addModel("ccr-opus", "CCR Opus");
   addModel("ccr-sonnet", "CCR Sonnet");
   addModel("ccr-haiku", "CCR Haiku");
+  addModel("ccr-fable[1m]", "CCR Fable 1M");
   addModel("ccr-opus[1m]", "CCR Opus 1M");
   addModel("ccr-sonnet[1m]", "CCR Sonnet 1M");
   addModel("ccr-haiku[1m]", "CCR Haiku 1M");

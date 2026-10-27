@@ -37,7 +37,7 @@ import { resolveProviderProxyUrl } from "@/services/proxy";
 // Matches the CCR model-family aliases that CCR injects into managed clients
 // (e.g. "ccr-opus", "ccr-sonnet[1m]"). Codex sends one of these as a bare model
 // name to /v1/responses.
-export const CCR_FAMILY_ALIAS = /^ccr-(opus|sonnet|haiku)(\[1m\])?$/i;
+export const CCR_FAMILY_ALIAS = /^ccr-(fable|opus|sonnet|haiku)(\[1m\])?$/i;
 
 /**
  * Normalize a Responses API (Codex) request body into a unified chat request so

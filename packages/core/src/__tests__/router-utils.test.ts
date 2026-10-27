@@ -24,7 +24,7 @@ vi.mock("../services/quota", () => ({
   getQuotaResult: () => null,
 }));
 
-import { findProviderModel } from "../utils/router";
+import { findProviderModel, extractModelFamily } from "../utils/router";
 
 // --- findProviderModel ---
 
@@ -135,5 +135,59 @@ describe("findProviderModel", () => {
     const result = findProviderModel(configProviders, "zhipu", "glm-5.2");
     expect(result).not.toBeNull();
     expect((result!.provider as any).baseUrl).toBeUndefined();
+  });
+});
+
+describe("extractModelFamily", () => {
+  it("extracts fable family from ccr aliases", () => {
+    expect(extractModelFamily("ccr-fable")).toEqual({
+      family: "fable",
+      extended: false,
+      isCcrAlias: true,
+    });
+    expect(extractModelFamily("ccr-fable[1m]")).toEqual({
+      family: "fable",
+      extended: true,
+      isCcrAlias: true,
+    });
+  });
+
+  it("extracts fable family from standard Claude model IDs", () => {
+    expect(extractModelFamily("claude-fable-5-1")).toEqual({
+      family: "fable",
+      extended: false,
+      isCcrAlias: false,
+    });
+    expect(extractModelFamily("claude-fable-5-1[1m]")).toEqual({
+      family: "fable",
+      extended: true,
+      isCcrAlias: false,
+    });
+  });
+
+  it("extracts opus, sonnet, and haiku families", () => {
+    expect(extractModelFamily("ccr-opus[1m]")).toEqual({
+      family: "opus",
+      extended: true,
+      isCcrAlias: true,
+    });
+    expect(extractModelFamily("ccr-sonnet")).toEqual({
+      family: "sonnet",
+      extended: false,
+      isCcrAlias: true,
+    });
+    expect(extractModelFamily("ccr-haiku")).toEqual({
+      family: "haiku",
+      extended: false,
+      isCcrAlias: true,
+    });
+  });
+
+  it("returns null for non-family models", () => {
+    expect(extractModelFamily("gpt-4o")).toEqual({
+      family: null,
+      extended: false,
+      isCcrAlias: false,
+    });
   });
 });

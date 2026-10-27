@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **支持 Claude 5 新一代 Fable 模型家族（`fable` / `ccr-fable[1m]`）**: 适配 Claude Code 2.1.308+ 内置的最新顶级模型 Fable 5.1（`claude-fable-5-1`）。在 CCR 中新增 `fable` 模型家族支持：接管时自动注入 `ANTHROPIC_DEFAULT_FABLE_MODEL`（消除 Claude Code 原生菜单中残留未接管的原厂 Fable 选项）；核心路由支持从 `ccr-fable` / `ccr-fable[1m]` 及原生 `claude-fable-*` 模型名称提取 `fable` 家族并路由到配置的后端；自引用 provider `ccr` 和 `/v1/models` 端点注册 `ccr-fable` 与 `ccr-fable[1m]`；Web UI 模型族配置选项及多语言文案同步加入 `fable`。
+
 ### Changed
 
 - **用量统计跨 Profile 共享**: 将用量数据库（`data/usage.sqlite`）从跟随 profile `HOME_DIR` 改为与日志和插件一致，共享存放在 `BASE_DIR/data/usage.sqlite`（`~/.claude-code-router/data/usage.sqlite`）。切换 profile 或使用多 profile 时，Web UI 与状态栏（`ccr statusline`）不再出现用量碎片化或统计清空的问题。启动时自动识别并增量迁移各命名 profile 目录下的历史用量记录到主数据库；测试环境（独立临时目录）仍保持隔离，不污染生产数据。

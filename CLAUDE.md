@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-> **Note**: This file and `AGENTS.md` overlap. `AGENTS.md` carries the repo overview, build/test commands, and release gate; this file carries the full architecture guide. `AGENTS.md`'s agent-workflow rules are folded into [Agent Workflow](#agent-workflow-from-agentsmd) below so both files can be read from either entry point.
+> **Note**: This file and `AGENTS.md` overlap. `AGENTS.md` carries the repo overview, build/test commands, and release gate; this file carries the full architecture guide. `AGENTS.md`'s agent-workflow rules are folded into [Agent Workflow](#agent-workflow-from-agentsmd) below so both files can be read from either entry point. **If the two disagree, this file is correct** — `AGENTS.md` is missing `apps/desktop`, still says there are no cli tests, and says `dev:cli` runs via ts-node.
 
 ## Project Overview
 
@@ -15,17 +15,19 @@ cli → core → shared
 server (facade over core, re-exports everything)
 ui (standalone React + Vite, bundled to single index.html)
 docs (Docusaurus site)
+apps/desktop (standalone Tauri client — separate Rust toolchain, not in the pnpm build)
+```
 
 Build order: shared → core → server → cli → ui
-```
 
 | Package | npm name | Role |
 |---------|----------|------|
 | `packages/core` | `@wengine-ai/llms` | **All runtime logic** — Fastify server, routing, transformers, agents, config, health, quota, proxy. This is where real work happens. |
 | `packages/cli` | `@wengine-ai/claude-code-router-next` | CLI entry (`ccr` command). Bundles core via esbuild; no server runtime of its own. |
 | `packages/server` | `@wengine-ai/claude-code-router-server` | Thin facade — re-exports everything from `@wengine-ai/llms`. **Never add logic here.** |
-| `packages/shared` | `@wengine-ai/claude-code-router-shared` | Constants, preset system, shared utilities. |
+| `packages/shared` | `@wengine-ai/claude-code-router-shared` | Constants, profile resolution, preset system, SQLite driver, temp-file key helpers, shared utilities. |
 | `packages/ui` | `@wengine-ai/claude-code-router-ui` | React + Vite web UI. Private (not published). Bundled to single `index.html` via `vite-plugin-singlefile`. |
+| `apps/desktop` | *(none)* | Optional Tauri v2 desktop companion. **No `package.json`** — pure Rust, so pnpm ignores it. See [Desktop Client](#desktop-client-appsdesktop). |
 
 ## Build & Dev Commands
 
@@ -51,6 +53,28 @@ pnpm dev:ui         # Vite dev server for UI
 
 **CLI bundles core via esbuild alias**: `@wengine-ai/llms` is aliased to `../core/dist/cjs/server.cjs`. The CLI always uses the CJS output of core.
 
+**`pnpm build` does not touch `apps/desktop`** — CI and the release script don't either. A desktop change needs explicit `cargo` commands (below).
+
+### Desktop Client (`apps/desktop`)
+
+Optional Tauri v2 management companion. It is **not** a sidecar: it bundles no Node, no CCR runtime, and no WebView — the user installs Node/`ccr` separately — and it loads the gateway's own Web UI over HTTP at `http://127.0.0.1:<port>/ui/`. Nothing in `packages/core`/`ui`/`cli` changes for it.
+
+The directory has **no `package.json`**, so although `pnpm-workspace.yaml` globs `apps/*`, pnpm ignores it. All commands run from `apps/desktop/src-tauri/`:
+
+```bash
+cargo install tauri-cli --version '^2' --locked   # one-time; not a repo dependency
+cargo tauri dev
+cargo fmt --check && cargo check && cargo test
+cargo clippy --all-targets -- -D warnings
+cargo tauri build --bundles app --no-sign          # macOS unsigned .app
+```
+
+Requires Rust 1.90+. Type `ccr` must be on `PATH` (or set `CCR_BIN`, needed for GUI launches that lack shell env). Config discovery: `CCR_CONFIG_DIR`/`~/.claude-code-router/config.json`; `CCR_DESKTOP_PORT` overrides `PORT`; `CCR_DESKTOP_API_KEY` overrides `APIKEY`.
+
+Rust modules under `apps/desktop/src-tauri/src/`: `settings.rs` (discovery), `api.rs` (loopback-only admin client: rejects anything but `http://127.0.0.1:<port>`, no proxy, no redirects), `lifecycle.rs` (connect-first: only runs `ccr start` on connection-refused when the local config matches), `tray.rs` (menu/polling), `lib.rs` (bootstrap).
+
+Two behaviours that are deliberate, not bugs: **tray model switch only rewrites `Router.default`** via a full-config read/modify/`POST /api/config`, then readbacks to verify — it is not atomic, so a simultaneous Web UI save can race; and **quitting the desktop never stops the gateway** (no kill, no PID-file kills, no `ccr stop`). Tray edits also normalize `config.json` (JSON5 comments/order lost). The webview has **no Tauri IPC capabilities** (`capabilities/default.json` is empty); adding any needs a security review. Only macOS arm64 has been validated.
+
 ## Testing
 
 Tests use **vitest**. Suites live in `core` (the bulk), `shared`, and `cli`; `server` and `ui` have none.
@@ -71,6 +95,8 @@ Tests live at `src/__tests__/**/*.test.ts`.
 **CI only runs `pnpm build`** (Node 22, pnpm 11.1.1) — there is no test or lint step in the GitHub Actions workflow. Run tests locally before pushing.
 
 **`better-sqlite3` pins the Node major.** The usage tests open a real SQLite database through the native addon, which is compiled for one `NODE_MODULE_VERSION`. Running the suite under a different Node major than the one that installed dependencies fails every DB test with `Module did not self-register: .../better_sqlite3.node` (or `ERR_DLOPEN_FAILED`). Check `node -v` before blaming the code, and match the build/install runtime.
+
+**Production code does not share that failure mode.** `openSqliteDatabase()` (`packages/shared/src/sqlite-driver.ts`) prefers `better-sqlite3` but falls back to the built-in `node:sqlite` (Node ≥ 22.5) when the native module fails to *load* (`ERR_DLOPEN_FAILED`, `MODULE_NOT_FOUND`, `NODE_MODULE_VERSION` mismatch). Genuine SQLite errors (e.g. `SQLITE_CANTOPEN` on a missing read-only file) are re-thrown, not swallowed. So a runtime Node mismatch degrades to a one-time `console.error`, not 500s on `/api/usage*`. Tests still import `better-sqlite3` directly in a few files, which is why the suite remains sensitive to the Node major.
 
 ## Core Architecture
 
@@ -93,14 +119,14 @@ Client → [1. onRequest] → [2. request-normalize] → [3. adapter] → [4. au
 7. **provider-model-normalize**: Split `provider,model` string, set `req.provider` and `req.model`
 8. **handler**: `handleTransformerEndpoint` (`packages/core/src/api/routes.ts`) — applies transformers, forwards to upstream provider. Endpoints are derived from each transformer's `endPoint` property (anthropic → `/v1/messages`, openai → `/v1/chat/completions`, openai.responses → `/v1/responses`)
 9. **onSend**: Agent tool rewrite, usage/upstream-model capture (streams are tee'd; the clone is read in the background)
-10. **onResponse**: TTFT/speed/health recording, final usage append to SQLite (`~/.claude-code-router/data/usage.sqlite` via better-sqlite3)
+10. **onResponse**: TTFT/speed/health recording, final usage append to SQLite (`~/.claude-code-router/data/usage.sqlite` — shared across profiles, written through `openSqliteDatabase()`)
 
 API-key auth also runs globally for non-`/v1/messages` routes (admin/management endpoints), since the namespace dispatcher only handles the LLM endpoints.
 
 ### Routing System (`packages/core/src/utils/router.ts`)
 
 Routing priority (highest to lowest):
-1. **Family routing** (`enableFamilyRouting`): Maps model tiers (opus/sonnet/haiku) to provider-specific models; also handles `ccr-*[1m]` extended-context aliases
+1. **Family routing** (`enableFamilyRouting`): Maps model tiers (fable/opus/sonnet/haiku) to provider-specific models; also handles `ccr-*[1m]` extended-context aliases
 2. **Project-level routing**: per-project `Router` stored at `~/.claude-code-router/<project-id>/config.json` (project id = path with `/.\` → `-`, via `getClaudeProjectId`). Session discovery: Claude Code sessions resolved by scanning `~/.claude/projects` transcripts; managed clients use the `x-ccr-project` header; ZCode uses its local task index (`~/.zcode/v2/tasks-index.sqlite`) and is opt-in per project via takeover state. Strict mode: managed project failures throw `ProjectRoutingError` instead of falling back to global. Per-session overrides: `<project-id>/<session-id>.json`
 3. **Custom router**: `CUSTOM_ROUTER_PATH` — external JS module exporting `async function router(req, config)`
 4. **Scenario routing**: `background`, `think`, `longContext` (token threshold), `webSearch`, `image`
@@ -116,7 +142,9 @@ Transformers adapt requests/responses to different provider APIs. Interface in `
 
 **Transformer catalog** (`packages/core/src/transformer/*.transformer.ts`):
 - **Protocol transformers** (define `endPoint`): `anthropic` (`/v1/messages`), `openai` (`/v1/chat/completions`), `openai.responses` (`/v1/responses`)
-- **Provider transformers**: `deepseek`, `gemini`, `openrouter`, `groq`, `kimi`, `cerebras`, `opencode`, `vercel`, `vertex-claude`, `vertex-gemini`
+- **Provider transformers**: `deepseek`, `gemini`, `openrouter`, `groq`, `kimi`, `cerebras`, `opencode`, `vercel`, `vertex-claude`, `vertex-gemini`, `amd`
+
+**System-message ordering is provider-specific.** `handleTransformerEndpoint` hoists system messages to index 0 and dedupes repeats for every non-Anthropic target. It only **merges** multiple distinct system messages into one when `shouldMergeSystemMessages()` says so — the model name contains `qwen`, or the provider sets `mergeSystemMessages: true`. This is not cosmetic: Qwen chat templates raise `System message must be at the beginning.` (HTTP 400) on any system message that is not `loop.first`, so multiple system messages would otherwise break every request. Other providers tolerate multiple system messages, so leaving them separate preserves the previous behaviour (and our prefix-caching assumptions).
 - **Request modifiers**: `maxtoken`, `maxcompletiontokens`, `tooluse`, `reasoning`, `forcereasoning`, `defaultthinking`, `enhancetool`, `customparams`, `sampling`, `streamoptions`, `cleancache`
 
 Configuration supports global (provider-level) and model-specific application, plus option passing via nested arrays.
@@ -183,6 +211,8 @@ Per-project Router overrides are managed via "takeover": CCR writes its endpoint
 ### Plugin System (`packages/core/src/plugins/`)
 
 Plugins extend functionality via `PluginManager`. Built-in: `token-speed` (tracks generation speed). Plugin output goes to `~/.claude-code-router/plugins/output/`. Interface: `shouldHandle`, `reqHandler`, `tools` methods (similar to agents).
+
+**Token-speed temp files** are a cross-package contract, not an implementation detail. The writer (`TempFileOutputHandler`) and both readers (`readTokenSpeedStats()` in `usage-store.ts`; the CLI statusline) must agree on every part of the path: `<tmpdir>/claude-code-router/token-speed-v2/session-<sanitizeTempFileKey(key)>.json`. The key is `metadata.statsKey` (= `usageSessionId || requestId`), falling back to `sessionId`; `sessionId` is only embedded in the file body for display. Readers do an exact-path read **on purpose** — a directory scan once blocked the event loop ~33s per request once the directory accumulated millions of files. If you change the sanitizer, subdirectory, prefix, extension, or key, change both sides or metrics silently become `null`. Files are retained for 1 hour by default.
 
 ### Services (`packages/core/src/services/`)
 
@@ -265,12 +295,13 @@ Daily iterations extend patch segment with extra digit (`2.3.23` → `2.3.231` �
 ## Tech Stack Highlights
 
 - **Fastify** — HTTP server framework
-- **better-sqlite3** — Usage tracking database (`~/.claude-code-router/data/usage.sqlite`)
+- **better-sqlite3** — Usage tracking database (`~/.claude-code-router/data/usage.sqlite`), with an automatic `node:sqlite` fallback in `packages/shared/src/sqlite-driver.ts`
+- **Tauri v2** + **Rust** — Optional desktop companion (`apps/desktop`), not built by pnpm
 - **tiktoken** / **@huggingface/tokenizers** — Token counting
 - **esbuild** — CLI bundling (with alias for core)
 - **Vite** + **React 19** + **Tailwind CSS 4** + **Radix UI** — UI stack
 - **vite-plugin-singlefile** — Bundles UI to single `index.html`
-- **vitest** — Testing (core + shared only)
+- **vitest** — Testing (core, shared, and cli)
 - **Docusaurus** — Documentation site (`docs/`)
 
 ## CLI Command Surface (`packages/cli/src/cli.ts`)
@@ -294,6 +325,8 @@ Daily iterations extend patch segment with extra digit (`2.3.23` → `2.3.231` �
 | Single test file | `cd packages/core && npx vitest run src/__tests__/<file>.test.ts` |
 | Dev server | `pnpm dev:core` |
 | Dev UI | `pnpm dev:ui` |
+| Desktop dev | `cd apps/desktop/src-tauri && cargo tauri dev` |
+| Desktop checks | `cargo fmt --check && cargo check && cargo test && cargo clippy --all-targets -- -D warnings` |
 | Restart CCR | `ccr restart` |
 | Release | `pnpm release` (or `PUBLISH_DRY_RUN=1 pnpm release` for dry run) |
 

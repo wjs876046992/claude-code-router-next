@@ -30,7 +30,7 @@ describe("ensureCcrSelfProvider", () => {
       enabled: true,
       transformer: { use: ["Anthropic"] },
     });
-    expect(ccr.models).toEqual(["ccr-opus", "ccr-sonnet", "ccr-haiku"]);
+    expect(ccr.models).toEqual(["ccr-fable", "ccr-opus", "ccr-sonnet", "ccr-haiku"]);
     // Existing providers keep their order.
     expect(config.Providers[0].name).toBe("kimi");
   });

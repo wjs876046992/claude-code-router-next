@@ -20,12 +20,14 @@ describe("getClaudeFamilyEnv", () => {
     const env = getClaudeFamilyEnv(
       makeConfig({
         families: {
+          fable: { default: "p,m", enableExtendedContext: true },
           opus: { default: "p,m", enableExtendedContext: true },
           sonnet: { default: "p,m" },
         },
       })
     );
 
+    expect(env.ANTHROPIC_DEFAULT_FABLE_MODEL).toBe("ccr-fable[1m]");
     expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe("ccr-opus[1m]");
     expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe("ccr-sonnet");
     expect(env.ANTHROPIC_MODEL).toBe("ccr-opus[1m]");

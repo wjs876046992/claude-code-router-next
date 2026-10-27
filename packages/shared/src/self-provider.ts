@@ -7,7 +7,7 @@ import { CCR_DEFAULT_PORT } from "./constants";
  *
  * The provider loops back to CCR's own /v1/messages endpoint with the CCR
  * family aliases, so a client only needs the base URL, the CCR API key, and a
- * model name (ccr-opus/ccr-sonnet/ccr-haiku) to get full family routing.
+ * model name (ccr-fable/ccr-opus/ccr-sonnet/ccr-haiku) to get full family routing.
  */
 export const CCR_SELF_PROVIDER_NAME = "ccr";
 
@@ -77,7 +77,7 @@ export function ensureCcrSelfProvider<T extends Record<string, any>>(
     name: CCR_SELF_PROVIDER_NAME,
     api_base_url: `http://127.0.0.1:${port}/v1/messages`,
     api_key: (newConfig as any).APIKEY || "test",
-    models: ["ccr-opus", "ccr-sonnet", "ccr-haiku"],
+    models: ["ccr-fable", "ccr-opus", "ccr-sonnet", "ccr-haiku"],
     transformer: { use: ["Anthropic"] },
     enabled: true,
     ccr_managed: true,
